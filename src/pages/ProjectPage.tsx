@@ -7,6 +7,7 @@ import {
 import { db }          from "../lib/firebase/config";
 import { useAuth }     from "../context/AuthContext";
 import { useAppData }  from "../context/AppDataContext";
+import TaskDetailPanel from "../components/TaskDetailPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 interface Task {
@@ -63,6 +64,7 @@ const ProjectPage = () => {
   const [editTask,    setEditTask]    = useState<Task | null>(null);
   const [form,        setForm]        = useState(emptyTask());
   const [saving,      setSaving]      = useState(false);
+  const [drawerTask,  setDrawerTask]  = useState<Task | null>(null);
 
   const project = projects.find(p => p.id === id);
 
@@ -81,6 +83,14 @@ const ProjectPage = () => {
     );
     return () => unsub();
   }, [user?.uid, id]);
+
+  // ── Keep drawerTask in sync with the latest task data ─────────────────
+  useEffect(() => {
+    if (!drawerTask) return;
+    const fresh = tasks.find(t => t.id === drawerTask.id);
+    if (fresh && fresh !== drawerTask) setDrawerTask(fresh);
+    if (!fresh) setDrawerTask(null); // task was deleted
+  }, [tasks, drawerTask]);
 
   // ── Live progress update on Firestore project doc ─────────────────────
   useEffect(() => {
@@ -186,6 +196,17 @@ const ProjectPage = () => {
     setShowModal(true);
   };
 
+  // ── Open detail drawer (chat + comments + reactions) ───────────────────
+  const openDrawer = (task: Task) => {
+    setDrawerTask(task);
+  };
+
+  // ── Edit handler called from inside the drawer ────────────────────────
+  const handleDrawerEdit = (task: Task) => {
+    setDrawerTask(null);
+    openEdit(task);
+  };
+
   if (!project) return (
     <div className="ml-0 bg-[#f4f5f7] min-h-screen flex items-center justify-center">
       <div className="text-center">
@@ -230,14 +251,14 @@ const ProjectPage = () => {
             {/* Header badges + New Task */}
             <div className="flex items-center gap-2 flex-shrink-0">
               <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                project.priority === "High"   ? "bg-red-100 text-red-600"
-                : project.priority === "Medium" ? "bg-amber-100 text-amber-600"
-                :                                 "bg-gray-100 text-gray-500"
+                (project as any).priority === "High"   ? "bg-red-100 text-red-600"
+                : (project as any).priority === "Medium" ? "bg-amber-100 text-amber-600"
+                :                                          "bg-gray-100 text-gray-500"
               }`}>
-                {project.priority ?? "Medium"} Priority
+                {(project as any).priority ?? "Medium"} Priority
               </span>
               <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-blue-50 text-blue-600 capitalize">
-                {project.status ?? "active"}
+                {(project as any).status ?? "active"}
               </span>
               <button
                 onClick={() => { setEditTask(null); setForm(emptyTask()); setShowModal(true); }}
@@ -250,15 +271,15 @@ const ProjectPage = () => {
 
           {/* Meta row */}
           <div className="flex items-center gap-4 mt-3 ml-13">
-            {project.dueDate && (
+            {(project as any).dueDate && (
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
-                📅 Due: {new Date(project.dueDate + "T12:00:00")
+                📅 Due: {new Date((project as any).dueDate + "T12:00:00")
                   .toLocaleDateString("en-US",{ month:"short", day:"numeric", year:"numeric" })}
               </span>
             )}
-            {project.tags?.length > 0 && (
+            {(project as any).tags?.length > 0 && (
               <div className="flex gap-1.5">
-                {project.tags.map((t: string) => (
+                {(project as any).tags.map((t: string) => (
                   <span key={t}
                         className="text-xs px-2 py-0.5 bg-blue-50 text-blue-500 rounded-full">
                     #{t}
@@ -367,10 +388,11 @@ const ProjectPage = () => {
             {filtered.length > 0 ? (
               filtered.map(task => (
                 <div key={task.id}
-                     className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-4 px-5 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors items-center group">
+                     onClick={() => openDrawer(task)}
+                     className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-4 px-5 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors items-center group cursor-pointer">
                   {/* Title + checkbox */}
                   <div className="flex items-center gap-3">
-                    <button onClick={() => cycleStatus(task)}
+                    <button onClick={(e) => { e.stopPropagation(); cycleStatus(task); }}
                             className={`w-5 h-5 rounded-full border-2 flex items-center
                                         justify-center flex-shrink-0 transition-all ${
                               task.status === "Done"
@@ -460,11 +482,11 @@ const ProjectPage = () => {
 
                   {/* Actions */}
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(task)}
+                    <button onClick={(e) => { e.stopPropagation(); openEdit(task); }}
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-xs">
                       ✏️
                     </button>
-                    <button onClick={() => handleDelete(task.id)}
+                    <button onClick={(e) => { e.stopPropagation(); handleDelete(task.id); }}
                             className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors text-xs">
                       🗑
                     </button>
@@ -517,7 +539,7 @@ const ProjectPage = () => {
                     {colTasks.map(task => (
                       <div key={task.id}
                            className="bg-gray-50 border border-gray-100 rounded-xl p-3 group hover:shadow-sm transition-all cursor-pointer"
-                           onClick={() => openEdit(task)}>
+                           onClick={() => openDrawer(task)}>
                         <p className={`text-sm font-medium text-gray-800
                                        leading-snug mb-2 ${
                           task.status === "Done" ? "line-through text-gray-400" : ""
@@ -692,6 +714,15 @@ const ProjectPage = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ══ TASK DETAIL DRAWER (chat + comments + reactions) ══════════════ */}
+      {drawerTask && (
+        <TaskDetailPanel
+          task={drawerTask as any}
+          onClose={() => setDrawerTask(null)}
+          onEdit={handleDrawerEdit}
+        />
       )}
     </div>
   );

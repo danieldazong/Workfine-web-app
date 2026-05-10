@@ -1,5 +1,5 @@
 // src/pages/TeamPage.tsx
-import {
+import React, {
   useState,
   useEffect,
   useCallback,
