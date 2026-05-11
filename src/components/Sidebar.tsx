@@ -15,6 +15,7 @@ import {
   LogOut,
   Users,
   Settings,
+  Building2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
@@ -24,6 +25,8 @@ import { deleteProject } from "../lib/firebase/projects";
 import { useNavigate } from "react-router-dom";
 import CreateProjectModal from "./CreateProjectModal";
 
+
+
 export default function Sidebar() {
   const { user, signOutUser } = useAuth();
   const { projects } = useAppData();
@@ -32,6 +35,7 @@ export default function Sidebar() {
   const location = useLocation();
   const [showCreateProject, setShowCreateProject] = useState(false);
 
+
   const handleDelete = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
     if (!user?.uid) return;
@@ -39,13 +43,16 @@ export default function Sidebar() {
   };
 
   const navItems = [
-    { name: 'Dashboard', icon: LayoutDashboard, path: '/' },
-    { name: 'Insights',  icon: BarChart2,        path: '/insights' },
-    { name: 'Calendar',  icon: Calendar,         path: '/calendar' },
-    { name: 'My Tasks',  icon: CheckSquare,       path: '/my-tasks' },
-    { name: 'Team',      icon: Users,             path: '/team' },
-    { name: 'Settings',  icon: Settings,          path: '/settings' },
-  ];
+  { name: 'Dashboard', icon: LayoutDashboard, path: '/' },
+  { name: 'Insights',  icon: BarChart2,        path: '/insights' },
+  { name: 'Calendar',  icon: Calendar,         path: '/calendar' },
+  { name: 'My Tasks',  icon: CheckSquare,       path: '/my-tasks' },
+  { name: 'Team',      icon: Users,             path: '/team' },
+  { name: 'Workspace', icon: Building2,         path: '/workspace' },
+  { name: 'Settings',  icon: Settings,          path: '/settings' },
+];
+
+
 
   return (
     /*
@@ -127,9 +134,12 @@ export default function Sidebar() {
       </AnimatePresence>
 
       {/* Create Project Modal */}
-      {showCreateProject && (
-        <CreateProjectModal onClose={() => setShowCreateProject(false)} />
-      )}
+{showCreateProject && (
+  <CreateProjectModal onClose={() => setShowCreateProject(false)} />
+)}
+
+
+
     </div>
   );
 }
@@ -183,7 +193,7 @@ function SidebarContent({
         <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest px-2 mb-2 mt-4">
           Workspace
         </div>
-        {navItems.map((item) => (
+               {navItems.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
@@ -204,6 +214,9 @@ function SidebarContent({
             <span className="font-medium text-sm">{item.name}</span>
           </NavLink>
         ))}
+
+
+
 
         {/* Projects */}
         <div className="px-3 mt-6">

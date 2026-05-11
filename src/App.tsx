@@ -15,8 +15,9 @@ import InsightsPage from './pages/InsightsPage';
 import MyTasksPage from './pages/MyTasksPage';
 import SettingsPage from './pages/SettingsPage';
 import ProjectPage from './pages/ProjectPage';
-import ProjectsPage from './pages/ProjectsPage';
 import CalendarPage from './pages/CalendarPage';
+import WorkspacePage from './pages/WorkspacePage';
+
 
 function ProtectedRoute() {
   const { user, loading } = useAuth();
@@ -73,7 +74,10 @@ export default function App() {
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/projects/:id" element={<ProjectPage />} />
-                {/* ✅ ADD ALL FUTURE PAGES HERE — one line each */}
+<Route path="/workspace" element={<WorkspacePage />} />
+<Route path="/workspace/:tab" element={<WorkspacePage />} />
+{/* ✅ ADD ALL FUTURE PAGES HERE — one line each */}
+
               </Route>
             </Route>
 
