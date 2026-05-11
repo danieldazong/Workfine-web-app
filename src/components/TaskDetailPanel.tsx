@@ -37,7 +37,17 @@ import {
   Lightbulb,
   Hash,
   Flag,
+  Plus,
+  Type,
+  AtSign,
+  Star,
+  Paperclip,
+  Sparkles,
 } from "lucide-react";
+import data from "@emoji-mart/data";
+import Picker from "@emoji-mart/react";
+import { useMentionableUsers } from "../hooks/useMentionableUsers";
+
 
 
 export interface Task {
@@ -343,9 +353,20 @@ export default function TaskDetailPanel({
   const [mounted, setMounted] = useState(false);
   const [closing, setClosing] = useState(false);
 
+    // Task/project mentions (triggered by #)
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionStart, setMentionStart] = useState<number>(-1);
+
+  // User mentions (triggered by @)
+  const [showUserSuggestions, setShowUserSuggestions] = useState(false);
+  const [userMentionFilter, setUserMentionFilter] = useState("");
+  const [userMentionStart, setUserMentionStart] = useState<number>(-1);
+
+  // Mentionable users (workspace members + shared project members).
+  // Phase 1: returns []. Phase 2: real list.
+  const mentionableUsers = useMentionableUsers(task.projectId);
+
    const [toast, setToast] = useState<string | null>(null);
 
   // Composer expand/collapse state (Asana-style progressive disclosure)
@@ -731,6 +752,21 @@ export default function TaskDetailPanel({
 
   const hasSuggestions =
     showSuggestions && (filteredTasks.length > 0 || filteredProjects.length > 0);
+
+  // Filtered users for @ mention autocomplete
+  const filteredUsers = useMemo(() => {
+    if (!showUserSuggestions) return [];
+    const q = userMentionFilter.toLowerCase();
+    if (!q) return mentionableUsers.slice(0, 6);
+    return mentionableUsers
+      .filter(
+        (u) =>
+          u.name.toLowerCase().includes(q) ||
+          (u.email ?? "").toLowerCase().includes(q)
+      )
+      .slice(0, 6);
+  }, [showUserSuggestions, userMentionFilter, mentionableUsers]);
+
   // Visible emojis based on search/category
   const visibleEmojiGroups = useMemo(() => {
     const q = emojiSearch.trim().toLowerCase();
@@ -775,20 +811,39 @@ export default function TaskDetailPanel({
     setCommentText(val);
     const caret = e.target.selectionStart ?? val.length;
     const upToCaret = val.slice(0, caret);
+
     const hashIdx = upToCaret.lastIndexOf("#");
-    if (hashIdx >= 0) {
+    const atIdx = upToCaret.lastIndexOf("@");
+
+    // Whichever trigger is closest to the caret wins
+    if (atIdx > hashIdx && atIdx >= 0) {
+      const between = upToCaret.slice(atIdx + 1);
+      if (!/\s/.test(between)) {
+        setShowUserSuggestions(true);
+        setUserMentionFilter(between);
+        setUserMentionStart(atIdx);
+        setShowSuggestions(false);
+        return;
+      }
+    } else if (hashIdx >= 0) {
       const between = upToCaret.slice(hashIdx + 1);
       if (!/\s/.test(between)) {
         setShowSuggestions(true);
         setMentionFilter(between);
         setMentionStart(hashIdx);
+        setShowUserSuggestions(false);
         return;
       }
     }
+
     setShowSuggestions(false);
     setMentionFilter("");
     setMentionStart(-1);
+    setShowUserSuggestions(false);
+    setUserMentionFilter("");
+    setUserMentionStart(-1);
   }
+
 
   function insertMention(code: string) {
     if (mentionStart < 0) return;
@@ -807,9 +862,33 @@ export default function TaskDetailPanel({
       inputRef.current?.setSelectionRange(pos, pos);
     });
   }
+  function insertUserMention(u: { id: string; name: string }) {
+    if (userMentionStart < 0) return;
+    const before = commentText.slice(0, userMentionStart);
+    const caret = inputRef.current?.selectionStart ?? commentText.length;
+    const after = commentText.slice(caret);
+    // Store as @[Name](userId) for future structured rendering / notifications
+    const inserted = `@[${u.name}](${u.id}) `;
+    const next = before + inserted + after;
+    setCommentText(next);
+    setShowUserSuggestions(false);
+    setUserMentionFilter("");
+    setUserMentionStart(-1);
+    requestAnimationFrame(() => {
+      const pos = (before + inserted).length;
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(pos, pos);
+    });
+  }
 
-   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    // Mention autocomplete: Enter picks the first suggestion
+    function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // User mention autocomplete (@): Enter picks the first suggestion
+    if (showUserSuggestions && filteredUsers.length > 0 && e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      insertUserMention(filteredUsers[0]);
+      return;
+    }
+    // Task/project mention autocomplete (#): Enter picks the first suggestion
     if (hasSuggestions && e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       const first = filteredTasks[0] ?? filteredProjects[0];
@@ -822,12 +901,19 @@ export default function TaskDetailPanel({
       handleSend();
       return;
     }
-    if (e.key === "Escape" && showSuggestions) {
-      e.preventDefault();
-      e.stopPropagation();
-      setShowSuggestions(false);
+    if (e.key === "Escape") {
+      if (showSuggestions) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowSuggestions(false);
+      } else if (showUserSuggestions) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShowUserSuggestions(false);
+      }
     }
   }
+
 
 
   const dueDateLabel = task.dueDate
@@ -1582,9 +1668,31 @@ export default function TaskDetailPanel({
                   autoFocus
                 />
 
-                {/* Toolbar — emoji, mention, attachment, send */}
-                <div className="flex items-center gap-1 px-2 py-1.5 border-t border-slate-100">
-                  {/* Emoji button */}
+                               {/* Toolbar — Asana order: + · A · 😊 · @ · ⭐ · 📎 · ✨ */}
+                <div className="flex items-center gap-0.5 px-2 py-1.5 border-t border-slate-100">
+                  {/* 1. Plus — quick add (placeholder, Phase 4) */}
+                  <button
+                    type="button"
+                    disabled
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 cursor-not-allowed"
+                    title="Quick add (coming soon)"
+                    aria-label="Quick add"
+                  >
+                    <Plus size={16} />
+                  </button>
+
+                  {/* 2. Text formatting — Bold/Italic/Lists (Phase 2 with Tiptap) */}
+                  <button
+                    type="button"
+                    disabled
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 cursor-not-allowed"
+                    title="Text formatting (coming soon)"
+                    aria-label="Text formatting"
+                  >
+                    <Type size={16} />
+                  </button>
+
+                  {/* 3. Emoji — works */}
                   <button
                     type="button"
                     onMouseDown={(e) => e.stopPropagation()}
@@ -1600,33 +1708,43 @@ export default function TaskDetailPanel({
                     <Smile size={16} />
                   </button>
 
-                  {/* Mention shortcut — inserts # */}
+                  {/* 4. @ Mention user — works (empty list until Workspace feature ships) */}
                   <button
                     type="button"
                     onClick={() => {
                       const ta = inputRef.current;
                       const start = ta?.selectionStart ?? commentText.length;
                       const end = ta?.selectionEnd ?? commentText.length;
-                      const next = commentText.slice(0, start) + "#" + commentText.slice(end);
+                      const next = commentText.slice(0, start) + "@" + commentText.slice(end);
                       setCommentText(next);
                       requestAnimationFrame(() => {
                         const pos = start + 1;
                         ta?.focus();
                         ta?.setSelectionRange(pos, pos);
-                        // Trigger mention autocomplete
-                        setShowSuggestions(true);
-                        setMentionFilter("");
-                        setMentionStart(start);
+                        setShowUserSuggestions(true);
+                        setUserMentionFilter("");
+                        setUserMentionStart(start);
                       });
                     }}
                     className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-slate-100 hover:text-violet-600 transition-colors"
-                    title="Mention a task or project"
-                    aria-label="Mention"
+                    title="Mention a teammate"
+                    aria-label="Mention user"
                   >
-                    <Hash size={16} />
+                    <AtSign size={16} />
                   </button>
 
-                  {/* Attachment placeholder — future */}
+                  {/* 5. Star — stickers/celebrations (Phase 4 placeholder) */}
+                  <button
+                    type="button"
+                    disabled
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 cursor-not-allowed"
+                    title="Stickers (coming soon)"
+                    aria-label="Stickers"
+                  >
+                    <Star size={16} />
+                  </button>
+
+                  {/* 6. Attachment — Phase 3 placeholder */}
                   <button
                     type="button"
                     disabled
@@ -1634,9 +1752,18 @@ export default function TaskDetailPanel({
                     title="Attachments (coming soon)"
                     aria-label="Attach file"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.58 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                    </svg>
+                    <Paperclip size={16} />
+                  </button>
+
+                  {/* 7. Sparkles — AI assistant (Phase 4 placeholder) */}
+                  <button
+                    type="button"
+                    disabled
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 cursor-not-allowed"
+                    title="AI assistant (coming soon)"
+                    aria-label="AI assistant"
+                  >
+                    <Sparkles size={16} />
                   </button>
 
                   {/* Right side — hint + cancel + send */}
@@ -1651,6 +1778,7 @@ export default function TaskDetailPanel({
                         setComposerExpanded(false);
                         setShowComposerEmojiPicker(false);
                         setShowSuggestions(false);
+                        setShowUserSuggestions(false);
                       }}
                       className="text-xs px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
                     >
@@ -1677,127 +1805,31 @@ export default function TaskDetailPanel({
                   </div>
                 </div>
 
-                {/* Composer emoji picker — opens above the toolbar */}
+                              {/* Composer emoji picker — emoji-mart (Asana-grade) */}
                 {showComposerEmojiPicker && (
                   <div
                     ref={composerEmojiPickerRef}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className="absolute bottom-full left-0 mb-2 z-[55] w-[340px] bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+                    className="absolute bottom-full left-0 mb-2 z-[55] shadow-2xl rounded-2xl overflow-hidden"
                     role="dialog"
                     aria-label="Insert emoji"
                   >
-                    {/* Quick emojis */}
-                    <div className="flex items-center gap-1 px-3 pt-3 pb-2 border-b border-slate-100">
-                      {QUICK_REACTIONS.map((e) => (
-                        <button
-                          key={e}
-                          type="button"
-                          onClick={() => insertEmojiIntoComposer(e, false)}
-                          className="text-xl leading-none hover:scale-125 transition-transform p-1 rounded-md hover:bg-slate-50"
-                          title={`Insert ${e}`}
-                        >
-                          {e}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Category tabs */}
-                    <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100 overflow-x-auto">
-                      <button
-                        type="button"
-                        onClick={() => setActiveCategory("recent")}
-                        className={`flex-shrink-0 p-1.5 rounded-md transition-colors ${
-                          activeCategory === "recent"
-                            ? "bg-violet-100 text-violet-600"
-                            : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                        }`}
-                        title="Recent"
-                      >
-                        <Clock3 size={16} />
-                      </button>
-                      {EMOJI_CATEGORIES.map((cat) => {
-                        const Icon = cat.icon;
-                        const active = activeCategory === cat.key;
-                        return (
-                          <button
-                            key={cat.key}
-                            type="button"
-                            onClick={() => setActiveCategory(cat.key)}
-                            className={`flex-shrink-0 p-1.5 rounded-md transition-colors ${
-                              active
-                                ? "bg-violet-100 text-violet-600"
-                                : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                            }`}
-                            title={cat.label}
-                          >
-                            <Icon size={16} />
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    {/* Emoji grid */}
-                    <div className="flex-1 overflow-y-auto max-h-56 px-2 py-2">
-                      {(() => {
-                        if (activeCategory === "recent") {
-                          return (
-                            <div>
-                              <p className="text-[10px] uppercase tracking-wider text-slate-400 px-1.5 py-1 font-semibold">
-                                Frequently used
-                              </p>
-                              {recentEmojis.length === 0 ? (
-                                <p className="text-xs text-slate-400 italic px-2 py-3 text-center">
-                                  No recent emojis yet
-                                </p>
-                              ) : (
-                                <div className="grid grid-cols-8 gap-0.5">
-                                  {recentEmojis.map((e, idx) => (
-                                    <button
-                                      key={`recent-${e}-${idx}`}
-                                      type="button"
-                                      onClick={() => insertEmojiIntoComposer(e, false)}
-                                      className="text-xl leading-none p-1.5 rounded-md hover:bg-violet-50 hover:scale-110 transition-all"
-                                      title={`Insert ${e}`}
-                                    >
-                                      {e}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        }
-                        const cat = EMOJI_CATEGORIES.find((c) => c.key === activeCategory);
-                        if (!cat) return null;
-                        return (
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wider text-slate-400 px-1.5 py-1 font-semibold">
-                              {cat.label}
-                            </p>
-                            <div className="grid grid-cols-8 gap-0.5">
-                              {cat.emojis.map((e, idx) => {
-                                const toneable = !!cat.toneable?.has(idx);
-                                return (
-                                  <button
-                                    key={`${cat.key}-${e}-${idx}`}
-                                    type="button"
-                                    onClick={() => insertEmojiIntoComposer(e, toneable)}
-                                    className="text-xl leading-none p-1.5 rounded-md hover:bg-violet-50 hover:scale-110 transition-all"
-                                    title={toneable ? `${e} (skin tone applies)` : e}
-                                  >
-                                    {toneable ? applySkinTone(e, skinTone) : e}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
+                    <Picker
+                      data={data}
+                      onEmojiSelect={(e: any) => {
+                        insertEmojiIntoComposer(e.native, false);
+                      }}
+                      theme="light"
+                      previewPosition="bottom"
+                      skinTonePosition="search"
+                      maxFrequentRows={2}
+                      perLine={8}
+                      navPosition="top"
+                    />
                   </div>
                 )}
 
-                {/* Mention autocomplete */}
+                {/* Task/Project mention autocomplete (#) */}
                 {hasSuggestions && (
                   <div className="absolute bottom-full left-0 w-full bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto z-50 p-2 mb-2">
                     {filteredTasks.length > 0 && (
@@ -1847,10 +1879,54 @@ export default function TaskDetailPanel({
                     )}
                   </div>
                 )}
+
+                {/* User mention autocomplete (@) */}
+                {showUserSuggestions && (
+                  <div className="absolute bottom-full left-0 w-full bg-white border border-slate-200 rounded-xl shadow-xl max-h-48 overflow-y-auto z-50 p-2 mb-2">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 px-2 py-1 font-semibold">
+                      Teammates
+                    </p>
+                    {filteredUsers.length === 0 ? (
+                      <div className="px-3 py-4 text-center">
+                        <p className="text-sm text-slate-500 mb-1">
+                          {mentionableUsers.length === 0
+                            ? "No teammates yet"
+                            : "No matches"}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {mentionableUsers.length === 0
+                            ? "Invite members from Workspace settings to @-mention them."
+                            : "Try a different name."}
+                        </p>
+                      </div>
+                    ) : (
+                      filteredUsers.map((u) => (
+                        <button
+                          key={"u-" + u.id}
+                          type="button"
+                          onClick={() => insertUserMention(u)}
+                          className="w-full text-left px-2 py-1.5 hover:bg-violet-50 rounded-lg flex items-center gap-2 transition-colors"
+                        >
+                          <span className="w-6 h-6 rounded-full bg-violet-500 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                            {u.name[0]?.toUpperCase()}
+                          </span>
+                          <span className="text-sm text-slate-700 truncate">{u.name}</span>
+                          {u.email && (
+                            <span className="text-xs text-slate-400 truncate ml-auto">
+                              {u.email}
+                            </span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
         </div>
+
+        
 
 
         {/* Toast */}
