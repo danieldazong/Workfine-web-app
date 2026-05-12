@@ -22,9 +22,10 @@ import {
   AlertCircle,
   LogOut,
   AlertTriangle,
+  ArrowRightLeft,
+  ChevronDown,
   Lock,
 } from "lucide-react";
-
 
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase/config";
@@ -36,11 +37,9 @@ import {
   updateMemberRole,
   removeMember,
   leaveWorkspace,
-  deleteWorkspace,
+  transferOwnership,
   WorkspaceRole,
 } from "../lib/firebase/workspaceMembers";
-
-
 
 type TabId = "overview" | "members" | "settings";
 
@@ -50,17 +49,11 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "settings", label: "Settings" },
 ];
 
-const fmtDate = (d: string) =>
-  new Date(d + "T12:00:00").toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-  });
-
 export default function WorkspacePage() {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+ const { user, workspaceId: authWorkspaceId } = useAuth();
   const { members, pendingInvites, workspaceData, projects, tasks, cancelInvite } = useAppData();
-
 
   const activeTab: TabId =
     tab === "members" || tab === "settings" ? (tab as TabId) : "overview";
@@ -68,14 +61,59 @@ export default function WorkspacePage() {
   const [showInvite, setShowInvite] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
 
-  const wsName     = workspaceData?.name     ?? "My Workspace";
-  const wsInitial  = (wsName?.[0] ?? "W").toUpperCase();
-  const wsColor    = "#8b5cf6";
-  const activeMembers = members.filter((m) => m.status === "active");
+  const wsId = workspaceData?.id ?? workspaceData?.workspaceId ?? authWorkspaceId ?? "";
+const wsName = workspaceData?.name ?? "My Workspace";
+const wsInitial = (wsName?.[0] ?? "W").toUpperCase();
+const wsColor = "#8b5cf6";
 
-  // current user's role in this workspace
-  const myMembership = members.find((m) => m.userId === user?.uid);
-  const canManage = myMembership?.role === "owner" || myMembership?.role === "admin";
+const isOwnerFromWorkspaceDoc =
+  !!user?.uid && workspaceData?.ownerId === user.uid;
+
+const fallbackOwnerMember =
+  isOwnerFromWorkspaceDoc && user
+    ? {
+        userId: user.uid,
+        email: user.email ?? "",
+        displayName:
+          user.displayName ?? user.email?.split("@")[0] ?? "Owner",
+        avatar:
+          (user.displayName ?? user.email ?? "O")[0]?.toUpperCase() ?? "O",
+        avatarColor: "#8b5cf6",
+        photoURL: user.photoURL ?? "",
+        role: "owner",
+        status: "active",
+        workspaceId: wsId,
+        joinedAt: workspaceData?.createdAt ?? null,
+        invitedBy: "",
+        lastActive: null,
+        permissions: {
+          canCreateProjects: true,
+          canDeleteProjects: true,
+          canInviteMembers: true,
+          canManageTasks: true,
+          canEdit: true,
+          canDelete: true,
+          canInvite: true,
+        },
+      }
+    : null;
+
+const membersForUi =
+  members.length > 0
+    ? members
+    : fallbackOwnerMember
+      ? [fallbackOwnerMember]
+      : [];
+
+const activeMembers = membersForUi.filter((m) => m.status === "active");
+
+const myMembership = membersForUi.find((m) => m.userId === user?.uid);
+
+const canManage =
+  isOwnerFromWorkspaceDoc ||
+  myMembership?.role === "owner" ||
+  myMembership?.role === "admin";
+
 
   return (
     <div className="bg-[#f4f5f7] min-h-screen overflow-y-auto">
@@ -91,7 +129,7 @@ export default function WorkspacePage() {
               {wsInitial}
             </div>
             <div>
-                            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
                   {wsName}
                 </h1>
@@ -111,7 +149,6 @@ export default function WorkspacePage() {
                   <Star size={16} />
                 </button>
               </div>
-
 
               <p className="text-xs text-gray-400 mt-0.5">
                 {workspaceData?.id ?? ""}
@@ -172,10 +209,11 @@ export default function WorkspacePage() {
             onOpenSettings={() => navigate("/workspace/settings")}
           />
         )}
-        {activeTab === "members" && (
+
+       {activeTab === "members" && (
   <MembersTab
-    workspaceId={workspaceData?.id}
-    members={members}
+    workspaceId={wsId}
+    members={membersForUi}
     pendingInvites={pendingInvites}
     myUid={user?.uid ?? ""}
     canManage={canManage}
@@ -184,29 +222,31 @@ export default function WorkspacePage() {
   />
 )}
 
-        {activeTab === "settings" && (
+
+       {activeTab === "settings" && (
   <SettingsTab
-    workspaceId={workspaceData?.id}
+    workspaceId={wsId}
     workspaceData={workspaceData}
     myUid={user?.uid ?? ""}
     myRole={myMembership?.role as WorkspaceRole}
     canManage={canManage}
+    members={membersForUi}
   />
 )}
 
+
       </div>
 
-      {showInvite && workspaceData?.id && (
-        <InviteMemberModal
-          onClose={() => setShowInvite(false)}
-          workspaceId={workspaceData.id}
-          workspaceName={wsName}
-          members={members}
-          pendingInvites={pendingInvites}
-        />
-      )}
+      {showInvite && wsId && (
+  <InviteMemberModal
+    onClose={() => setShowInvite(false)}
+    workspaceId={wsId}
+    workspaceName={wsName}
+    members={membersForUi}
+    pendingInvites={pendingInvites}
+  />
+)}
 
-    
 
       {showCreateProject && (
         <CreateProjectModal onClose={() => setShowCreateProject(false)} />
@@ -237,21 +277,62 @@ function OverviewTab({
   const hasProjects    = projects.length > 0;
   const hasTeammates   = members.length > 1;
 
+  // Lifted editing state so the setup checklist can open the description editor.
+  const [editingDesc, setEditingDesc] = useState(false);
+
   const setupItems = [
-    { id: "desc",  label: "Add workspace description", done: hasDescription, onClick: () => {
-        // inline edit handled below by EditableDescription
-        document.getElementById("ws-desc-edit-btn")?.click();
+  {
+    id: "desc",
+    label: hasDescription
+      ? "Edit workspace description"
+      : "Add workspace description",
+    done: hasDescription,
+    onClick: () => {
+      if (!canManage) {
+        alert("Only workspace owners or admins can edit the description.");
+        return;
       }
+
+      setEditingDesc(true);
+
+      setTimeout(() => {
+        document
+          .getElementById("ws-hero-card")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+        setTimeout(() => {
+          const textarea = document.querySelector(
+            "#ws-hero-card textarea"
+          ) as HTMLTextAreaElement | null;
+
+          textarea?.focus();
+        }, 120);
+      }, 50);
     },
-    { id: "proj",  label: "Create your first project", done: hasProjects,    onClick: onCreateProject },
-    { id: "team",  label: "Invite a teammate",         done: hasTeammates,   onClick: onInvite },
-  ];
+  },
+  {
+    id: "proj",
+    label: hasProjects
+      ? "Create another project"
+      : "Create your first project",
+    done: hasProjects,
+    onClick: onCreateProject,
+  },
+  {
+    id: "team",
+    label: hasTeammates
+      ? "Invite another teammate"
+      : "Invite a teammate",
+    done: hasTeammates,
+    onClick: onInvite,
+  },
+];
+
 
   const completedSteps = setupItems.filter((i) => i.done).length;
   const totalSteps     = setupItems.length;
   const setupDone      = completedSteps === totalSteps;
 
-  // stats
   const totalTasks     = tasks.length;
   const completedTasks = tasks.filter((t: any) => t.status === "Done").length;
   const completion     = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
@@ -262,8 +343,8 @@ function OverviewTab({
       {/* ─── LEFT COLUMN (2/3) ───────────────────────────────────────── */}
       <div className="lg:col-span-2 space-y-5">
 
-        {/* Workspace hero card with editable description */}
-        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
+        {/* Workspace hero card */}
+        <div id="ws-hero-card" className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
           <div className="flex items-start gap-4">
             <div
               className="w-16 h-16 rounded-2xl flex items-center justify-center text-white font-bold text-2xl shadow-sm flex-shrink-0"
@@ -277,6 +358,8 @@ function OverviewTab({
                 workspaceId={workspaceData?.id}
                 value={description}
                 canEdit={canManage}
+                externalEditing={editingDesc}
+                onEditingChange={setEditingDesc}
               />
             </div>
           </div>
@@ -307,13 +390,15 @@ function OverviewTab({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {setupItems.map((item) => (
                 <button
-                  key={item.id}
-                  onClick={item.onClick}
-                  disabled={item.done}
-                  className={`text-left p-3 rounded-xl border transition-all ${
-                    item.done
-                      ? "bg-emerald-50 border-emerald-200 cursor-default"
-                      : "bg-white border-gray-200 hover:border-violet-300 hover:shadow-sm cursor-pointer"
+  key={item.id}
+  type="button"
+  onClick={item.onClick}
+  className={`text-left p-3 rounded-xl border transition-all ${
+
+                   item.done
+  ? "bg-emerald-50 border-emerald-200 hover:border-emerald-300 hover:shadow-md active:scale-[0.98] cursor-pointer"
+  : "bg-white border-gray-200 hover:border-violet-400 hover:shadow-md hover:bg-violet-50/30 active:scale-[0.98] cursor-pointer"
+
                   }`}
                 >
                   <div className="flex items-start gap-2">
@@ -334,7 +419,7 @@ function OverviewTab({
           </div>
         )}
 
-        {/* Curated work / Recent projects */}
+        {/* Curated work */}
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -418,7 +503,6 @@ function OverviewTab({
       {/* ─── RIGHT COLUMN (1/3) ──────────────────────────────────────── */}
       <div className="space-y-5">
 
-        {/* Members preview */}
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-gray-800">Members</h3>
@@ -467,7 +551,6 @@ function OverviewTab({
           </button>
         </div>
 
-        {/* Workspace stats */}
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
           <h3 className="text-sm font-semibold text-gray-800 mb-4">Workspace at a glance</h3>
           <div className="space-y-3">
@@ -489,7 +572,6 @@ function OverviewTab({
           </div>
         </div>
 
-        {/* Plan card */}
         <div className="bg-gradient-to-br from-violet-600 to-violet-800 rounded-2xl shadow-sm p-5 text-white">
           <p className="text-xs uppercase tracking-wider opacity-80 mb-1">Current plan</p>
           <p className="text-lg font-bold mb-2 capitalize">{workspaceData?.plan ?? "Free"}</p>
@@ -508,8 +590,6 @@ function OverviewTab({
   );
 }
 
-// Tiny helper because OverviewTab is a child function — it doesn't have
-// access to react-router's `navigate`. We use window.location for simplicity.
 function navigate2(path: string) {
   window.history.pushState({}, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
@@ -532,33 +612,61 @@ function EditableDescription({
   workspaceId,
   value,
   canEdit,
+  externalEditing,
+  onEditingChange,
 }: {
   workspaceId?: string;
   value: string;
   canEdit: boolean;
+  externalEditing?: boolean;
+  onEditingChange?: (v: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft,   setDraft]   = useState(value);
   const [saving,  setSaving]  = useState(false);
 
-  // keep draft in sync if value changes externally
+  React.useEffect(() => {
+    if (externalEditing !== undefined && externalEditing !== editing) {
+      setEditing(externalEditing);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalEditing]);
+
+  function updateEditing(v: boolean) {
+    setEditing(v);
+    onEditingChange?.(v);
+  }
+
   React.useEffect(() => { setDraft(value); }, [value]);
 
   async function save() {
-    if (!workspaceId) return;
-    setSaving(true);
-    try {
-      await updateDoc(doc(db, "workspaces", workspaceId), {
-        description: draft.trim(),
-        updatedAt: serverTimestamp(),
-      });
-      setEditing(false);
-    } catch (e) {
-      console.error("[Workspace] save description failed:", e);
-    } finally {
-      setSaving(false);
-    }
+  if (!workspaceId) {
+    alert("Workspace is still loading. Please refresh and try again.");
+    return;
   }
+
+  if (!canEdit) {
+    alert("Only workspace owners or admins can edit the description.");
+    return;
+  }
+
+  setSaving(true);
+
+  try {
+    await updateDoc(doc(db, "workspaces", workspaceId), {
+      description: draft.trim(),
+      updatedAt: serverTimestamp(),
+    });
+
+    updateEditing(false);
+  } catch (e: any) {
+    console.error("[Workspace] save description failed:", e);
+    alert(e?.message || "Failed to save workspace description.");
+  } finally {
+    setSaving(false);
+  }
+}
+
 
   if (editing) {
     return (
@@ -569,13 +677,13 @@ function EditableDescription({
           rows={2}
           autoFocus
           placeholder="Describe what this workspace is for..."
-          className="w-full text-sm text-gray-700 border border-violet-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
+          className="w-full text-sm text-gray-900 placeholder-gray-400 bg-white border border-violet-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
         />
         <div className="flex items-center justify-between mt-1.5">
           <span className="text-[10px] text-gray-400">{draft.length}/280</span>
           <div className="flex gap-2">
             <button
-              onClick={() => { setDraft(value); setEditing(false); }}
+              onClick={() => { setDraft(value); updateEditing(false); }}
               disabled={saving}
               className="px-3 py-1 text-xs text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
             >
@@ -598,7 +706,8 @@ function EditableDescription({
     return (
       <button
         id="ws-desc-edit-btn"
-        onClick={() => canEdit && setEditing(true)}
+        type="button"
+        onClick={() => canEdit && updateEditing(true)}
         disabled={!canEdit}
         className={`mt-1 text-sm italic flex items-center gap-1 ${
           canEdit
@@ -617,7 +726,8 @@ function EditableDescription({
       {canEdit && (
         <button
           id="ws-desc-edit-btn"
-          onClick={() => setEditing(true)}
+          type="button"
+          onClick={() => updateEditing(true)}
           className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-violet-600 transition-opacity flex-shrink-0 mt-0.5"
           title="Edit description"
         >
@@ -627,10 +737,6 @@ function EditableDescription({
     </div>
   );
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// STUBS for later phases
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MEMBERS TAB
@@ -674,7 +780,6 @@ function MembersTab({
   const myMembership = members.find((m) => m.userId === myUid);
   const myRole: WorkspaceRole = (myMembership?.role as WorkspaceRole) ?? "member";
 
-  // filter members by search
   const q = query.trim().toLowerCase();
   const filteredMembers = q
     ? activeMembers.filter((m) =>
@@ -734,7 +839,6 @@ function MembersTab({
   return (
     <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
 
-      {/* Toolbar */}
       <div className="px-5 pt-5 pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between gap-3 mb-4">
           <div>
@@ -754,7 +858,6 @@ function MembersTab({
           )}
         </div>
 
-        {/* Sub-tabs + Search */}
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex gap-1">
             <button
@@ -793,13 +896,12 @@ function MembersTab({
               placeholder={subTab === "active" ? "Search members..." : "Search invites..."}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
+              className="w-full pl-8 pr-3 py-1.5 text-xs text-gray-900 placeholder-gray-400 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
             />
           </div>
         </div>
       </div>
 
-      {/* Error banner */}
       {error && (
         <div className="mx-5 mt-3">
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
@@ -812,7 +914,6 @@ function MembersTab({
         </div>
       )}
 
-      {/* Content */}
       <div className="px-5 py-4">
         {subTab === "active" && (
           <ActiveMembersList
@@ -881,7 +982,6 @@ function ActiveMembersList({
 
   return (
     <div className="divide-y divide-gray-100">
-      {/* Header row */}
       <div className="grid grid-cols-[1fr_140px_120px_36px] items-center gap-3 px-2 pb-2 text-[10px] uppercase tracking-wider text-gray-400 font-semibold">
         <span>Member</span>
         <span>Role</span>
@@ -919,7 +1019,6 @@ function ActiveMembersList({
             key={m.userId}
             className="grid grid-cols-[1fr_140px_120px_36px] items-center gap-3 px-2 py-3 hover:bg-gray-50 transition-colors rounded-lg"
           >
-            {/* Member identity */}
             <div className="flex items-center gap-3 min-w-0">
               <div
                 className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
@@ -936,7 +1035,6 @@ function ActiveMembersList({
               </div>
             </div>
 
-            {/* Role */}
             {editable ? (
               <select
                 disabled={isBusy}
@@ -955,10 +1053,8 @@ function ActiveMembersList({
               </div>
             )}
 
-            {/* Joined */}
             <span className="text-xs text-gray-500">{joinedDate}</span>
 
-            {/* Remove */}
             <div className="flex justify-end">
               {removable ? (
                 <button
@@ -1085,7 +1181,6 @@ function PendingInvitesList({
   );
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // SETTINGS TAB
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1096,12 +1191,14 @@ function SettingsTab({
   myUid,
   myRole,
   canManage,
+  members,
 }: {
   workspaceId?: string;
   workspaceData: any;
   myUid: string;
   myRole?: WorkspaceRole;
   canManage: boolean;
+  members: any[];
 }) {
   const navigate = useNavigate();
   const isOwner = myRole === "owner";
@@ -1112,16 +1209,19 @@ function SettingsTab({
   const [generalSaved, setGeneralSaved] = useState(false);
   const [generalError, setGeneralError] = useState("");
 
-  // keep local state in sync if firestore changes
   React.useEffect(() => { setName(workspaceData?.name ?? ""); }, [workspaceData?.name]);
   React.useEffect(() => { setDescription(workspaceData?.description ?? ""); }, [workspaceData?.description]);
 
   const [showLeave, setShowLeave] = useState(false);
-  const [showDelete, setShowDelete] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
 
   const dirty =
     name.trim() !== (workspaceData?.name ?? "") ||
     description.trim() !== (workspaceData?.description ?? "");
+
+  const transferCandidates = members.filter(
+    (m) => m.status === "active" && m.userId !== myUid
+  );
 
   async function saveGeneral() {
     if (!workspaceId) return;
@@ -1156,14 +1256,10 @@ function SettingsTab({
   return (
     <div className="space-y-5">
 
-      {/* ─── General ──────────────────────────────────────────────── */}
-      <Section
-        title="General"
-        description="Basic information about your workspace"
-      >
+      <Section title="General" description="Basic information about your workspace">
         <div className="space-y-4">
           <Field label="Workspace name" required>
-                        <input
+            <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value.slice(0, 60))}
@@ -1172,12 +1268,11 @@ function SettingsTab({
               placeholder="Enter workspace name"
               className="w-full px-3 py-2 text-sm text-gray-900 placeholder-gray-400 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:bg-gray-50 disabled:text-gray-500"
             />
-
             <p className="text-[10px] text-gray-400 mt-1">{name.length}/60</p>
           </Field>
 
           <Field label="Description">
-                        <textarea
+            <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value.slice(0, 280))}
               disabled={!canManage}
@@ -1186,7 +1281,6 @@ function SettingsTab({
               placeholder="Describe what this workspace is for..."
               className="w-full px-3 py-2 text-sm text-gray-900 placeholder-gray-400 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none disabled:bg-gray-50 disabled:text-gray-500"
             />
-
             <p className="text-[10px] text-gray-400 mt-1">{description.length}/280</p>
           </Field>
 
@@ -1226,7 +1320,7 @@ function SettingsTab({
                   <CheckCircle2 size={12} /> Saved
                 </span>
               )}
-                            <button
+              <button
                 onClick={() => {
                   setName(workspaceData?.name ?? "");
                   setDescription(workspaceData?.description ?? "");
@@ -1237,7 +1331,6 @@ function SettingsTab({
               >
                 Reset
               </button>
-
               <button
                 onClick={saveGeneral}
                 disabled={!dirty || savingGeneral}
@@ -1250,11 +1343,7 @@ function SettingsTab({
         </div>
       </Section>
 
-      {/* ─── Privacy (stub) ──────────────────────────────────────── */}
-      <Section
-        title="Privacy & access"
-        description="Control who can find and join this workspace"
-      >
+      <Section title="Privacy & access" description="Control who can find and join this workspace">
         <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-200">
           <Lock className="text-gray-400 flex-shrink-0 mt-0.5" size={18} />
           <div className="flex-1">
@@ -1267,21 +1356,35 @@ function SettingsTab({
         </div>
       </Section>
 
-      {/* ─── Danger zone ─────────────────────────────────────────── */}
-      <Section
-        title="Danger zone"
-        description="Irreversible actions — proceed carefully"
-        danger
-      >
+      <Section title="Ownership & membership" description="Manage your role in this workspace">
         <div className="space-y-3">
 
-          {/* Leave workspace */}
+          {isOwner && (
+            <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-800">Transfer ownership</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Hand over this workspace to another member. You'll be demoted to admin and can then leave if you wish.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowTransfer(true)}
+                disabled={transferCandidates.length === 0}
+                className="ml-4 flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-violet-300 hover:text-violet-700 rounded-lg text-xs font-semibold transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={transferCandidates.length === 0 ? "No other members to transfer to. Invite someone first." : ""}
+              >
+                <ArrowRightLeft size={13} />
+                Transfer ownership
+              </button>
+            </div>
+          )}
+
           {!isOwner ? (
             <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl">
               <div className="flex-1">
                 <p className="text-sm font-semibold text-gray-800">Leave workspace</p>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  You'll lose access to all projects, tasks, and members in this workspace.
+                  You'll lose access to all projects, tasks, and members in this workspace. You can rejoin only if invited again.
                 </p>
               </div>
               <button
@@ -1297,34 +1400,14 @@ function SettingsTab({
               <div className="flex-1">
                 <p className="text-sm font-semibold text-gray-700">Leave workspace</p>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  As the owner, you can't leave. Delete the workspace or transfer ownership instead.
+                  As the owner, you can't leave directly. Transfer ownership first, then you'll be able to leave.
                 </p>
               </div>
-            </div>
-          )}
-
-          {/* Delete workspace (owner only) */}
-          {isOwner && (
-            <div className="flex items-center justify-between p-4 border border-red-200 rounded-xl bg-red-50/30">
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-red-700">Delete workspace</p>
-                <p className="text-xs text-red-500 mt-0.5">
-                  Permanently delete this workspace, all members, and pending invites. Personal projects and tasks are preserved.
-                </p>
-              </div>
-              <button
-                onClick={() => setShowDelete(true)}
-                className="ml-4 flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg text-xs font-semibold transition-colors flex-shrink-0"
-              >
-                <Trash2 size={13} />
-                Delete workspace
-              </button>
             </div>
           )}
         </div>
       </Section>
 
-      {/* ─── Confirm dialogs ─────────────────────────────────────── */}
       {showLeave && workspaceId && (
         <ConfirmDialog
           icon={<LogOut className="text-red-600" size={22} />}
@@ -1335,23 +1418,19 @@ function SettingsTab({
           onCancel={() => setShowLeave(false)}
           onConfirm={async () => {
             await leaveWorkspace(workspaceId, myUid);
-            // AppDataContext will detect eviction and switch user to personal workspace
             navigate("/");
           }}
         />
       )}
 
-      {showDelete && workspaceId && (
-        <ConfirmDialog
-          icon={<AlertTriangle className="text-red-600" size={22} />}
-          title="Delete workspace permanently?"
-          message={`This will delete "${workspaceData?.name ?? "this workspace"}", remove all members, and cancel all pending invitations. This action cannot be undone.`}
-          confirmLabel="Delete forever"
-          confirmWord="DELETE"
-          onCancel={() => setShowDelete(false)}
-          onConfirm={async () => {
-            await deleteWorkspace(workspaceId);
-            navigate("/");
+      {showTransfer && workspaceId && (
+        <TransferOwnershipDialog
+          workspaceId={workspaceId}
+          currentOwnerId={myUid}
+          candidates={transferCandidates}
+          onCancel={() => setShowTransfer(false)}
+          onTransferred={() => {
+            setShowTransfer(false);
           }}
         />
       )}
@@ -1360,7 +1439,194 @@ function SettingsTab({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers used by SettingsTab
+// TRANSFER OWNERSHIP DIALOG
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TransferOwnershipDialog({
+  workspaceId,
+  currentOwnerId,
+  candidates,
+  onCancel,
+  onTransferred,
+}: {
+  workspaceId: string;
+  currentOwnerId: string;
+  candidates: any[];
+  onCancel: () => void;
+  onTransferred: () => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [confirmText, setConfirmText] = useState("");
+  const [working, setWorking] = useState(false);
+  const [err, setErr] = useState("");
+
+  const selected = candidates.find((c) => c.userId === selectedId);
+  const requiredWord = "TRANSFER";
+  const canConfirm = !!selected && confirmText === requiredWord;
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !working) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, working]);
+
+  async function run() {
+    if (!selected) return;
+    setErr("");
+    setWorking(true);
+    try {
+      await transferOwnership(workspaceId, currentOwnerId, selected.userId, selected.email);
+      onTransferred();
+    } catch (e: any) {
+      console.error("[TransferOwnership]", e);
+      setErr(e?.message || "Transfer failed. Please try again.");
+      setWorking(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/70 backdrop-blur-md"
+      style={{ animation: "dlgFadeIn 0.18s ease-out" }}
+      onClick={(e) => { if (e.target === e.currentTarget && !working) onCancel(); }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md ring-1 ring-gray-200/60 overflow-hidden"
+        style={{ animation: "dlgSlideUp 0.24s cubic-bezier(0.16, 1, 0.3, 1)" }}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="px-6 pt-6 pb-4">
+          <div className="flex items-start gap-4">
+            <div className="w-11 h-11 rounded-full bg-violet-50 ring-[6px] ring-violet-50/50 flex items-center justify-center flex-shrink-0">
+              <ArrowRightLeft className="text-violet-600" size={20} />
+            </div>
+            <div className="flex-1 pt-0.5 min-w-0">
+              <h3 className="text-[15px] font-semibold text-gray-900 leading-snug">
+                Transfer workspace ownership
+              </h3>
+              <p className="text-[13px] text-gray-500 mt-1.5 leading-relaxed">
+                Pick a member to become the new owner. You'll be demoted to admin and they'll get full control over this workspace.
+              </p>
+            </div>
+            <button
+              onClick={onCancel}
+              disabled={working}
+              className="text-gray-400 hover:text-gray-700 hover:bg-gray-100 p-1 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0"
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="mt-5 ml-[60px]">
+            <label className="block text-[11px] font-semibold text-gray-600 mb-2 uppercase tracking-wide">
+              New owner
+            </label>
+            {candidates.length === 0 ? (
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
+                No other members in this workspace. Invite someone first, then come back here to transfer ownership.
+              </div>
+            ) : (
+              <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {candidates.map((c) => {
+                  const isSelected = c.userId === selectedId;
+                  return (
+                    <button
+                      key={c.userId}
+                      type="button"
+                      onClick={() => setSelectedId(c.userId)}
+                      disabled={working}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                        isSelected ? "bg-violet-50" : "hover:bg-gray-50"
+                      }`}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                        style={{ backgroundColor: c.avatarColor || "#8b5cf6" }}
+                      >
+                        {c.avatar || (c.displayName?.[0] ?? "M").toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{c.displayName}</p>
+                        <p className="text-xs text-gray-400 truncate">{c.email}</p>
+                      </div>
+                      {isSelected && (
+                        <CheckCircle2 className="text-violet-600 flex-shrink-0" size={16} />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {selected && (
+            <div className="mt-4 ml-[60px]">
+              <label className="block text-[11px] font-semibold text-gray-600 mb-2 uppercase tracking-wide">
+                Type{" "}
+                <span className="font-mono text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded text-[11px] tracking-normal normal-case">
+                  {requiredWord}
+                </span>{" "}
+                to confirm
+              </label>
+              <input
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                spellCheck={false}
+                autoComplete="off"
+                className="w-full px-3.5 py-2.5 text-sm font-mono text-gray-900 placeholder-gray-300 bg-white border border-gray-200 rounded-lg focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition-all"
+                placeholder={requiredWord}
+              />
+            </div>
+          )}
+
+          {err && (
+            <div className="mt-4 ml-[60px] flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+              <AlertCircle size={14} className="text-red-600 flex-shrink-0 mt-0.5" />
+              <span className="text-xs text-red-700 leading-relaxed">{err}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={working}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={run}
+            disabled={!canConfirm || working}
+            className="px-4 py-2 text-sm font-semibold text-white bg-violet-600 rounded-lg hover:bg-violet-700 active:bg-violet-800 disabled:bg-violet-300 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow flex items-center justify-center gap-2 min-w-[150px]"
+          >
+            {working ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Transferring…</span>
+              </>
+            ) : (
+              <span>Transfer ownership</span>
+            )}
+          </button>
+        </div>
+
+        <style>{`
+          @keyframes dlgFadeIn { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes dlgSlideUp { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        `}</style>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function Section({
@@ -1421,7 +1687,7 @@ function ConfirmDialog({
   title: string;
   message: string;
   confirmLabel: string;
-  confirmWord: string;     // if set, user must type this word to enable Confirm
+  confirmWord: string;
   onCancel: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -1431,6 +1697,14 @@ function ConfirmDialog({
 
   const canConfirm = confirmWord ? typed === confirmWord : true;
 
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !working) onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel, working]);
+
   async function run() {
     setErr("");
     setWorking(true);
@@ -1438,82 +1712,109 @@ function ConfirmDialog({
       await onConfirm();
     } catch (e: any) {
       console.error("[ConfirmDialog]", e);
-      setErr(e?.message || "Action failed.");
+      setErr(e?.message || "Action failed. Please try again.");
       setWorking(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/70 backdrop-blur-md"
+      style={{ animation: "dlgFadeIn 0.18s ease-out" }}
+      onClick={(e) => { if (e.target === e.currentTarget && !working) onCancel(); }}
+    >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
-        style={{ animation: "fadeInUp 0.2s ease" }}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md ring-1 ring-gray-200/60 overflow-hidden"
+        style={{ animation: "dlgSlideUp 0.24s cubic-bezier(0.16, 1, 0.3, 1)" }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
       >
-        <div className="flex items-start gap-3 mb-3">
-          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-            {icon}
+        <div className="px-6 pt-6 pb-4">
+          <div className="flex items-start gap-4">
+            <div className="w-11 h-11 rounded-full bg-red-50 ring-[6px] ring-red-50/50 flex items-center justify-center flex-shrink-0">
+              {icon}
+            </div>
+            <div className="flex-1 pt-0.5 min-w-0">
+              <h3 id="confirm-title" className="text-[15px] font-semibold text-gray-900 leading-snug">
+                {title}
+              </h3>
+              <p className="text-[13px] text-gray-500 mt-1.5 leading-relaxed">
+                {message}
+              </p>
+            </div>
+            <button
+              onClick={onCancel}
+              disabled={working}
+              className="text-gray-400 hover:text-gray-700 hover:bg-gray-100 p-1 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0"
+              aria-label="Close"
+            >
+              <X size={16} />
+            </button>
           </div>
-          <div className="flex-1">
-            <h3 className="text-base font-semibold text-gray-900">{title}</h3>
-            <p className="text-sm text-gray-500 mt-1 leading-relaxed">{message}</p>
-          </div>
+
+          {confirmWord && (
+            <div className="mt-5 ml-[60px]">
+              <label className="block text-[11px] font-semibold text-gray-600 mb-2 uppercase tracking-wide">
+                Type{" "}
+                <span className="font-mono text-red-700 bg-red-50 px-1.5 py-0.5 rounded text-[11px] tracking-normal normal-case">
+                  {confirmWord}
+                </span>{" "}
+                to confirm
+              </label>
+              <input
+                type="text"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                autoFocus
+                spellCheck={false}
+                autoComplete="off"
+                className="w-full px-3.5 py-2.5 text-sm font-mono text-gray-900 placeholder-gray-300 bg-white border border-gray-200 rounded-lg focus:outline-none focus:border-red-400 focus:ring-2 focus:ring-red-100 transition-all"
+                placeholder={confirmWord}
+              />
+              {typed.length > 0 && !canConfirm && (
+                <p className="text-[11px] text-gray-400 mt-1.5">Must match exactly</p>
+              )}
+            </div>
+          )}
+
+          {err && (
+            <div className="mt-4 ml-[60px] flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+              <AlertCircle size={14} className="text-red-600 flex-shrink-0 mt-0.5" />
+              <span className="text-xs text-red-700 leading-relaxed">{err}</span>
+            </div>
+          )}
         </div>
 
-        {confirmWord && (
-          <div className="mt-4">
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              Type <span className="font-mono text-red-600">{confirmWord}</span> to confirm
-            </label>
-            <input
-              type="text"
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              autoFocus
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
-              placeholder={confirmWord}
-            />
-          </div>
-        )}
-
-        {err && (
-          <div className="mt-3 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
-            <AlertCircle size={13} />
-            <span>{err}</span>
-          </div>
-        )}
-
-        <div className="flex gap-2 mt-5">
+        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-2">
           <button
             onClick={onCancel}
             disabled={working}
-            className="flex-1 py-2.5 border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             Cancel
           </button>
           <button
             onClick={run}
             disabled={!canConfirm || working}
-            className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+            className="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 active:bg-red-800 disabled:bg-red-300 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow flex items-center justify-center gap-2 min-w-[130px]"
           >
             {working ? (
               <>
-                <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                Working...
+                <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Working…</span>
               </>
             ) : (
-              confirmLabel
+              <span>{confirmLabel}</span>
             )}
           </button>
         </div>
 
         <style>{`
-          @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(14px); }
-            to   { opacity: 1; transform: translateY(0); }
-          }
+          @keyframes dlgFadeIn { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes dlgSlideUp { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
         `}</style>
       </div>
     </div>
   );
 }
-

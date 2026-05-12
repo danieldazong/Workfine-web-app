@@ -11,6 +11,7 @@ src\components\PageShell.tsx
 src\components\Sidebar.tsx
 src\components\TaskDetailModal.tsx
 src\components\TaskDetailPanel.tsx
+src\components\WorkspaceModal.tsx
 src\components\modals\CreateProjectModal.tsx
 src\components\modals\TaskModal.tsx
 src\context\AppDataContext.tsx
@@ -19,6 +20,7 @@ src\features\project\views\ProjectBoardView.tsx
 src\features\project\views\ProjectCalendarView.tsx
 src\features\project\views\ProjectListView.tsx
 src\features\project\views\ProjectTimelineView.tsx
+src\hooks\useMentionableUsers.ts
 src\lib\utils.ts
 src\lib\firebase\auth.ts
 src\lib\firebase\cleanup.ts
@@ -29,6 +31,7 @@ src\lib\firebase\projects.ts
 src\lib\firebase\storage.ts
 src\lib\firebase\tasks.ts
 src\lib\firebase\users.ts
+src\lib\firebase\workspaceMembers.ts
 src\pages\CalendarPage.tsx
 src\pages\DashboardPage.tsx
 src\pages\InsightsPage.tsx
@@ -36,8 +39,8 @@ src\pages\JoinWorkspacePage.tsx
 src\pages\LoginPage.tsx
 src\pages\MyTasksPage.tsx
 src\pages\ProjectPage.tsx
-src\pages\ProjectsPage.tsx
 src\pages\ReportsPage.tsx
 src\pages\SettingsPage.tsx
 src\pages\TeamPage.tsx
+src\pages\WorkspacePage.tsx
 src\utils\overdueUtils.ts

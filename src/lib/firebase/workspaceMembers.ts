@@ -5,15 +5,14 @@ import {
   getDoc,
   setDoc,
   serverTimestamp,
-  collection,
-  getDocs,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "./config";
 
 export type WorkspaceRole = "owner" | "admin" | "member" | "viewer";
 
 /**
- * Update a member's role inside a workspace.
+ * Update a member's role and permissions in a workspace.
  */
 export async function updateMemberRole(
   workspaceId: string,
@@ -22,112 +21,104 @@ export async function updateMemberRole(
 ): Promise<void> {
   const memberRef = doc(db, "workspaces", workspaceId, "members", userId);
 
+  const canEdit   = newRole === "owner" || newRole === "admin" || newRole === "member";
+  const canDelete = newRole === "owner" || newRole === "admin";
+  const canInvite = newRole === "owner" || newRole === "admin";
+
   await updateDoc(memberRef, {
     role: newRole,
-    permissions: {
-      canCreateProjects: newRole !== "viewer",
-      canDeleteProjects: newRole === "admin" || newRole === "owner",
-      canInviteMembers:  newRole === "admin" || newRole === "owner",
-      canManageTasks:    newRole !== "viewer",
-    },
+    permissions: { canEdit, canDelete, canInvite },
     lastActive: serverTimestamp(),
   });
 }
 
 /**
- * Remove a member from a workspace and bump them to their personal workspace.
+ * Remove a member from a workspace and reset their workspaceId to a personal one.
  */
 export async function removeMember(
   workspaceId: string,
   userId: string
 ): Promise<void> {
+  // 1. Delete member document
   await deleteDoc(doc(db, "workspaces", workspaceId, "members", userId));
 
+  // 2. Reset user's workspaceId to a personal workspace ID
   try {
     const userRef  = doc(db, "users", userId);
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
-      const data = userSnap.data() as any;
-      const personalWsId =
-        data.personalWorkspaceId ?? `personal-${userId.slice(0, 8)}`;
-
+      const personalId = `WF-${userId.slice(0, 6)}`;
       await setDoc(
         userRef,
-        {
-          workspaceId: personalWsId,
-          personalWorkspaceId: personalWsId,
-          lastRemovedFromWorkspaceId: workspaceId,
-          updatedAt: serverTimestamp(),
-        },
+        { workspaceId: personalId, updatedAt: serverTimestamp() },
         { merge: true }
       );
     }
   } catch (e) {
-    console.warn("[removeMember] could not reset user workspace:", e);
+    console.warn("[removeMember] could not reset user workspaceId:", e);
   }
 }
 
 /**
- * Current user leaves a workspace.
- * Owners cannot leave — they must delete the workspace instead.
+ * Convenience wrapper for the current user leaving a workspace.
  */
 export async function leaveWorkspace(
   workspaceId: string,
   userId: string
 ): Promise<void> {
-  await removeMember(workspaceId, userId);
+  return removeMember(workspaceId, userId);
 }
 
 /**
- * Permanently delete a workspace (owner only).
- * Wipes members, workspace invites, matching global invites, and the workspace doc.
- * Does NOT delete projects or tasks (those belong to users individually).
+ * Transfer ownership of a workspace to another active member.
+ *  - The new owner is promoted to role: "owner" with full permissions.
+ *  - The previous owner is demoted to role: "admin".
+ *  - The workspace document's ownerId / ownerEmail are updated.
  */
-export async function deleteWorkspace(workspaceId: string): Promise<void> {
-  const membersSnap = await getDocs(collection(db, "workspaces", workspaceId, "members"));
-  const memberUids  = membersSnap.docs.map((d) => d.id);
-
-  const invitesSnap = await getDocs(collection(db, "workspaces", workspaceId, "invites"));
-  const inviteCodes = invitesSnap.docs.map((d) => d.id);
-
-  // reset each member to their personal workspace
-  for (const uid of memberUids) {
-    try {
-      const userRef  = doc(db, "users", uid);
-      const userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) continue;
-      const data = userSnap.data() as any;
-      const personalWsId = data.personalWorkspaceId ?? `personal-${uid.slice(0, 8)}`;
-      await setDoc(
-        userRef,
-        {
-          workspaceId: personalWsId,
-          personalWorkspaceId: personalWsId,
-          lastRemovedFromWorkspaceId: workspaceId,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (e) {
-      console.warn("[deleteWorkspace] could not reset user", uid, e);
-    }
+export async function transferOwnership(
+  workspaceId: string,
+  currentOwnerId: string,
+  newOwnerId: string,
+  newOwnerEmail?: string
+): Promise<void> {
+  if (currentOwnerId === newOwnerId) {
+    throw new Error("You're already the owner of this workspace.");
   }
 
-  // delete members
-  await Promise.all(
-    memberUids.map((uid) =>
-      deleteDoc(doc(db, "workspaces", workspaceId, "members", uid))
-    )
-  );
+  const workspaceRef   = doc(db, "workspaces", workspaceId);
+  const currentOwnerRef = doc(db, "workspaces", workspaceId, "members", currentOwnerId);
+  const newOwnerRef    = doc(db, "workspaces", workspaceId, "members", newOwnerId);
 
-  // delete both invite paths
-  await Promise.all(
-    inviteCodes.flatMap((code) => [
-      deleteDoc(doc(db, "workspaces", workspaceId, "invites", code)),
-      deleteDoc(doc(db, "invites", code)),
-    ])
-  );
+  // Verify the new owner is actually a member
+  const newOwnerSnap = await getDoc(newOwnerRef);
+  if (!newOwnerSnap.exists()) {
+    throw new Error("That user is no longer a member of this workspace.");
+  }
 
-  // finally, the workspace itself
-  await deleteDoc(doc(db, "workspaces", workspaceId));
+  const batch = writeBatch(db);
+
+  // Promote new owner
+  batch.update(newOwnerRef, {
+    role: "owner",
+    permissions: { canEdit: true, canDelete: true, canInvite: true },
+    lastActive: serverTimestamp(),
+  });
+
+  // Demote previous owner to admin
+  batch.update(currentOwnerRef, {
+    role: "admin",
+    permissions: { canEdit: true, canDelete: true, canInvite: true },
+    lastActive: serverTimestamp(),
+  });
+
+  // Update workspace document
+  const wsUpdate: Record<string, any> = {
+    ownerId: newOwnerId,
+    updatedAt: serverTimestamp(),
+  };
+  if (newOwnerEmail) wsUpdate.ownerEmail = newOwnerEmail;
+
+  batch.update(workspaceRef, wsUpdate);
+
+  await batch.commit();
 }

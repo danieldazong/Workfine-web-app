@@ -13,7 +13,10 @@ import {
   signInWithPopup,
 } from "firebase/auth";
 import {
-  doc, setDoc, serverTimestamp, getDoc, updateDoc,
+  doc,
+  setDoc,
+  serverTimestamp,
+  getDoc,
 } from "firebase/firestore";
 import { auth, db } from "../lib/firebase/config";
 
@@ -39,91 +42,238 @@ const AuthContext = createContext<AuthContextType>({
   setWorkspaceId: () => {},
 });
 
+/**
+ * Ensures the workspace document AND the owner's member doc exist
+ * for the given workspaceId. Safe to call on every sign-in: it only
+ * writes what is missing. This is what guarantees no user ever lands
+ * in a workspace with a missing members subcollection.
+ */
+async function ensureWorkspaceAndMembership(
+  firebaseUser: User,
+  workspaceId: string
+): Promise<void> {
+  if (!firebaseUser?.uid || !workspaceId) return;
+
+  const displayName =
+    firebaseUser.displayName ??
+    firebaseUser.email?.split("@")[0] ??
+    "Owner";
+
+  const wsRef = doc(db, "workspaces", workspaceId);
+  const memberRef = doc(
+    db,
+    "workspaces",
+    workspaceId,
+    "members",
+    firebaseUser.uid
+  );
+
+  /**
+   * First self-heal the owner member doc.
+   * This is critical because workspace reads depend on:
+   * workspaces/{workspaceId}/members/{uid}
+   */
+  try {
+    await setDoc(
+      memberRef,
+      {
+        userId: firebaseUser.uid,
+        displayName,
+        email: firebaseUser.email ?? "",
+        photoURL: firebaseUser.photoURL ?? "",
+        avatar: displayName[0]?.toUpperCase() ?? "O",
+        avatarColor: "#8b5cf6",
+        role: "owner",
+        status: "active",
+        workspaceId,
+        joinedAt: serverTimestamp(),
+        lastActive: serverTimestamp(),
+        permissions: {
+          canEdit: true,
+          canDelete: true,
+          canInvite: true,
+          canCreateProjects: true,
+          canDeleteProjects: true,
+          canInviteMembers: true,
+          canManageTasks: true,
+        },
+      },
+      { merge: true }
+    );
+
+    console.log(
+      "[Auth] 🛠️ Created/healed owner member doc for workspace:",
+      workspaceId
+    );
+  } catch (err: any) {
+    console.warn(
+      "[Auth] ⚠️ Owner member self-heal failed:",
+      err?.code || err
+    );
+  }
+
+  /**
+   * Then ensure workspace doc exists.
+   */
+  try {
+    const wsSnap = await getDoc(wsRef);
+
+    if (!wsSnap.exists()) {
+      await setDoc(wsRef, {
+        id: workspaceId,
+        workspaceId,
+        name: `${displayName}'s Workspace`,
+        ownerId: firebaseUser.uid,
+        ownerEmail: firebaseUser.email ?? "",
+        plan: "free",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        memberCount: 1,
+        taskLimit: 50,
+        projectLimit: 3,
+        seatLimit: 1,
+        usedSeats: 1,
+        billingMode: "manual",
+        subscriptionSource: "manual",
+        subscriptionStatus: "free",
+        externalGuestLimit: 0,
+      });
+
+      console.log("[Auth] 🆕 Created missing workspace doc:", workspaceId);
+    } else {
+      const data = wsSnap.data();
+
+      if (data?.ownerId === firebaseUser.uid) {
+        await setDoc(
+          memberRef,
+          {
+            userId: firebaseUser.uid,
+            displayName,
+            email: firebaseUser.email ?? "",
+            photoURL: firebaseUser.photoURL ?? "",
+            avatar: displayName[0]?.toUpperCase() ?? "O",
+            avatarColor: "#8b5cf6",
+            role: "owner",
+            status: "active",
+            workspaceId,
+            lastActive: serverTimestamp(),
+            permissions: {
+              canEdit: true,
+              canDelete: true,
+              canInvite: true,
+              canCreateProjects: true,
+              canDeleteProjects: true,
+              canInviteMembers: true,
+              canManageTasks: true,
+            },
+          },
+          { merge: true }
+        );
+
+        console.log(
+          "[Auth] ✅ Verified owner membership for workspace:",
+          workspaceId
+        );
+      }
+    }
+  } catch (err: any) {
+    console.warn(
+      "[Auth] ⚠️ Workspace verification failed:",
+      err?.code || err
+    );
+  }
+}
+
+
 async function ensureUserProfile(firebaseUser: User): Promise<string> {
   try {
     const userRef = doc(db, "users", firebaseUser.uid);
-    const snap    = await getDoc(userRef);
+    const snap = await getDoc(userRef);
 
-    // ✅ RULE 1 — If user already has a workspaceId, ALWAYS keep it
-    // Never overwrite an existing workspace assignment
+    // RULE 1 — Existing user with a workspaceId: keep it.
     if (snap.exists() && snap.data().workspaceId) {
       const existingWid = snap.data().workspaceId as string;
 
-      // Still update presence fields but never touch workspaceId
       await setDoc(
         userRef,
         {
-          uid:         firebaseUser.uid,
+          uid: firebaseUser.uid,
           displayName: firebaseUser.displayName ?? "",
-          email:       firebaseUser.email ?? "",
-          photoURL:    firebaseUser.photoURL ?? "",
-          plan:        snap.data().plan ?? "free",
-          updatedAt:   serverTimestamp(),
-          workspaceId: existingWid, // ← preserve existing, never overwrite
+          email: firebaseUser.email ?? "",
+          photoURL: firebaseUser.photoURL ?? "",
+          plan: snap.data().plan ?? "free",
+          updatedAt: serverTimestamp(),
+          workspaceId: existingWid,
         },
         { merge: true }
       );
 
-      console.log("[Auth] ✅ Existing user — keeping workspaceId:", existingWid);
+      // Self-heal: make sure the workspace doc and owner member doc exist.
+      await ensureWorkspaceAndMembership(firebaseUser, existingWid);
+
+      console.log(
+        "[Auth] ✅ Existing user — keeping workspaceId:",
+        existingWid
+      );
       return existingWid;
     }
 
-    // ✅ RULE 2 — Check if there is a pending invite in localStorage
-    // If the user is accepting an invite, their workspaceId comes
-    // from the invite — NOT from a newly generated one
+    // RULE 2 — Pending invite: don't generate a workspace yet.
     const pendingCode = localStorage.getItem("pendingInviteCode");
     if (pendingCode) {
-      console.log("[Auth] 🎫 Pending invite found in localStorage:", pendingCode);
-      // The workspaceId will be set by JoinWorkspacePage after
-      // reading the invite document — do NOT generate a new one yet
-      // Return empty string — JoinWorkspacePage handles the rest
+      console.log(
+        "[Auth] 🎫 Pending invite found in localStorage:",
+        pendingCode
+      );
       await setDoc(
         userRef,
         {
-          uid:         firebaseUser.uid,
+          uid: firebaseUser.uid,
           displayName: firebaseUser.displayName ?? "",
-          email:       firebaseUser.email ?? "",
-          photoURL:    firebaseUser.photoURL ?? "",
-          plan:        "free",
-          updatedAt:   serverTimestamp(),
-          // workspaceId intentionally NOT set here
-          // JoinWorkspacePage will set it after accepting
+          email: firebaseUser.email ?? "",
+          photoURL: firebaseUser.photoURL ?? "",
+          plan: "free",
+          updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
       return ""; // JoinWorkspacePage will set the real workspaceId
     }
 
-    // ✅ RULE 3 — Brand new user with no invite
-    // Generate a fresh workspace only for genuinely new users
+    // RULE 3 — Brand new user: generate workspace + member doc.
     const workspaceId =
       "WF-" + String(Math.floor(Math.random() * 900) + 100);
 
     await setDoc(
       userRef,
       {
-        uid:         firebaseUser.uid,
+        uid: firebaseUser.uid,
         displayName: firebaseUser.displayName ?? "",
-        email:       firebaseUser.email ?? "",
-        photoURL:    firebaseUser.photoURL ?? "",
-        plan:        "free",
-        updatedAt:   serverTimestamp(),
+        email: firebaseUser.email ?? "",
+        photoURL: firebaseUser.photoURL ?? "",
+        plan: "free",
+        updatedAt: serverTimestamp(),
         workspaceId,
       },
       { merge: true }
     );
 
-    console.log("[Auth] ✅ New user — generated workspaceId:", workspaceId);
+    await ensureWorkspaceAndMembership(firebaseUser, workspaceId);
+
+    console.log(
+      "[Auth] ✅ New user — generated workspaceId:",
+      workspaceId
+    );
     return workspaceId;
   } catch (err) {
-    console.error("[Auth] ❌ Failed to ensure user profile:", err);
+    console.error("[Auth] ❌ ensureUserProfile failed:", err);
     return "";
   }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user,        setUser]        = useState<User | null>(null);
-  const [loading,     setLoading]     = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -133,7 +283,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setWorkspaceId(wid || null);
         setUser(firebaseUser);
         setLoading(false);
-        console.log("[Auth] ✅ Signed in:", firebaseUser.uid, "| workspace:", wid);
+        console.log(
+          "[Auth] ✅ Signed in:",
+          firebaseUser.uid,
+          "| workspace:",
+          wid
+        );
       } else {
         setWorkspaceId(null);
         setUser(null);
@@ -165,7 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setWorkspaceId,
         signInWithGoogle,
         logout,
-        signOut:     logout,
+        signOut: logout,
         signOutUser: logout,
       }}
     >
