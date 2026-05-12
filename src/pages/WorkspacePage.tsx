@@ -20,20 +20,26 @@ import {
   Mail,
   X,
   AlertCircle,
+  LogOut,
+  AlertTriangle,
+  Lock,
 } from "lucide-react";
+
 
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
 import InviteMemberModal from "../components/InviteMemberModal";
-import WorkspaceModal from "../components/WorkspaceModal";
 import CreateProjectModal from "../components/CreateProjectModal";
 import {
   updateMemberRole,
   removeMember,
+  leaveWorkspace,
+  deleteWorkspace,
   WorkspaceRole,
 } from "../lib/firebase/workspaceMembers";
+
 
 
 type TabId = "overview" | "members" | "settings";
@@ -60,7 +66,6 @@ export default function WorkspacePage() {
     tab === "members" || tab === "settings" ? (tab as TabId) : "overview";
 
   const [showInvite, setShowInvite] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
 
   const wsName     = workspaceData?.name     ?? "My Workspace";
@@ -86,12 +91,12 @@ export default function WorkspacePage() {
               {wsInitial}
             </div>
             <div>
-              <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
                   {wsName}
                 </h1>
                 <button
-                  onClick={() => setShowSettings(true)}
+                  onClick={() => navigate("/workspace/settings")}
                   className="text-gray-400 hover:text-gray-700 transition-colors"
                   title="Workspace settings"
                 >
@@ -104,6 +109,7 @@ export default function WorkspacePage() {
                   <Star size={16} />
                 </button>
               </div>
+
               <p className="text-xs text-gray-400 mt-0.5">
                 {workspaceData?.id ?? ""}
                 {activeMembers.length > 0 && ` · ${activeMembers.length} member${activeMembers.length === 1 ? "" : "s"}`}
@@ -160,7 +166,7 @@ export default function WorkspacePage() {
             canManage={canManage}
             onInvite={() => setShowInvite(true)}
             onCreateProject={() => setShowCreateProject(true)}
-            onOpenSettings={() => setShowSettings(true)}
+            onOpenSettings={() => navigate("/workspace/settings")}
           />
         )}
         {activeTab === "members" && (
@@ -175,7 +181,16 @@ export default function WorkspacePage() {
   />
 )}
 
-        {activeTab === "settings" && <SettingsTabStub />}
+        {activeTab === "settings" && (
+  <SettingsTab
+    workspaceId={workspaceData?.id}
+    workspaceData={workspaceData}
+    myUid={user?.uid ?? ""}
+    myRole={myMembership?.role as WorkspaceRole}
+    canManage={canManage}
+  />
+)}
+
       </div>
 
       {showInvite && workspaceData?.id && (
@@ -188,7 +203,7 @@ export default function WorkspacePage() {
         />
       )}
 
-      {showSettings && <WorkspaceModal onClose={() => setShowSettings(false)} />}
+    
 
       {showCreateProject && (
         <CreateProjectModal onClose={() => setShowCreateProject(false)} />
@@ -1068,14 +1083,430 @@ function PendingInvitesList({
 }
 
 
-function SettingsTabStub() {
+// ─────────────────────────────────────────────────────────────────────────────
+// SETTINGS TAB
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SettingsTab({
+  workspaceId,
+  workspaceData,
+  myUid,
+  myRole,
+  canManage,
+}: {
+  workspaceId?: string;
+  workspaceData: any;
+  myUid: string;
+  myRole?: WorkspaceRole;
+  canManage: boolean;
+}) {
+  const navigate = useNavigate();
+  const isOwner = myRole === "owner";
+
+  const [name, setName] = useState(workspaceData?.name ?? "");
+  const [description, setDescription] = useState(workspaceData?.description ?? "");
+  const [savingGeneral, setSavingGeneral] = useState(false);
+  const [generalSaved, setGeneralSaved] = useState(false);
+  const [generalError, setGeneralError] = useState("");
+
+  // keep local state in sync if firestore changes
+  React.useEffect(() => { setName(workspaceData?.name ?? ""); }, [workspaceData?.name]);
+  React.useEffect(() => { setDescription(workspaceData?.description ?? ""); }, [workspaceData?.description]);
+
+  const [showLeave, setShowLeave] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+
+  const dirty =
+    name.trim() !== (workspaceData?.name ?? "") ||
+    description.trim() !== (workspaceData?.description ?? "");
+
+  async function saveGeneral() {
+    if (!workspaceId) return;
+    if (!name.trim()) {
+      setGeneralError("Workspace name cannot be empty.");
+      return;
+    }
+    setGeneralError("");
+    setSavingGeneral(true);
+    try {
+      await updateDoc(doc(db, "workspaces", workspaceId), {
+        name: name.trim(),
+        description: description.trim(),
+        updatedAt: serverTimestamp(),
+      });
+      setGeneralSaved(true);
+      setTimeout(() => setGeneralSaved(false), 2200);
+    } catch (e: any) {
+      console.error("[SettingsTab] saveGeneral failed:", e);
+      setGeneralError(e?.message || "Failed to save changes.");
+    } finally {
+      setSavingGeneral(false);
+    }
+  }
+
+  const createdDate = workspaceData?.createdAt
+    ? (typeof workspaceData.createdAt.toDate === "function"
+        ? workspaceData.createdAt.toDate().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+        : "—")
+    : "—";
+
   return (
-    <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-8 text-center">
-      <p className="text-5xl mb-3">⚙️</p>
-      <p className="text-sm text-gray-500">Settings tab content coming in Phase D.</p>
-      <p className="text-xs text-gray-400 italic mt-2">
-        Workspace name, description, privacy controls will live here.
-      </p>
+    <div className="space-y-5">
+
+      {/* ─── General ──────────────────────────────────────────────── */}
+      <Section
+        title="General"
+        description="Basic information about your workspace"
+      >
+        <div className="space-y-4">
+          <Field label="Workspace name" required>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value.slice(0, 60))}
+              disabled={!canManage}
+              maxLength={60}
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:bg-gray-50 disabled:text-gray-500"
+            />
+            <p className="text-[10px] text-gray-400 mt-1">{name.length}/60</p>
+          </Field>
+
+          <Field label="Description">
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value.slice(0, 280))}
+              disabled={!canManage}
+              maxLength={280}
+              rows={3}
+              placeholder="Describe what this workspace is for..."
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none disabled:bg-gray-50 disabled:text-gray-500"
+            />
+            <p className="text-[10px] text-gray-400 mt-1">{description.length}/280</p>
+          </Field>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Workspace ID">
+              <div className="px-3 py-2 text-sm font-mono text-gray-500 bg-gray-50 border border-gray-200 rounded-lg">
+                {workspaceData?.id ?? "—"}
+              </div>
+            </Field>
+            <Field label="Created">
+              <div className="px-3 py-2 text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg">
+                {createdDate}
+              </div>
+            </Field>
+          </div>
+
+          <Field label="Plan">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-violet-50 border border-violet-200 rounded-lg">
+              <span className="text-sm font-semibold text-violet-700 capitalize">
+                {workspaceData?.plan ?? "Free"}
+              </span>
+              <span className="text-[10px] text-violet-500 uppercase tracking-wider">Current</span>
+            </div>
+          </Field>
+
+          {generalError && (
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
+              <AlertCircle size={13} />
+              <span>{generalError}</span>
+            </div>
+          )}
+
+          {canManage && (
+            <div className="flex items-center justify-end gap-2 pt-1">
+              {generalSaved && (
+                <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                  <CheckCircle2 size={12} /> Saved
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  setName(workspaceData?.name ?? "");
+                  setDescription(workspaceData?.description ?? "");
+                  setGeneralError("");
+                }}
+                disabled={!dirty || savingGeneral}
+                className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-40"
+              >
+                Reset
+              </button>
+              <button
+                onClick={saveGeneral}
+                disabled={!dirty || savingGeneral}
+                className="px-4 py-1.5 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {savingGeneral ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          )}
+        </div>
+      </Section>
+
+      {/* ─── Privacy (stub) ──────────────────────────────────────── */}
+      <Section
+        title="Privacy & access"
+        description="Control who can find and join this workspace"
+      >
+        <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+          <Lock className="text-gray-400 flex-shrink-0 mt-0.5" size={18} />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-700">Invite-only workspace</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              People can only join this workspace if they're invited by an admin or owner.
+              Public/discoverable workspaces are coming soon.
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      {/* ─── Danger zone ─────────────────────────────────────────── */}
+      <Section
+        title="Danger zone"
+        description="Irreversible actions — proceed carefully"
+        danger
+      >
+        <div className="space-y-3">
+
+          {/* Leave workspace */}
+          {!isOwner ? (
+            <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-800">Leave workspace</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  You'll lose access to all projects, tasks, and members in this workspace.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowLeave(true)}
+                className="ml-4 flex items-center gap-1.5 px-3 py-2 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg text-xs font-semibold transition-colors flex-shrink-0"
+              >
+                <LogOut size={13} />
+                Leave workspace
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between p-4 border border-gray-200 rounded-xl bg-gray-50/50">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-700">Leave workspace</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  As the owner, you can't leave. Delete the workspace or transfer ownership instead.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Delete workspace (owner only) */}
+          {isOwner && (
+            <div className="flex items-center justify-between p-4 border border-red-200 rounded-xl bg-red-50/30">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-red-700">Delete workspace</p>
+                <p className="text-xs text-red-500 mt-0.5">
+                  Permanently delete this workspace, all members, and pending invites. Personal projects and tasks are preserved.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDelete(true)}
+                className="ml-4 flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg text-xs font-semibold transition-colors flex-shrink-0"
+              >
+                <Trash2 size={13} />
+                Delete workspace
+              </button>
+            </div>
+          )}
+        </div>
+      </Section>
+
+      {/* ─── Confirm dialogs ─────────────────────────────────────── */}
+      {showLeave && workspaceId && (
+        <ConfirmDialog
+          icon={<LogOut className="text-red-600" size={22} />}
+          title="Leave this workspace?"
+          message="You'll lose access immediately. You can rejoin only if someone invites you again."
+          confirmLabel="Leave workspace"
+          confirmWord=""
+          onCancel={() => setShowLeave(false)}
+          onConfirm={async () => {
+            await leaveWorkspace(workspaceId, myUid);
+            // AppDataContext will detect eviction and switch user to personal workspace
+            navigate("/");
+          }}
+        />
+      )}
+
+      {showDelete && workspaceId && (
+        <ConfirmDialog
+          icon={<AlertTriangle className="text-red-600" size={22} />}
+          title="Delete workspace permanently?"
+          message={`This will delete "${workspaceData?.name ?? "this workspace"}", remove all members, and cancel all pending invitations. This action cannot be undone.`}
+          confirmLabel="Delete forever"
+          confirmWord="DELETE"
+          onCancel={() => setShowDelete(false)}
+          onConfirm={async () => {
+            await deleteWorkspace(workspaceId);
+            navigate("/");
+          }}
+        />
+      )}
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers used by SettingsTab
+// ─────────────────────────────────────────────────────────────────────────────
+
+function Section({
+  title,
+  description,
+  danger,
+  children,
+}: {
+  title: string;
+  description?: string;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={`bg-white border rounded-2xl shadow-sm p-5 ${danger ? "border-red-200" : "border-gray-200"}`}>
+      <div className="mb-4">
+        <h3 className={`text-sm font-semibold ${danger ? "text-red-700" : "text-gray-800"}`}>
+          {title}
+        </h3>
+        {description && (
+          <p className="text-xs text-gray-400 mt-0.5">{description}</p>
+        )}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  icon,
+  title,
+  message,
+  confirmLabel,
+  confirmWord,
+  onCancel,
+  onConfirm,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  confirmWord: string;     // if set, user must type this word to enable Confirm
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [typed, setTyped] = useState("");
+  const [working, setWorking] = useState(false);
+  const [err, setErr] = useState("");
+
+  const canConfirm = confirmWord ? typed === confirmWord : true;
+
+  async function run() {
+    setErr("");
+    setWorking(true);
+    try {
+      await onConfirm();
+    } catch (e: any) {
+      console.error("[ConfirmDialog]", e);
+      setErr(e?.message || "Action failed.");
+      setWorking(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+        style={{ animation: "fadeInUp 0.2s ease" }}
+      >
+        <div className="flex items-start gap-3 mb-3">
+          <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+            {icon}
+          </div>
+          <div className="flex-1">
+            <h3 className="text-base font-semibold text-gray-900">{title}</h3>
+            <p className="text-sm text-gray-500 mt-1 leading-relaxed">{message}</p>
+          </div>
+        </div>
+
+        {confirmWord && (
+          <div className="mt-4">
+            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+              Type <span className="font-mono text-red-600">{confirmWord}</span> to confirm
+            </label>
+            <input
+              type="text"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoFocus
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+              placeholder={confirmWord}
+            />
+          </div>
+        )}
+
+        {err && (
+          <div className="mt-3 flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
+            <AlertCircle size={13} />
+            <span>{err}</span>
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-5">
+          <button
+            onClick={onCancel}
+            disabled={working}
+            className="flex-1 py-2.5 border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={run}
+            disabled={!canConfirm || working}
+            className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+          >
+            {working ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                Working...
+              </>
+            ) : (
+              confirmLabel
+            )}
+          </button>
+        </div>
+
+        <style>{`
+          @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(14px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
+        `}</style>
+      </div>
+    </div>
+  );
+}
+
