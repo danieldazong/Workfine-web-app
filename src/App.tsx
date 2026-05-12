@@ -3,21 +3,30 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { AppDataProvider } from './context/AppDataContext';
-import Sidebar from './components/Sidebar';
-import AppShell from './components/AppShell';
-import LoginPage from './pages/LoginPage';
-import DashboardPage from './pages/DashboardPage';
-import InsightsPage from './pages/InsightsPage';
-import MyTasksPage from './pages/MyTasksPage';
-import SettingsPage from './pages/SettingsPage';
-import ProjectPage from './pages/ProjectPage';
-import CalendarPage from './pages/CalendarPage';
-import WorkspacePage from './pages/WorkspacePage';
+import React from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+  Outlet,
+} from "react-router-dom";
 
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { AppDataProvider } from "./context/AppDataContext";
+
+import Sidebar from "./components/Sidebar";
+import AppShell from "./components/AppShell";
+
+import LoginPage from "./pages/LoginPage";
+import DashboardPage from "./pages/DashboardPage";
+import InsightsPage from "./pages/InsightsPage";
+import MyTasksPage from "./pages/MyTasksPage";
+import SettingsPage from "./pages/SettingsPage";
+import ProjectPage from "./pages/ProjectPage";
+import CalendarPage from "./pages/CalendarPage";
+import WorkspacePage from "./pages/WorkspacePage";
+import JoinWorkspacePage from "./pages/JoinWorkspacePage";
 
 function ProtectedRoute() {
   const { user, loading } = useAuth();
@@ -44,8 +53,19 @@ function ProtectedRoute() {
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+
   if (loading) return null;
-  if (user) return <Navigate to="/" />;
+
+  if (user) {
+    const pendingInviteCode = localStorage.getItem("pendingInviteCode");
+
+    if (pendingInviteCode) {
+      return <Navigate to={`/join/${pendingInviteCode}`} replace />;
+    }
+
+    return <Navigate to="/" replace />;
+  }
+
   return <>{children}</>;
 }
 
@@ -55,7 +75,7 @@ export default function App() {
       <AppDataProvider>
         <Router>
           <Routes>
-            {/* Public route — no shell */}
+            {/* Public login route */}
             <Route
               path="/login"
               element={
@@ -65,7 +85,12 @@ export default function App() {
               }
             />
 
-            {/* All protected routes — Sidebar + AppShell applied automatically */}
+            {/* Public invite route.
+                Important: this must NOT be inside ProtectedRoute.
+                It must open for both signed-in and signed-out users. */}
+            <Route path="/join/:inviteCode" element={<JoinWorkspacePage />} />
+
+            {/* Protected app routes */}
             <Route element={<ProtectedRoute />}>
               <Route element={<AppShell />}>
                 <Route path="/" element={<DashboardPage />} />
@@ -74,14 +99,12 @@ export default function App() {
                 <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/projects/:id" element={<ProjectPage />} />
-<Route path="/workspace" element={<WorkspacePage />} />
-<Route path="/workspace/:tab" element={<WorkspacePage />} />
-{/* ✅ ADD ALL FUTURE PAGES HERE — one line each */}
-
+                <Route path="/workspace" element={<WorkspacePage />} />
+                <Route path="/workspace/:tab" element={<WorkspacePage />} />
               </Route>
             </Route>
 
-            <Route path="*" element={<Navigate to="/" />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Router>
       </AppDataProvider>

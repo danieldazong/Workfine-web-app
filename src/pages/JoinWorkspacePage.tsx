@@ -85,11 +85,15 @@ export default function JoinWorkspacePage() {
         invitedBy:   invite.invitedBy ?? "",
         lastActive:  serverTimestamp(),
         permissions: {
-          canCreateProjects: role !== "viewer",
-          canDeleteProjects: role === "admin",
-          canInviteMembers:  role === "admin",
-          canManageTasks:    role !== "viewer",
-        },
+  canCreateProjects: role !== "viewer",
+  canDeleteProjects: role === "admin",
+  canInviteMembers: role === "admin",
+  canManageTasks: role !== "viewer",
+  canEdit: role !== "viewer",
+  canDelete: role === "admin",
+  canInvite: role === "admin",
+},
+
       });
 
       // ✅ STEP 2 — Mark GLOBAL invite as accepted
@@ -218,10 +222,18 @@ export default function JoinWorkspacePage() {
               <div className="text-4xl mb-3">🎉</div>
               <h2 className="text-xl font-bold text-slate-800 mb-1">You've been invited!</h2>
               <p className="text-sm text-slate-500">
-                <span className="font-semibold text-slate-700">{invite.invitedByName}</span> invited
-                you to join the{" "}
-                <span className="font-semibold text-violet-700">{invite.workspaceId}</span> workspace
-                as a <span className="font-semibold text-slate-700 capitalize">{invite.role}</span>.
+                <span className="font-semibold text-slate-700">
+  {invite.invitedByName || "Someone"}
+</span>{" "}
+invited you to join the{" "}
+<span className="font-semibold text-violet-700">
+  {invite.workspaceName || invite.workspaceId}
+</span>{" "}
+workspace as a{" "}
+<span className="font-semibold text-slate-700 capitalize">
+  {invite.role || "member"}
+</span>.
+
               </p>
             </div>
 

@@ -12,10 +12,10 @@ import {
 } from "lucide-react";
 
 // ── EmailJS credentials ──────────────────────────────────────────────────────
-const EJ_SERVICE  = "service_mexk2nq";
+const EJ_SERVICE = "service_mexk2nq";
 const EJ_TEMPLATE = "template_tbhiftp";
-const EJ_KEY      = "meHwiauyfE3xFWE66";
-emailjs.init(EJ_KEY);
+const EJ_PUBLIC_KEY = "meHwiauyfE3xFWE66";
+
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Props {
@@ -131,19 +131,25 @@ export default function InviteMemberModal({
         Date.now() + 7 * 24 * 60 * 60 * 1000
       );
 
-      const payload = {
-        code,
-        email:         trimmed,
-        workspaceId,
-        workspaceName: workspaceName || "Workfine Workspace",
-        invitedBy:     user?.uid          ?? "",
-        invitedByName: user?.displayName  ?? user?.email ?? "Someone",
-        role,
-        message:       message.trim(),
-        status:        "pending",
-        createdAt:     serverTimestamp(),
-        expiresAt,
-      };
+      const inviterName =
+  user?.displayName || user?.email?.split("@")[0] || "Someone";
+
+const payload = {
+  code,
+  inviteCode: code,
+  email: trimmed,
+  workspaceId,
+  workspaceName: workspaceName || "Workfine Workspace",
+  invitedBy: user?.uid ?? "",
+  invitedByName: inviterName,
+  invitedByEmail: user?.email ?? "",
+  role,
+  message: message.trim(),
+  status: "pending",
+  createdAt: serverTimestamp(),
+  expiresAt,
+};
+
 
       // ✅ PATH 1 — workspace subcollection
       // Using setDoc + code as document ID so cancelInvite can find it
@@ -159,22 +165,36 @@ export default function InviteMemberModal({
         payload
       );
 
-      // ✅ PATH 3 — Send email via EmailJS
-      try {
-        await emailjs.send(EJ_SERVICE, EJ_TEMPLATE, {
-          to_email:       trimmed,
-          to_name:        trimmed,
-          from_name:      user?.displayName || user?.email || "Workfine",
-          workspace_name: workspaceName || "Workfine",
-          invite_link:    inviteLink,
-          invite_code:    code,
-          expires_in:     "7 days",
-          message:        message.trim() || "You have been invited to join our workspace.",
-        });
-      } catch (ejErr: any) {
-        console.error("[InviteModal] EmailJS failed:", ejErr);
-        emailFailed = true;
-      }
+     // ✅ PATH 3 — Send invite email via EmailJS
+try {
+  await emailjs.send(
+    EJ_SERVICE,
+    EJ_TEMPLATE,
+    {
+      to_email: trimmed,
+      to_name: trimmed.split("@")[0],
+      from_name: inviterName,
+      reply_to: user?.email ?? "",
+      workspace_name: workspaceName || "Workfine Workspace",
+      invite_link: inviteLink,
+      invite_code: code,
+      expires_in: "7 days",
+      role,
+      message:
+        message.trim() ||
+        "You have been invited to join a Workfine workspace.",
+    },
+    {
+      publicKey: EJ_PUBLIC_KEY,
+    }
+  );
+
+  console.log("[InviteModal] ✅ EmailJS invitation sent to:", trimmed);
+} catch (ejErr: any) {
+  console.error("[InviteModal] ❌ EmailJS failed:", ejErr);
+  emailFailed = true;
+}
+
 
       setSuccess({ code, email: trimmed, emailFailed });
 
