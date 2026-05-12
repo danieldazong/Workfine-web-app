@@ -68,56 +68,15 @@ async function ensureWorkspaceAndMembership(
     firebaseUser.uid
   );
 
-  /**
-   * First self-heal the owner member doc.
-   * This is critical because workspace reads depend on:
-   * workspaces/{workspaceId}/members/{uid}
-   */
-  try {
-    await setDoc(
-      memberRef,
-      {
-        userId: firebaseUser.uid,
-        displayName,
-        email: firebaseUser.email ?? "",
-        photoURL: firebaseUser.photoURL ?? "",
-        avatar: displayName[0]?.toUpperCase() ?? "O",
-        avatarColor: "#8b5cf6",
-        role: "owner",
-        status: "active",
-        workspaceId,
-        joinedAt: serverTimestamp(),
-        lastActive: serverTimestamp(),
-        permissions: {
-          canEdit: true,
-          canDelete: true,
-          canInvite: true,
-          canCreateProjects: true,
-          canDeleteProjects: true,
-          canInviteMembers: true,
-          canManageTasks: true,
-        },
-      },
-      { merge: true }
-    );
-
-    console.log(
-      "[Auth] 🛠️ Created/healed owner member doc for workspace:",
-      workspaceId
-    );
-  } catch (err: any) {
-    console.warn(
-      "[Auth] ⚠️ Owner member self-heal failed:",
-      err?.code || err
-    );
-  }
-
-  /**
-   * Then ensure workspace doc exists.
-   */
   try {
     const wsSnap = await getDoc(wsRef);
 
+    /**
+     * CASE 1:
+     * Workspace does not exist.
+     * This is a brand-new personal workspace, so this signed-in user
+     * is allowed to become the owner.
+     */
     if (!wsSnap.exists()) {
       await setDoc(wsRef, {
         id: workspaceId,
@@ -139,50 +98,116 @@ async function ensureWorkspaceAndMembership(
         externalGuestLimit: 0,
       });
 
-      console.log("[Auth] 🆕 Created missing workspace doc:", workspaceId);
-    } else {
-      const data = wsSnap.data();
-
-      if (data?.ownerId === firebaseUser.uid) {
-        await setDoc(
-          memberRef,
-          {
-            userId: firebaseUser.uid,
-            displayName,
-            email: firebaseUser.email ?? "",
-            photoURL: firebaseUser.photoURL ?? "",
-            avatar: displayName[0]?.toUpperCase() ?? "O",
-            avatarColor: "#8b5cf6",
-            role: "owner",
-            status: "active",
-            workspaceId,
-            lastActive: serverTimestamp(),
-            permissions: {
-              canEdit: true,
-              canDelete: true,
-              canInvite: true,
-              canCreateProjects: true,
-              canDeleteProjects: true,
-              canInviteMembers: true,
-              canManageTasks: true,
-            },
+      await setDoc(
+        memberRef,
+        {
+          userId: firebaseUser.uid,
+          displayName,
+          email: firebaseUser.email ?? "",
+          photoURL: firebaseUser.photoURL ?? "",
+          avatar: displayName[0]?.toUpperCase() ?? "O",
+          avatarColor: "#8b5cf6",
+          role: "owner",
+          status: "active",
+          workspaceId,
+          joinedAt: serverTimestamp(),
+          lastActive: serverTimestamp(),
+          permissions: {
+            canEdit: true,
+            canDelete: true,
+            canInvite: true,
+            canCreateProjects: true,
+            canDeleteProjects: true,
+            canInviteMembers: true,
+            canManageTasks: true,
           },
-          { merge: true }
-        );
+        },
+        { merge: true }
+      );
 
-        console.log(
-          "[Auth] ✅ Verified owner membership for workspace:",
-          workspaceId
-        );
-      }
+      console.log("[Auth] 🆕 Created new workspace + owner member:", workspaceId);
+      return;
+    }
+
+    const wsData = wsSnap.data();
+    const isWorkspaceOwner = wsData?.ownerId === firebaseUser.uid;
+
+    /**
+     * CASE 2:
+     * Workspace exists and this signed-in user is the real owner.
+     * Safe to heal/create their owner member document.
+     */
+    if (isWorkspaceOwner) {
+      await setDoc(
+        memberRef,
+        {
+          userId: firebaseUser.uid,
+          displayName,
+          email: firebaseUser.email ?? "",
+          photoURL: firebaseUser.photoURL ?? "",
+          avatar: displayName[0]?.toUpperCase() ?? "O",
+          avatarColor: "#8b5cf6",
+          role: "owner",
+          status: "active",
+          workspaceId,
+          lastActive: serverTimestamp(),
+          permissions: {
+            canEdit: true,
+            canDelete: true,
+            canInvite: true,
+            canCreateProjects: true,
+            canDeleteProjects: true,
+            canInviteMembers: true,
+            canManageTasks: true,
+          },
+        },
+        { merge: true }
+      );
+
+      console.log("[Auth] ✅ Verified owner membership:", workspaceId);
+      return;
+    }
+
+    /**
+     * CASE 3:
+     * Workspace exists but this signed-in user is NOT the owner.
+     * Do NOT auto-create them as owner.
+     * Invited users must be created by JoinWorkspacePage using the role from invite.
+     */
+    const memberSnap = await getDoc(memberRef);
+
+    if (memberSnap.exists()) {
+      await setDoc(
+        memberRef,
+        {
+          userId: firebaseUser.uid,
+          displayName,
+          email: firebaseUser.email ?? "",
+          photoURL: firebaseUser.photoURL ?? "",
+          lastActive: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      console.log("[Auth] ✅ Verified existing non-owner membership:", workspaceId);
+    } else {
+      console.warn(
+        "[Auth] ⚠️ Non-owner has no member doc. Skipping auto-create. Invite acceptance must create it.",
+        {
+          workspaceId,
+          ownerId: wsData?.ownerId,
+          currentUid: firebaseUser.uid,
+        }
+      );
     }
   } catch (err: any) {
     console.warn(
-      "[Auth] ⚠️ Workspace verification failed:",
+      "[Auth] ⚠️ ensureWorkspaceAndMembership skipped/failed:",
       err?.code || err
     );
   }
 }
+
 
 
 async function ensureUserProfile(firebaseUser: User): Promise<string> {

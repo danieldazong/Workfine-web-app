@@ -40,7 +40,7 @@ const filterFromQuery = (raw: string | null): FilterType | null => {
 };
 
 export default function MyTasksPage() {
-  const { user }  = useAuth();
+  const { user, workspaceId } = useAuth();
   const { tasks } = useAppData();
   const location  = useLocation();
   const [filter, setFilter] = useState<FilterType>("All");
@@ -65,13 +65,14 @@ export default function MyTasksPage() {
   }
 
   async function saveEdit() {
-    if (!user?.uid || !editTask || !editForm.title.trim()) return;
+    if (!workspaceId || !editTask || !editForm.title.trim()) return;
     setEditSaving(true);
     try {
       await updateDoc(
-        doc(db, "users", user.uid, "tasks", editTask.id),
-        { ...editForm, updatedAt: serverTimestamp() }
-      );
+  doc(db, "workspaces", workspaceId, "tasks", editTask.id),
+  { ...editForm, updatedAt: serverTimestamp() }
+);
+
       setEditTask(null);
     } finally { setEditSaving(false); }
   }
@@ -109,17 +110,17 @@ export default function MyTasksPage() {
   };
 
   const toggleDone = async (task: any) => {
-    if (!user?.uid) return;
+    if (!workspaceId) return;
     const newStatus = task.status === "Done" ? "To Do" : "Done";
     await updateDoc(
-      doc(db, "users", user.uid, "tasks", task.id),
+     doc(db, "workspaces", workspaceId, "tasks", task.id),
       { status: newStatus, updatedAt: serverTimestamp() }
     );
   };
 
   const deleteTask = async (taskId: string) => {
-    if (!user?.uid) return;
-    await deleteDoc(doc(db, "users", user.uid, "tasks", taskId));
+    if (!workspaceId) return;
+await deleteDoc(doc(db, "workspaces", workspaceId, "tasks", taskId));
   };
 
   return (

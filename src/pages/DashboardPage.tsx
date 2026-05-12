@@ -122,7 +122,7 @@ const DashboardPage = () => {
 
   // ── Save task ──────────────────────────────────────────────────────────────
   const handleSaveTask = async () => {
-    if (!user?.uid || !taskForm.title.trim()) return;
+  if (!user?.uid || !workspaceId || !taskForm.title.trim()) return;
     setSaving(true);
     try {
       let taskCode = "";
@@ -135,13 +135,16 @@ const DashboardPage = () => {
          taskCode = `${workspaceId || "WF-000"}-T${tasks.length + 1}`;
       }
 
-      await addDoc(collection(db, "users", user.uid, "tasks"), {
-        ...taskForm,
-        taskCode,
-        ownerId:   user.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      await addDoc(collection(db, "workspaces", workspaceId, "tasks"), {
+  ...taskForm,
+  taskCode,
+  workspaceId,
+  ownerId: user.uid,
+  createdBy: user.uid,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
+
       setTaskForm(emptyTask());
       setShowTask(false);
     } finally { setSaving(false); }

@@ -3,184 +3,300 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { 
-  collection, 
-  doc, 
-  setDoc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
+import {
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
   onSnapshot,
   addDoc,
   updateDoc,
   deleteDoc,
-  arrayUnion,
-  arrayRemove,
   limit,
   QuerySnapshot,
   DocumentData,
-} from 'firebase/firestore';
-import { db, auth } from './config';
-import { Task, Comment, Activity } from '../../types';
+} from "firebase/firestore";
+import { db, auth } from "./config";
+import { Task, Comment } from "../../types";
 
-// Helper paths — ensuring everything is scoped under /users/{userId}/
-const tasksRef = (userId: string) =>
-  collection(db, "users", userId, "tasks");
+const workspaceTasksRef = (workspaceId: string) =>
+  collection(db, "workspaces", workspaceId, "tasks");
 
-const taskDocRef = (userId: string, taskId: string) =>
-  doc(db, "users", userId, "tasks", taskId);
+const workspaceTaskDocRef = (workspaceId: string, taskId: string) =>
+  doc(db, "workspaces", workspaceId, "tasks", taskId);
 
-const commentsRef = (userId: string) =>
-  collection(db, "users", userId, "comments");
+const workspaceCommentsRef = (workspaceId: string) =>
+  collection(db, "workspaces", workspaceId, "comments");
+
+async function getActiveWorkspaceId(): Promise<string> {
+  const uid = auth.currentUser?.uid;
+  if (!uid) throw new Error("Unauthenticated user");
+
+  const userSnap = await getDoc(doc(db, "users", uid));
+  const workspaceId = userSnap.exists()
+    ? (userSnap.data().workspaceId as string | undefined)
+    : undefined;
+
+  if (!workspaceId) throw new Error("No active workspace");
+
+  return workspaceId;
+}
+
+function normalizeTaskDoc(d: any): Task {
+  return {
+    id: d.id,
+    ...d.data(),
+  } as Task;
+}
 
 export const taskService = {
-  async createTask(task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'attachments' | 'subtasks'>): Promise<string> {
+  async createTask(
+    task: Omit<
+      Task,
+      "id" | "createdAt" | "updatedAt" | "attachments" | "subtasks"
+    >
+  ): Promise<string> {
     const userId = auth.currentUser?.uid;
     if (!userId) throw new Error("Unauthenticated user cannot create tasks");
 
-    const tRef = doc(tasksRef(userId));
+    const workspaceId =
+      (task as any).workspaceId && (task as any).workspaceId !== "ws1"
+        ? (task as any).workspaceId
+        : await getActiveWorkspaceId();
+
+    const tRef = doc(workspaceTasksRef(workspaceId));
+
     const newTask: Task = {
-      ...task,
+      ...(task as any),
       id: tRef.id,
+      workspaceId,
+      createdBy: userId,
+      ownerId: userId,
       attachments: [],
       subtasks: [],
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+      updatedAt: new Date().toISOString(),
+    } as Task;
+
     await setDoc(tRef, newTask);
+
     return tRef.id;
   },
 
   async updateTask(taskId: string, updates: Partial<Task>): Promise<void> {
-    const userId = auth.currentUser?.uid;
-    if (!userId) throw new Error("Unauthenticated user");
+    const workspaceId =
+      (updates as any).workspaceId && (updates as any).workspaceId !== "ws1"
+        ? ((updates as any).workspaceId as string)
+        : await getActiveWorkspaceId();
 
-    await updateDoc(taskDocRef(userId, taskId), {
+    await updateDoc(workspaceTaskDocRef(workspaceId, taskId), {
       ...updates,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
     });
   },
 
   async deleteTask(taskId: string): Promise<void> {
-    const userId = auth.currentUser?.uid;
-    if (!userId) throw new Error("Unauthenticated user");
+    const workspaceId = await getActiveWorkspaceId();
 
-    await deleteDoc(taskDocRef(userId, taskId));
+    await deleteDoc(workspaceTaskDocRef(workspaceId, taskId));
   },
 
   subscribeToProjectTasks(projectId: string, callback: (tasks: Task[]) => void) {
-    const userId = auth.currentUser?.uid;
-    if (!userId) {
-      callback([]);
-      return () => {};
-    }
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
 
-    const q = query(
-      tasksRef(userId), 
-      where('projectId', '==', projectId),
-      orderBy('createdAt', 'asc')
-    );
-    return onSnapshot(q, (snapshot) => {
-      const tasks = snapshot.docs.map(doc => doc.data() as Task);
-      callback(tasks);
-    });
+    getActiveWorkspaceId()
+      .then((workspaceId) => {
+        if (cancelled) return;
+
+        const q = query(
+          workspaceTasksRef(workspaceId),
+          where("projectId", "==", projectId),
+          orderBy("createdAt", "asc")
+        );
+
+        unsub = onSnapshot(q, (snapshot) => {
+          const tasks = snapshot.docs.map(normalizeTaskDoc);
+          callback(tasks);
+        });
+      })
+      .catch((err) => {
+        console.warn("[Tasks] subscribeToProjectTasks failed:", err.message);
+        callback([]);
+      });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   },
 
   subscribeToUserTasks(userId: string, callback: (tasks: Task[]) => void) {
-    const q = query(
-      tasksRef(userId), 
-      where('assigneeId', '==', userId),
-      orderBy('dueDate', 'asc')
-    );
-    return onSnapshot(q, (snapshot) => {
-      const tasks = snapshot.docs.map(doc => doc.data() as Task);
-      callback(tasks);
-    });
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
+
+    getActiveWorkspaceId()
+      .then((workspaceId) => {
+        if (cancelled) return;
+
+        const q = query(
+          workspaceTasksRef(workspaceId),
+          where("assigneeId", "==", userId),
+          limit(200)
+        );
+
+        unsub = onSnapshot(q, (snapshot) => {
+          const tasks = snapshot.docs.map(normalizeTaskDoc);
+          callback(tasks);
+        });
+      })
+      .catch((err) => {
+        console.warn("[Tasks] subscribeToUserTasks failed:", err.message);
+        callback([]);
+      });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   },
 
-  async addComment(comment: Omit<Comment, 'id' | 'createdAt'>): Promise<void> {
+  async addComment(comment: Omit<Comment, "id" | "createdAt">): Promise<void> {
     const userId = auth.currentUser?.uid;
     if (!userId) throw new Error("Unauthenticated user");
 
-    await addDoc(commentsRef(userId), {
+    const workspaceId = await getActiveWorkspaceId();
+
+    await addDoc(workspaceCommentsRef(workspaceId), {
       ...comment,
-      createdAt: new Date().toISOString()
+      workspaceId,
+      createdBy: userId,
+      createdAt: new Date().toISOString(),
     });
   },
 
-  subscribeToTaskComments(taskId: string, callback: (comments: Comment[]) => void) {
-    const userId = auth.currentUser?.uid;
-    if (!userId) {
-      callback([]);
-      return () => {};
-    }
+  subscribeToTaskComments(
+    taskId: string,
+    callback: (comments: Comment[]) => void
+  ) {
+    let unsub: (() => void) | null = null;
+    let cancelled = false;
 
-    const q = query(
-      commentsRef(userId), 
-      where('taskId', '==', taskId),
-      orderBy('createdAt', 'asc')
-    );
-    return onSnapshot(q, (snapshot) => {
-      const comments = snapshot.docs.map(doc => doc.data() as Comment);
-      callback(comments);
-    });
-  }
+    getActiveWorkspaceId()
+      .then((workspaceId) => {
+        if (cancelled) return;
+
+        const q = query(
+          workspaceCommentsRef(workspaceId),
+          where("taskId", "==", taskId),
+          orderBy("createdAt", "asc")
+        );
+
+        unsub = onSnapshot(q, (snapshot) => {
+          const comments = snapshot.docs.map(
+            (d) => ({ id: d.id, ...d.data() } as Comment)
+          );
+          callback(comments);
+        });
+      })
+      .catch((err) => {
+        console.warn("[Tasks] subscribeToTaskComments failed:", err.message);
+        callback([]);
+      });
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  },
 };
 
 export async function getUserTasks(userId: string): Promise<Task[]> {
+  const workspaceId = await getActiveWorkspaceId();
+
   const q = query(
-    tasksRef(userId),
+    workspaceTasksRef(workspaceId),
     where("assigneeId", "==", userId),
     limit(200)
   );
+
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as Task));
+
+  return snapshot.docs.map(normalizeTaskDoc);
 }
 
 export function subscribeToUserTasks(
   userId: string,
   callback: (tasks: Task[]) => void
 ): () => void {
-  const q = query(
-    tasksRef(userId),
-    where("assigneeId", "==", userId),
-    limit(200)
-  );
-  return onSnapshot(q, (snapshot: QuerySnapshot<DocumentData>) => {
-    const tasks = snapshot.docs.map(
-      (d) => ({ id: d.id, ...d.data() } as Task)
-    );
-    callback(tasks);
-  });
+  let unsub: (() => void) | null = null;
+  let cancelled = false;
+
+  getActiveWorkspaceId()
+    .then((workspaceId) => {
+      if (cancelled) return;
+
+      const q = query(
+        workspaceTasksRef(workspaceId),
+        where("assigneeId", "==", userId),
+        limit(200)
+      );
+
+      unsub = onSnapshot(q, (snapshot: QuerySnapshot<DocumentData>) => {
+        const tasks = snapshot.docs.map(normalizeTaskDoc);
+        callback(tasks);
+      });
+    })
+    .catch((err) => {
+      console.warn("[Tasks] subscribeToUserTasks failed:", err.message);
+      callback([]);
+    });
+
+  return () => {
+    cancelled = true;
+    unsub?.();
+  };
 }
 
 export function subscribeToProjectTasks(
   projectId: string,
   callback: (tasks: Task[]) => void
 ): () => void {
-  const userId = auth.currentUser?.uid;
-  if (!userId) {
-    callback([]);
-    return () => {};
-  }
+  let unsub: (() => void) | null = null;
+  let cancelled = false;
 
-  const q = query(
-    tasksRef(userId),
-    where("projectId", "==", projectId),
-    limit(200)
-  );
-  return onSnapshot(q, (snapshot: QuerySnapshot<DocumentData>) => {
-    const tasks = snapshot.docs.map(
-      (d) => ({ id: d.id, ...d.data() } as Task)
-    );
-    callback(tasks);
-  });
+  getActiveWorkspaceId()
+    .then((workspaceId) => {
+      if (cancelled) return;
+
+      const q = query(
+        workspaceTasksRef(workspaceId),
+        where("projectId", "==", projectId),
+        limit(200)
+      );
+
+      unsub = onSnapshot(q, (snapshot: QuerySnapshot<DocumentData>) => {
+        const tasks = snapshot.docs.map(normalizeTaskDoc);
+        callback(tasks);
+      });
+    })
+    .catch((err) => {
+      console.warn("[Tasks] subscribeToProjectTasks failed:", err.message);
+      callback([]);
+    });
+
+  return () => {
+    cancelled = true;
+    unsub?.();
+  };
 }
 
 export async function createTask(
-  uid: string,
+  workspaceIdOrUid: string,
   data: {
     title: string;
     description?: string;
@@ -189,24 +305,43 @@ export async function createTask(
     dueDate?: string;
     assignee?: string;
     projectId?: string;
+    workspaceId?: string;
   }
 ): Promise<string> {
-  if (!uid) throw new Error("No authenticated user");
+  const currentUid = auth.currentUser?.uid;
 
-  const ref    = collection(db, "users", uid, "tasks");
+  const workspaceId =
+    data.workspaceId ||
+    (workspaceIdOrUid?.startsWith("WF-")
+      ? workspaceIdOrUid
+      : await getActiveWorkspaceId());
+
+  if (!workspaceId) throw new Error("No active workspace");
+
+  const ref = collection(db, "workspaces", workspaceId, "tasks");
+
   const docRef = await addDoc(ref, {
-    title:       data.title.trim(),
+    title: data.title.trim(),
     description: data.description?.trim() ?? "",
-    status:      data.status ?? "To Do",
-    priority:    data.priority ?? "Medium",
-    dueDate:     data.dueDate ?? null,
-    assignee:    data.assignee?.trim() ?? "Unassigned",
-    projectId:   data.projectId ?? null,
-    userId:      uid,
-    createdAt:   new Date().toISOString(), // Use ISO string to match existing taskService format or serverTimestamp()
-    updatedAt:   new Date().toISOString(),
+    status: data.status ?? "To Do",
+    priority: data.priority ?? "Medium",
+    dueDate: data.dueDate ?? null,
+    assignee: data.assignee?.trim() ?? "Unassigned",
+    projectId: data.projectId ?? null,
+
+    workspaceId,
+    userId: currentUid ?? "",
+    ownerId: currentUid ?? "",
+    createdBy: currentUid ?? "",
+
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   });
 
-  console.log("[Tasks] ✅ Task saved:", docRef.id);
+  console.log(
+    "[Tasks] ✅ Task saved:",
+    `workspaces/${workspaceId}/tasks/${docRef.id}`
+  );
+
   return docRef.id;
 }

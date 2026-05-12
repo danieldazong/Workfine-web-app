@@ -24,6 +24,9 @@ interface Task {
   priority: string;
   dueDate?: string;
   createdAt?: unknown;
+  updatedAt?: unknown;
+  projectId?: string;
+  workspaceId?: string;
   [key: string]: unknown;
 }
 
@@ -42,7 +45,7 @@ interface WorkspaceMember {
   avatar: string;
   avatarColor: string;
   role: "owner" | "admin" | "member" | "viewer";
-  status: "active" | "pending" | "suspended";
+  status: "active" | "pending" | "invited" | "suspended";
   joinedAt: any;
   invitedBy: string;
   lastActive: any;
@@ -51,6 +54,9 @@ interface WorkspaceMember {
     canDeleteProjects: boolean;
     canInviteMembers: boolean;
     canManageTasks: boolean;
+    canEdit?: boolean;
+    canDelete?: boolean;
+    canInvite?: boolean;
   };
 }
 
@@ -78,6 +84,7 @@ interface WorkspaceData {
   createdAt: any;
   memberCount: number;
   plan: "free" | "pro";
+  description?: string;
 }
 
 interface Note {
@@ -115,14 +122,9 @@ const AppDataContext = createContext<AppDataContextType>({
   cancelInvite: async () => {},
 });
 
-// ── Fix legacy invites that were saved with random Firestore auto-IDs ────────
-// This runs once on workspace load and re-saves any broken invites
-// with the correct document ID = invite code so cancelInvite can find them
 async function fixLegacyInvites(wsId: string): Promise<void> {
   try {
-    const snap = await getDocs(
-      collection(db, "workspaces", wsId, "invites")
-    );
+    const snap = await getDocs(collection(db, "workspaces", wsId, "invites"));
 
     const batch = writeBatch(db);
     let fixCount = 0;
@@ -131,21 +133,12 @@ async function fixLegacyInvites(wsId: string): Promise<void> {
       const data = document.data();
       const storedCode = data.code as string;
 
-      // If the Firestore document ID does NOT match the code field
-      // this is a legacy broken invite — fix it by re-saving with correct ID
       if (storedCode && document.id !== storedCode) {
-        // Delete the broken document (random auto-ID)
         batch.delete(document.ref);
 
-        // Re-create with the invite code as the document ID
-        const correctRef = doc(
-          db,
-          "workspaces",
-          wsId,
-          "invites",
-          storedCode
-        );
+        const correctRef = doc(db, "workspaces", wsId, "invites", storedCode);
         batch.set(correctRef, data);
+
         fixCount++;
 
         console.log(
@@ -157,172 +150,97 @@ async function fixLegacyInvites(wsId: string): Promise<void> {
     if (fixCount > 0) {
       await batch.commit();
       console.log(
-        `[fixLegacyInvites] ✅ Successfully fixed ${fixCount} legacy invite(s)`
+        `[fixLegacyInvites] ✅ Fixed ${fixCount} legacy invite(s)`
       );
-    } else {
-      console.log("[fixLegacyInvites] ✅ All invites already have correct IDs");
     }
   } catch (err: any) {
     console.error("[fixLegacyInvites] ❌ Failed:", err?.message || err);
   }
 }
 
+function getSeconds(v: any): number {
+  if (!v) return 0;
+  if (typeof v?.toMillis === "function") return Math.floor(v.toMillis() / 1000);
+  if (typeof v?.seconds === "number") return v.seconds;
+  const ms = new Date(v).getTime();
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+}
+
 export function AppDataProvider({ children }: { children: ReactNode }) {
   const { user, workspaceId, setWorkspaceId } = useAuth();
   const uid = user?.uid ?? "";
 
-  const [tasks, setTasks]                   = useState<Task[]>([]);
-  const [teamMembers, setTeamMembers]       = useState<TeamMember[]>([]);
-  const [notes, setNotes]                   = useState<Note[]>([]);
-  const [projects, setProjects]             = useState<Project[]>([]);
-  const [loading, setLoading]               = useState(true);
-  const [members, setMembers]               = useState<WorkspaceMember[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
-  const [workspaceData, setWorkspaceData]   = useState<WorkspaceData | null>(null);
-  const resolvedRef                         = useRef(false);
+  const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
 
-  // ── Cancel invite — deletes from BOTH Firestore paths atomically ──────────
+  const resolvedRef = useRef(false);
+
   const cancelInvite = async (inviteCode: string): Promise<void> => {
     if (!workspaceId) throw new Error("No workspace found");
 
     console.log("[cancelInvite] 🗑️ Deleting invite:", inviteCode);
-    console.log(
-      "[cancelInvite] WS path:",
-      `workspaces/${workspaceId}/invites/${inviteCode}`
-    );
-    console.log("[cancelInvite] Global path:", `invites/${inviteCode}`);
 
     const batch = writeBatch(db);
 
-    // PATH 1 — workspace subcollection
     batch.delete(doc(db, "workspaces", workspaceId, "invites", inviteCode));
-
-    // PATH 2 — global invites collection
     batch.delete(doc(db, "invites", inviteCode));
 
     await batch.commit();
 
-    console.log("[cancelInvite] ✅ batch.commit() succeeded — invite deleted");
+    console.log("[cancelInvite] ✅ Invite deleted");
   };
 
-  // ── Core user data listeners ──────────────────────────────────────────────
+  // User personal listeners: notes and legacy teamMembers only.
   useEffect(() => {
     if (!uid) {
-      setTasks([]);
       setTeamMembers([]);
       setNotes([]);
-      setProjects([]);
-      setLoading(false);
       return;
     }
-
-    console.log("[AppData] 🔄 Attaching all listeners for uid:", uid);
-    resolvedRef.current = false;
-    setLoading(true);
-
-    let t = false, m = false, n = false, p = false;
-
-    function tryResolve() {
-      if (!resolvedRef.current && t && m && n && p) {
-        resolvedRef.current = true;
-        setLoading(false);
-        console.log("[AppData] ✅ All listeners ready — loading resolved");
-      }
-    }
-
-    const timeout = setTimeout(() => {
-      if (!resolvedRef.current) {
-        resolvedRef.current = true;
-        setLoading(false);
-        console.warn("[AppData] ⚠️ Safety timeout fired — forced ready");
-      }
-    }, 5000);
-
-    const unsubTasks = onSnapshot(
-      collection(db, "users", uid, "tasks"),
-      (snap) => {
-        const data: Task[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Task, "id">),
-        } as Task));
-        data.sort((a, b) => {
-          const aT =
-            a.createdAt &&
-            typeof a.createdAt === "object" &&
-            "seconds" in (a.createdAt as object)
-              ? (a.createdAt as { seconds: number }).seconds
-              : 0;
-          const bT =
-            b.createdAt &&
-            typeof b.createdAt === "object" &&
-            "seconds" in (b.createdAt as object)
-              ? (b.createdAt as { seconds: number }).seconds
-              : 0;
-          return bT - aT;
-        });
-        setTasks(data);
-        t = true;
-        tryResolve();
-      },
-      () => {
-        t = true;
-        tryResolve();
-      }
-    );
 
     const unsubMembers = onSnapshot(
       collection(db, "users", uid, "teamMembers"),
       (snap) => {
-        const data: TeamMember[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<TeamMember, "id">),
-        } as TeamMember));
+        const data: TeamMember[] = snap.docs.map(
+          (d) =>
+            ({
+              id: d.id,
+              ...(d.data() as Omit<TeamMember, "id">),
+            } as TeamMember)
+        );
         setTeamMembers(data);
-        m = true;
-        tryResolve();
       },
-      () => {
-        m = true;
-        tryResolve();
-      }
+      (err) => console.warn("[AppData] user teamMembers error:", err.code)
     );
 
     const unsubNotes = onSnapshot(
       collection(db, "users", uid, "notes"),
       (snap) => {
-        const data: Note[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Note, "id">),
-        } as Note));
+        const data: Note[] = snap.docs.map(
+          (d) =>
+            ({
+              id: d.id,
+              ...(d.data() as Omit<Note, "id">),
+            } as Note)
+        );
         setNotes(data);
-        n = true;
-        tryResolve();
       },
-      () => {
-        n = true;
-        tryResolve();
-      }
+      (err) => console.warn("[AppData] user notes error:", err.code)
     );
 
-    const unsubProjects = subscribeToProjects(uid, (data) => {
-      setProjects(data);
-      p = true;
-      tryResolve();
-    });
-
     return () => {
-      console.log("[AppData] 🧹 Cleaning up listeners for uid:", uid);
-      clearTimeout(timeout);
-      unsubTasks();
       unsubMembers();
       unsubNotes();
-      unsubProjects();
     };
   }, [uid]);
 
-  // ── FIX 1: Real-time listener on users/{uid} for workspaceId changes ──────
-  // When Daniel resets CTAHIGHLIGHT's workspaceId in Firestore, her
-  // active session detects it here and switches workspace instantly.
+  // Real-time listener for users/{uid}.workspaceId
   useEffect(() => {
     if (!uid) return;
 
@@ -330,12 +248,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       doc(db, "users", uid),
       (snap) => {
         if (!snap.exists()) return;
+
         const firestoreWsId = snap.data().workspaceId as string | undefined;
+
         if (firestoreWsId && firestoreWsId !== workspaceId) {
           console.log(
-            "[AppData] 🔄 workspaceId changed in Firestore:",
-            workspaceId, "→", firestoreWsId
+            "[AppData] 🔄 workspaceId changed:",
+            workspaceId,
+            "→",
+            firestoreWsId
           );
+
           setWorkspaceId(firestoreWsId);
         }
       },
@@ -343,106 +266,181 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     );
 
     return () => unsubUserDoc();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid]); // intentionally omit workspaceId to avoid re-subscribing on every switch
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid]);
 
-  // ── Workspace team listeners (depends on workspaceId) ────────────────────
+  // Workspace shared listeners: workspace, members, invites, projects, tasks.
   useEffect(() => {
-    if (!workspaceId) {
+    if (!uid || !workspaceId) {
+      setTasks([]);
+      setProjects([]);
       setMembers([]);
       setPendingInvites([]);
       setWorkspaceData(null);
+      setLoading(false);
       return;
     }
 
-    console.log("[AppData] 🔄 Attaching workspace listeners for:", workspaceId);
+    console.log("[AppData] 🔄 Attaching workspace listeners:", workspaceId);
 
-    // ✅ Fix any legacy invites that were saved with wrong document IDs
-    // Runs once silently in the background — does nothing if already correct
+    resolvedRef.current = false;
+    setLoading(true);
+
+    let wsReady = false;
+    let membersReady = false;
+    let invitesReady = false;
+    let projectsReady = false;
+    let tasksReady = false;
+
+    function tryResolve() {
+      if (
+        !resolvedRef.current &&
+        wsReady &&
+        membersReady &&
+        invitesReady &&
+        projectsReady &&
+        tasksReady
+      ) {
+        resolvedRef.current = true;
+        setLoading(false);
+        console.log("[AppData] ✅ Workspace data ready");
+      }
+    }
+
+    const timeout = setTimeout(() => {
+      if (!resolvedRef.current) {
+        resolvedRef.current = true;
+        setLoading(false);
+        console.warn("[AppData] ⚠️ Workspace safety timeout");
+      }
+    }, 6000);
+
     fixLegacyInvites(workspaceId);
 
-    // Listen to workspace doc
     const unsubWorkspace = onSnapshot(
       doc(db, "workspaces", workspaceId),
       (snap) => {
         if (snap.exists()) {
           setWorkspaceData({ id: snap.id, ...snap.data() } as WorkspaceData);
+        } else {
+          setWorkspaceData(null);
         }
+
+        wsReady = true;
+        tryResolve();
       },
-      (err) => console.warn("[AppData] workspace doc error:", err.code)
+      (err) => {
+        console.warn("[AppData] workspace doc error:", err.code);
+        wsReady = true;
+        tryResolve();
+      }
     );
 
-    // Listen to workspace members
     const unsubWsMembers = onSnapshot(
       collection(db, "workspaces", workspaceId, "members"),
       (snap) => {
-        const data = snap.docs.map(
-          (d) => ({ ...d.data() } as WorkspaceMember)
-        );
+        const data = snap.docs.map((d) => {
+          const raw = d.data() as any;
+
+          return {
+            userId: raw.userId ?? d.id,
+            ...raw,
+          } as WorkspaceMember;
+        });
+
         setMembers(data);
+
         console.log("[AppData] workspace members:", data.length);
 
-        // ── FIX 2: Eviction detector ──────────────────────────────────────
-        // If the current user is no longer in the members list AND they
-        // are not the owner of this workspace, they have been removed.
-        // Switch them to a fresh personal workspace immediately.
-        if (!uid) return;
         const iStillMember = snap.docs.some((d) => d.id === uid);
-        if (!iStillMember) {
-          // Double-check we actually had members loaded (not a blank first-load)
-          // by ensuring the snapshot is non-empty or we previously had members.
-          const wsData = snap.metadata;
-          if (!wsData.fromCache && snap.docs.length >= 0) {
-            console.warn(
-              "[AppData] ⚠️ Current user not in members list — may have been removed. Workspace:",
-              workspaceId
-            );
-            // Read the canonical workspaceId from users/{uid} to switch
-            // back to whatever the server has now (resetRemovedUserWorkspace
-            // already wrote a new personalWsId there).
-            import("firebase/firestore").then(({ getDoc, doc: fsDoc }) => {
-              getDoc(fsDoc(db, "users", uid)).then((userSnap) => {
-                if (!userSnap.exists()) return;
-                const serverWsId = userSnap.data().workspaceId as string | undefined;
-                if (serverWsId && serverWsId !== workspaceId) {
-                  console.log(
-                    "[AppData] 🚪 Eviction detected — switching to personal workspace:",
-                    serverWsId
-                  );
-                  setWorkspaceId(serverWsId);
-                }
-              }).catch((e) => console.warn("[AppData] eviction getDoc error:", e));
-            });
-          }
+
+        if (snap.docs.length > 0 && !iStillMember) {
+          console.warn(
+            "[AppData] ⚠️ Current user is not a member of workspace:",
+            workspaceId
+          );
         }
-        // ── End eviction detector ─────────────────────────────────────────
+
+        membersReady = true;
+        tryResolve();
       },
-      (err) => console.warn("[AppData] members error:", err.code)
+      (err) => {
+        console.warn("[AppData] members error:", err.code);
+        membersReady = true;
+        tryResolve();
+      }
     );
 
-    // Listen to pending invites
-    // code: d.id ensures we always use the Firestore document ID as the code
     const unsubInvites = onSnapshot(
       collection(db, "workspaces", workspaceId, "invites"),
       (snap) => {
         const data = snap.docs
           .filter((d) => d.data().status !== "accepted")
-          .map((d) => ({
-            code: d.id,       // ← document ID IS the invite code
-            ...d.data(),
-          } as unknown as PendingInvite));
+          .map(
+            (d) =>
+              ({
+                code: d.id,
+                ...d.data(),
+              } as unknown as PendingInvite)
+          );
+
         setPendingInvites(data);
+
         console.log("[AppData] pending invites:", data.length);
+
+        invitesReady = true;
+        tryResolve();
       },
-      (err) => console.warn("[AppData] invites error:", err.code)
+      (err) => {
+        console.warn("[AppData] invites error:", err.code);
+        invitesReady = true;
+        tryResolve();
+      }
+    );
+
+    const unsubProjects = subscribeToProjects(workspaceId, (data) => {
+      setProjects(data);
+      projectsReady = true;
+      tryResolve();
+    });
+
+    const unsubTasks = onSnapshot(
+      collection(db, "workspaces", workspaceId, "tasks"),
+      (snap) => {
+        const data: Task[] = snap.docs.map(
+          (d) =>
+            ({
+              id: d.id,
+              ...(d.data() as Omit<Task, "id">),
+            } as Task)
+        );
+
+        data.sort((a, b) => getSeconds(b.createdAt) - getSeconds(a.createdAt));
+
+        setTasks(data);
+
+        console.log("[AppData] workspace tasks:", data.length);
+
+        tasksReady = true;
+        tryResolve();
+      },
+      (err) => {
+        console.warn("[AppData] tasks error:", err.code);
+        tasksReady = true;
+        tryResolve();
+      }
     );
 
     return () => {
+      console.log("[AppData] 🧹 Cleaning workspace listeners:", workspaceId);
+      clearTimeout(timeout);
       unsubWorkspace();
       unsubWsMembers();
       unsubInvites();
+      unsubProjects();
+      unsubTasks();
     };
-  }, [workspaceId]);
+  }, [uid, workspaceId]);
 
   return (
     <AppDataContext.Provider

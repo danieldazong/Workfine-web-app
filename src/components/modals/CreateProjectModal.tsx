@@ -16,7 +16,7 @@ interface CreateProjectModalProps {
 }
 
 export default function CreateProjectModal({ isOpen, onClose }: CreateProjectModalProps) {
-  const { user } = useAuth();
+  const { user, workspaceId } = useAuth();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [color, setColor] = useState('#6366F1');
@@ -40,22 +40,33 @@ export default function CreateProjectModal({ isOpen, onClose }: CreateProjectMod
       return;
     }
     if (!user) {
-      setSubmitError('You must be signed in to create a project.');
-      return;
-    }
+  setSubmitError("You must be signed in to create a project.");
+  return;
+}
+
+if (!workspaceId) {
+  setSubmitError("No active workspace found.");
+  return;
+}
+
 
     setIsSubmitting(true);
     setSubmitError(null);
 
     try {
-      await createProject(user.uid, {
-        name,
-        description,
-        color,
-        status: "active",
-        priority: "Medium",
-        dueDate: "",
-      });
+      await createProject(
+  workspaceId,
+  {
+    name,
+    description,
+    color,
+    status: "active",
+    priority: "Medium",
+    dueDate: "",
+  },
+  user.uid
+);
+
 
       // Reset form and close on success
       setName('');

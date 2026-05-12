@@ -33,7 +33,7 @@ interface TaskModalProps {
 }
 
 export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModalProps) {
-  const { user } = useAuth();
+  const { user, workspaceId } = useAuth();
   const [title, setTitle] = useState(task?.title || '');
   const [description, setDescription] = useState(task?.description || '');
   const [priority, setPriority] = useState<TaskPriority>(task?.priority || 'Medium');
@@ -44,7 +44,7 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSave = async () => {
-    if (!title.trim() || !user) return;
+    if (!title.trim() || !user || !workspaceId) return;
     setSaving(true);
     try {
       if (task) {
@@ -58,7 +58,7 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
       } else {
         await taskService.createTask({
           projectId,
-          workspaceId: 'ws1', // Simplified for demo
+          workspaceId,
           title,
           description,
           assigneeIds: [user.uid],

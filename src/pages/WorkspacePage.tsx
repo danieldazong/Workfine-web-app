@@ -211,15 +211,17 @@ const canManage =
         )}
 
        {activeTab === "members" && (
-  <MembersTab
-    workspaceId={wsId}
-    members={membersForUi}
-    pendingInvites={pendingInvites}
-    myUid={user?.uid ?? ""}
-    canManage={canManage}
-    onInvite={() => setShowInvite(true)}
-    onCancelInvite={cancelInvite}
-  />
+ <MembersTab
+  workspaceId={wsId}
+  members={membersForUi}
+  pendingInvites={pendingInvites}
+  myUid={user?.uid ?? ""}
+  workspaceOwnerId={workspaceData?.ownerId ?? ""}
+  canManage={canManage}
+  onInvite={() => setShowInvite(true)}
+  onCancelInvite={cancelInvite}
+/>
+
 )}
 
 
@@ -757,6 +759,7 @@ function MembersTab({
   members,
   pendingInvites,
   myUid,
+  workspaceOwnerId,
   canManage,
   onInvite,
   onCancelInvite,
@@ -765,10 +768,12 @@ function MembersTab({
   members: any[];
   pendingInvites: any[];
   myUid: string;
+  workspaceOwnerId: string;
   canManage: boolean;
   onInvite: () => void;
   onCancelInvite: (code: string) => Promise<void>;
 }) {
+
   const [subTab, setSubTab] = useState<"active" | "pending">("active");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -917,15 +922,17 @@ function MembersTab({
       <div className="px-5 py-4">
         {subTab === "active" && (
           <ActiveMembersList
-            members={filteredMembers}
-            allCount={activeMembers.length}
-            myUid={myUid}
-            myRole={myRole}
-            canManage={canManage}
-            busyId={busyId}
-            onRoleChange={handleRoleChange}
-            onRemove={handleRemove}
-          />
+  members={filteredMembers}
+  allCount={activeMembers.length}
+  myUid={myUid}
+  myRole={myRole}
+  workspaceOwnerId={workspaceOwnerId}
+  canManage={canManage}
+  busyId={busyId}
+  onRoleChange={handleRoleChange}
+  onRemove={handleRemove}
+/>
+
         )}
 
         {subTab === "pending" && (
@@ -948,6 +955,7 @@ function ActiveMembersList({
   allCount,
   myUid,
   myRole,
+  workspaceOwnerId,
   canManage,
   busyId,
   onRoleChange,
@@ -957,11 +965,13 @@ function ActiveMembersList({
   allCount: number;
   myUid: string;
   myRole: WorkspaceRole;
+  workspaceOwnerId: string;
   canManage: boolean;
   busyId: string | null;
   onRoleChange: (uid: string, role: WorkspaceRole) => void;
   onRemove: (uid: string, name: string) => void;
 }) {
+
   if (allCount === 0) {
     return (
       <div className="text-center py-12">
@@ -991,22 +1001,28 @@ function ActiveMembersList({
 
       {members.map((m) => {
         const role = (m.role as WorkspaceRole) ?? "member";
-        const meta = ROLE_META[role] ?? ROLE_META.member;
-        const Icon = meta.icon;
-        const isMe = m.userId === myUid;
-        const isBusy = busyId === m.userId;
 
-        const editable =
-          canManage &&
-          role !== "owner" &&
-          !isMe &&
-          (myRole === "owner" || (myRole === "admin" && role !== "admin"));
+const isCanonicalOwner = m.userId === workspaceOwnerId;
+const effectiveRole: WorkspaceRole =
+  isCanonicalOwner ? "owner" : role === "owner" ? "admin" : role;
 
-        const removable =
-          canManage &&
-          role !== "owner" &&
-          !isMe &&
-          (myRole === "owner" || (myRole === "admin" && role !== "admin"));
+const meta = ROLE_META[effectiveRole] ?? ROLE_META.member;
+const Icon = meta.icon;
+const isMe = m.userId === myUid;
+const isBusy = busyId === m.userId;
+
+const editable =
+  canManage &&
+  !isCanonicalOwner &&
+  !isMe &&
+  (myRole === "owner" || (myRole === "admin" && effectiveRole !== "admin"));
+
+const removable =
+  canManage &&
+  !isCanonicalOwner &&
+  !isMe &&
+  (myRole === "owner" || (myRole === "admin" && effectiveRole !== "admin"));
+
 
         const joinedDate = m.joinedAt
           ? (typeof m.joinedAt.toDate === "function"
@@ -1037,14 +1053,15 @@ function ActiveMembersList({
 
             {editable ? (
               <select
-                disabled={isBusy}
-                value={role}
-                onChange={(e) => onRoleChange(m.userId, e.target.value as WorkspaceRole)}
+  disabled={isBusy}
+  value={effectiveRole === "owner" ? "admin" : effectiveRole}
+  onChange={(e) => onRoleChange(m.userId, e.target.value as WorkspaceRole)}
                 className={`text-xs font-semibold px-2 py-1.5 rounded-lg border border-gray-200 ${meta.color} bg-white focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50 cursor-pointer`}
               >
-                {(myRole === "owner") && <option value="admin">Admin</option>}
-                <option value="member">Member</option>
-                <option value="viewer">Viewer</option>
+                {myRole === "owner" && <option value="admin">Admin</option>}
+<option value="member">Member</option>
+<option value="viewer">Viewer</option>
+
               </select>
             ) : (
               <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-semibold w-fit ${meta.bg} ${meta.color}`}>

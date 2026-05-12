@@ -52,7 +52,7 @@ const emptyTask = () => ({
 // ─── Main Component ───────────────────────────────────────────────────────
 const ProjectPage = () => {
   const { id }          = useParams<{ id: string }>();
-  const { user }        = useAuth();
+  const { user, workspaceId } = useAuth();
   const { projects }    = useAppData();
   const navigate        = useNavigate();
 
@@ -69,20 +69,26 @@ const ProjectPage = () => {
   const project = projects.find(p => p.id === id);
 
   // ── Real-time tasks listener ───────────────────────────────────────────
-  useEffect(() => {
-    if (!user?.uid || !id) return;
-    const ref = collection(db, "users", user.uid, "tasks");
-    const unsub = onSnapshot(ref,
-      (snap) => {
-        const all = snap.docs
-          .map(d => ({ id: d.id, ...d.data() } as Task))
-          .filter(t => (t as any).projectId === id);
-        setTasks(all);
-      },
-      (err) => console.error("[ProjectPage] tasks:", err.code)
-    );
-    return () => unsub();
-  }, [user?.uid, id]);
+ useEffect(() => {
+  if (!workspaceId || !id) return;
+
+  const ref = collection(db, "workspaces", workspaceId, "tasks");
+
+  const unsub = onSnapshot(
+    ref,
+    (snap) => {
+      const all = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as Task))
+        .filter((t) => (t as any).projectId === id);
+
+      setTasks(all);
+    },
+    (err) => console.error("[ProjectPage] tasks:", err.code)
+  );
+
+  return () => unsub();
+}, [workspaceId, id]);
+
 
   // ── Keep drawerTask in sync with the latest task data ─────────────────
   useEffect(() => {
@@ -94,16 +100,19 @@ const ProjectPage = () => {
 
   // ── Live progress update on Firestore project doc ─────────────────────
   useEffect(() => {
-    if (!user?.uid || !id || tasks.length === 0) return;
-    const done     = tasks.filter(t => t.status === "Done").length;
-    const progress = Math.round((done / tasks.length) * 100);
-    updateDoc(doc(db, "users", user.uid, "projects", id), {
-      taskCount:          tasks.length,
-      completedTaskCount: done,
-      progress,
-      updatedAt: serverTimestamp(),
-    }).catch(() => {});
-  }, [tasks, user?.uid, id]);
+  if (!workspaceId || !id) return;
+
+  const done = tasks.filter((t) => t.status === "Done").length;
+  const progress = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
+
+  updateDoc(doc(db, "workspaces", workspaceId, "projects", id), {
+    taskCount: tasks.length,
+    completedTaskCount: done,
+    progress,
+    updatedAt: serverTimestamp(),
+  }).catch(() => {});
+}, [tasks, workspaceId, id]);
+
 
   // ── Derived stats ──────────────────────────────────────────────────────
   const done      = tasks.filter(t => t.status === "Done").length;
@@ -140,25 +149,30 @@ const ProjectPage = () => {
 
   // ── Save task ──────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!user?.uid || !form.title.trim()) return;
+   if (!user?.uid || !workspaceId || !form.title.trim()) return;
     setSaving(true);
     try {
       if (editTask) {
-        await updateDoc(doc(db, "users", user.uid, "tasks", editTask.id), {
-          ...form, updatedAt: serverTimestamp(),
-        });
+        await updateDoc(doc(db, "workspaces", workspaceId, "tasks", editTask.id), {
+  ...form,
+  updatedAt: serverTimestamp(),
+});
+
       } else {
         const pCode = (project as any)?.code || "WF-000";
         const taskCode = `${pCode}-T${tasks.length + 1}`;
-        await addDoc(collection(db, "users", user.uid, "tasks"), {
-          ...form,
-          taskCode,
-          assignee: form.assignee.trim(),
-          projectId: id,
-          ownerId:   user.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
+        await addDoc(collection(db, "workspaces", workspaceId, "tasks"), {
+  ...form,
+  taskCode,
+  assignee: form.assignee.trim(),
+  projectId: id,
+  workspaceId,
+  ownerId: user.uid,
+  createdBy: user.uid,
+  createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
+});
+
       }
       setShowModal(false);
       setEditTask(null);
@@ -169,17 +183,21 @@ const ProjectPage = () => {
 
   // ── Delete task ────────────────────────────────────────────────────────
   const handleDelete = async (taskId: string) => {
-    if (!user?.uid) return;
-    await deleteDoc(doc(db, "users", user.uid, "tasks", taskId));
+   if (!workspaceId) return;
+await deleteDoc(doc(db, "workspaces", workspaceId, "tasks", taskId));
+
   };
 
   // ── Toggle task status ─────────────────────────────────────────────────
   const cycleStatus = async (task: Task) => {
     const order: Task["status"][] = ["To Do","In Progress","In Review","Done"];
     const next = order[(order.indexOf(task.status) + 1) % order.length];
-    await updateDoc(doc(db, "users", user.uid!, "tasks", task.id), {
-      status: next, updatedAt: serverTimestamp(),
-    });
+   if (!workspaceId) return;
+
+await updateDoc(doc(db, "workspaces", workspaceId, "tasks", task.id), {
+  status: next,
+  updatedAt: serverTimestamp(),
+});
   };
 
   // ── Open edit modal ────────────────────────────────────────────────────

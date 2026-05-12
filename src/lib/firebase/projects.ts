@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   setDoc,
+  updateDoc,
   onSnapshot,
   serverTimestamp,
   Unsubscribe,
@@ -16,100 +17,149 @@ export interface Project {
   description: string;
   color: string;
   status: string;
-  uid: string;
+  workspaceId: string;
+  createdBy?: string;
+  ownerId?: string;
+  uid?: string;
   createdAt: unknown;
+  updatedAt?: unknown;
   [key: string]: any;
 }
 
 export interface NewProject {
-  name:         string;
-  description:  string;
-  color:        string;
-  status?:      string;
-  priority?:    string;
-  dueDate?:     string | null;
-  code?:        string;
+  name: string;
+  description: string;
+  color: string;
+  status?: string;
+  priority?: string;
+  dueDate?: string | null;
+  code?: string;
 }
 
-async function ensureUserDocExists(uid: string): Promise<void> {
+async function ensureWorkspaceDocExists(workspaceId: string): Promise<void> {
   await setDoc(
-    doc(db, "users", uid),
-    { uid, updatedAt: serverTimestamp() },
+    doc(db, "workspaces", workspaceId),
+    {
+      id: workspaceId,
+      workspaceId,
+      updatedAt: serverTimestamp(),
+    },
     { merge: true }
   );
 }
 
 export async function createProject(
-  uid: string,
-  data: NewProject
+  workspaceId: string,
+  data: NewProject,
+  createdBy?: string
 ): Promise<string> {
-  if (!uid) throw new Error("No authenticated user");
+  if (!workspaceId) throw new Error("No active workspace");
 
-  await ensureUserDocExists(uid);
+  await ensureWorkspaceDocExists(workspaceId);
 
-  const ref    = collection(db, "users", uid, "projects");
+  const ref = collection(db, "workspaces", workspaceId, "projects");
+
   const docRef = await addDoc(ref, {
-    name:        data.name.trim(),
+    name: data.name.trim(),
     description: data.description?.trim() ?? "",
-    color:       data.color ?? "#6366f1",
-    status:      data.status   ?? "active",
-    priority:    data.priority ?? "Medium",
-    dueDate:     data.dueDate  ?? null,
-    code:        data.code     ?? null,
-    uid,
-    createdAt:   serverTimestamp(),
-    updatedAt:   serverTimestamp(),
+    color: data.color ?? "#6366f1",
+    status: data.status ?? "active",
+    priority: data.priority ?? "Medium",
+    dueDate: data.dueDate ?? null,
+    code: data.code ?? null,
+
+    workspaceId,
+    createdBy: createdBy ?? "",
+    ownerId: createdBy ?? "",
+    uid: createdBy ?? "",
+
+    taskCount: 0,
+    completedTaskCount: 0,
+    progress: 0,
+
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   });
 
-  console.log("[Projects] ✅ Saved: users/" + uid + "/projects/" + docRef.id);
+  console.log(
+    "[Projects] ✅ Saved:",
+    `workspaces/${workspaceId}/projects/${docRef.id}`
+  );
+
   return docRef.id;
 }
 
+export async function updateProject(
+  workspaceId: string,
+  projectId: string,
+  updates: Partial<Project>
+): Promise<void> {
+  if (!workspaceId || !projectId) return;
+
+  await updateDoc(doc(db, "workspaces", workspaceId, "projects", projectId), {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
+
+  console.log("[Projects] ✏️ Updated:", projectId);
+}
+
 export async function deleteProject(
-  uid: string,
+  workspaceId: string,
   projectId: string
 ): Promise<void> {
-  if (!uid || !projectId) return;
-  await deleteDoc(doc(db, "users", uid, "projects", projectId));
+  if (!workspaceId || !projectId) return;
+
+  await deleteDoc(doc(db, "workspaces", workspaceId, "projects", projectId));
+
   console.log("[Projects] 🗑️ Deleted:", projectId);
 }
 
 export function subscribeToProjects(
-  uid: string,
+  workspaceId: string,
   callback: (projects: Project[]) => void
 ): Unsubscribe {
-  if (!uid) {
+  if (!workspaceId) {
     callback([]);
     return () => {};
   }
 
-  console.log("[Projects] 👂 Attaching listener for uid:", uid);
+  console.log("[Projects] 👂 Attaching workspace listener:", workspaceId);
 
   return onSnapshot(
-    collection(db, "users", uid, "projects"),
+    collection(db, "workspaces", workspaceId, "projects"),
     (snapshot) => {
-      const list: Project[] = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<Project, "id">),
-      } as Project));
+      const list: Project[] = snapshot.docs.map(
+        (d) =>
+          ({
+            id: d.id,
+            ...(d.data() as Omit<Project, "id">),
+          } as Project)
+      );
 
       list.sort((a, b) => {
         const aT =
-          a.createdAt && typeof a.createdAt === "object" &&
+          a.createdAt &&
+          typeof a.createdAt === "object" &&
           "seconds" in (a.createdAt as object)
-            ? (a.createdAt as { seconds: number }).seconds : 0;
+            ? (a.createdAt as { seconds: number }).seconds
+            : 0;
+
         const bT =
-          b.createdAt && typeof b.createdAt === "object" &&
+          b.createdAt &&
+          typeof b.createdAt === "object" &&
           "seconds" in (b.createdAt as object)
-            ? (b.createdAt as { seconds: number }).seconds : 0;
+            ? (b.createdAt as { seconds: number }).seconds
+            : 0;
+
         return bT - aT;
       });
 
-      console.log("[Projects] 📦 Snapshot received — count:", list.length);
+      console.log("[Projects] 📦 Workspace snapshot count:", list.length);
       callback(list);
     },
     (err) => {
-      console.error("[Projects] ❌ Listener error:", err.message);
+      console.error("[Projects] ❌ Listener error:", err.code, err.message);
       callback([]);
     }
   );

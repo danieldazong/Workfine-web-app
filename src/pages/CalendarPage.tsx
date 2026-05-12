@@ -73,7 +73,7 @@ export default function CalendarPage() {
   const [filterStatus,  setFilterStatus]  = useState("all");
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
   const [detailTask, setDetailTask] = useState<DetailTask | null>(null);
-  const { user } = useAuth();
+  const { user, workspaceId } = useAuth();
   const [editTask, setEditTask] = useState<DetailTask | null>(null);
   const [editForm, setEditForm] = useState({
     title: "", description: "", status: "To Do",
@@ -94,13 +94,15 @@ export default function CalendarPage() {
   }
 
   async function saveEdit() {
-    if (!user?.uid || !editTask || !editForm.title.trim()) return;
+    if (!workspaceId || !editTask || !editForm.title.trim()) return;
+
     setEditSaving(true);
     try {
       await updateDoc(
-        doc(db, "users", user.uid, "tasks", editTask.id),
-        { ...editForm, updatedAt: serverTimestamp() }
-      );
+  doc(db, "workspaces", workspaceId, "tasks", editTask.id),
+  { ...editForm, updatedAt: serverTimestamp() }
+);
+
       setEditTask(null);
     } finally { setEditSaving(false); }
   }

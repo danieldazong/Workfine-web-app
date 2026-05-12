@@ -26,7 +26,7 @@ const PRIORITIES = [
 ];
 
 export default function CreateProjectModal({ onClose }: Props) {
-  const { user } = useAuth();
+  const { user, workspaceId } = useAuth();
   const { projects = [] } = useAppData() as any;
 
   // ── Step (never driven by external state so never resets) ──
@@ -83,9 +83,15 @@ export default function CreateProjectModal({ onClose }: Props) {
       if (step !== 2) return;
 
       if (!user?.uid) {
-        setError("You must be signed in.");
-        return;
-      }
+  setError("You must be signed in.");
+  return;
+}
+
+if (!workspaceId) {
+  setError("No active workspace found.");
+  return;
+}
+
       if (!name.trim()) {
         setError("Project name is required.");
         return;
@@ -96,7 +102,7 @@ export default function CreateProjectModal({ onClose }: Props) {
 
       try {
         const projectCode = "WF-" + String(projects.length + 1).padStart(3, "0");
-        const id = await createProject(user.uid, {
+        const id = await createProject(workspaceId, {
           code:        projectCode,
           name:        name.trim(),
           description: description.trim(),
@@ -104,7 +110,8 @@ export default function CreateProjectModal({ onClose }: Props) {
           status,
           priority,
           dueDate:     dueDate || null,
-        });
+}, user.uid);
+
         console.log("[CreateProjectModal] ✅ Project saved:", id, "with code", projectCode);
         onClose();   // ← ONLY place onClose is called on success
       } catch (err) {
@@ -113,7 +120,7 @@ export default function CreateProjectModal({ onClose }: Props) {
         setSaving(false);
       }
     },
-    [step, user, projects, name, description, color, status, priority, dueDate, onClose]
+    [step, user, workspaceId, projects, name, description, color, status, priority, dueDate, onClose]
   );
 
   // Prevent Enter key in inputs from triggering any implicit submission.
