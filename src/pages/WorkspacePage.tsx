@@ -91,24 +91,27 @@ export default function WorkspacePage() {
               {wsInitial}
             </div>
             <div>
-                  <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
                   {wsName}
                 </h1>
                 <button
+                  type="button"
                   onClick={() => navigate("/workspace/settings")}
-                  className="text-gray-400 hover:text-gray-700 transition-colors"
+                  className="p-1.5 text-gray-500 hover:text-violet-600 hover:bg-violet-50 rounded-lg transition-colors"
                   title="Workspace settings"
                 >
                   <SettingsIcon size={16} />
                 </button>
                 <button
-                  className="text-gray-300 hover:text-amber-500 transition-colors"
+                  type="button"
+                  className="p-1.5 text-gray-500 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
                   title="Star workspace"
                 >
                   <Star size={16} />
                 </button>
               </div>
+
 
               <p className="text-xs text-gray-400 mt-0.5">
                 {workspaceData?.id ?? ""}
@@ -1160,27 +1163,30 @@ function SettingsTab({
       >
         <div className="space-y-4">
           <Field label="Workspace name" required>
-            <input
+                        <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value.slice(0, 60))}
               disabled={!canManage}
               maxLength={60}
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:bg-gray-50 disabled:text-gray-500"
+              placeholder="Enter workspace name"
+              className="w-full px-3 py-2 text-sm text-gray-900 placeholder-gray-400 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:bg-gray-50 disabled:text-gray-500"
             />
+
             <p className="text-[10px] text-gray-400 mt-1">{name.length}/60</p>
           </Field>
 
           <Field label="Description">
-            <textarea
+                        <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value.slice(0, 280))}
               disabled={!canManage}
               maxLength={280}
               rows={3}
               placeholder="Describe what this workspace is for..."
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none disabled:bg-gray-50 disabled:text-gray-500"
+              className="w-full px-3 py-2 text-sm text-gray-900 placeholder-gray-400 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none disabled:bg-gray-50 disabled:text-gray-500"
             />
+
             <p className="text-[10px] text-gray-400 mt-1">{description.length}/280</p>
           </Field>
 
@@ -1220,17 +1226,18 @@ function SettingsTab({
                   <CheckCircle2 size={12} /> Saved
                 </span>
               )}
-              <button
+                            <button
                 onClick={() => {
                   setName(workspaceData?.name ?? "");
                   setDescription(workspaceData?.description ?? "");
                   setGeneralError("");
                 }}
                 disabled={!dirty || savingGeneral}
-                className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-40"
+                className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 Reset
               </button>
+
               <button
                 onClick={saveGeneral}
                 disabled={!dirty || savingGeneral}
