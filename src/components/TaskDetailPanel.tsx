@@ -43,10 +43,22 @@ import {
   Star,
   Paperclip,
   Sparkles,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  List,
+  ListOrdered,
+  Quote,
+  Code2,
+  Link as LinkIcon,
 } from "lucide-react";
+
 import data from "@emoji-mart/data";
 import Picker from "@emoji-mart/react";
 import { useMentionableUsers } from "../hooks/useMentionableUsers";
+import { storageService, UploadedAttachment } from "../lib/firebase/storage";
+
 
 
 
@@ -78,9 +90,11 @@ interface Comment {
   authorName: string;
   createdAt?: any;
   mentions?: string[];
+  attachments?: UploadedAttachment[];
   /** emoji char (with skin tone applied) → array of user UIDs who reacted */
   reactions?: Record<string, string[]>;
 }
+
 
 const STATUS_STYLE: Record<string, string> = {
   "To Do": "bg-gray-100 text-gray-600",
@@ -348,8 +362,10 @@ export default function TaskDetailPanel({
   const [descriptionDraft, setDescriptionDraft] = useState("");
   const [savingDescription, setSavingDescription] = useState(false);
   const [commentText, setCommentText] = useState("");
+const [uploadingAttachment, setUploadingAttachment] = useState(false);
+const [sending, setSending] = useState(false);
 
-  const [sending, setSending] = useState(false);
+
   const [mounted, setMounted] = useState(false);
   const [closing, setClosing] = useState(false);
 
@@ -370,8 +386,10 @@ export default function TaskDetailPanel({
    const [toast, setToast] = useState<string | null>(null);
 
   // Composer expand/collapse state (Asana-style progressive disclosure)
-  const [composerExpanded, setComposerExpanded] = useState(false);
-  const [showComposerEmojiPicker, setShowComposerEmojiPicker] = useState(false);
+ const [composerExpanded, setComposerExpanded] = useState(false);
+const [showComposerEmojiPicker, setShowComposerEmojiPicker] = useState(false);
+const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
+
 
   // Reaction picker state
   const [pickerForCommentId, setPickerForCommentId] = useState<string | null>(null);
@@ -385,6 +403,7 @@ export default function TaskDetailPanel({
   const [showSkinTonePicker, setShowSkinTonePicker] = useState(false);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
+const fileInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const emojiSearchInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -419,9 +438,11 @@ export default function TaskDetailPanel({
       const node = composerRef.current;
       if (node && !node.contains(e.target as Node)) {
         if (!commentText.trim()) {
-          setComposerExpanded(false);
-          setShowComposerEmojiPicker(false);
-        }
+  setComposerExpanded(false);
+  setShowComposerEmojiPicker(false);
+  setShowFormattingToolbar(false);
+}
+
       }
     };
     const id = window.setTimeout(() => {
@@ -582,33 +603,126 @@ export default function TaskDetailPanel({
   }, [onClose]);
 
   const handleSend = useCallback(async () => {
-    if (!user?.uid || !commentText.trim() || sending) return;
-    setSending(true);
+  if (!user?.uid || !commentText.trim() || sending) return;
+
+  setSending(true);
+
+  try {
+    const text = commentText.trim();
+    const authorName = user.displayName ?? user.email ?? "User";
+
+    await addDoc(
+      collection(db, "users", user.uid, "tasks", task.id, "comments"),
+      {
+        text,
+        authorId: user.uid,
+        authorName,
+        createdAt: serverTimestamp(),
+        mentions: extractMentions(text),
+        attachments: [],
+      }
+    );
+
+    setCommentText("");
+    setShowSuggestions(false);
+    setMentionFilter("");
+    setMentionStart(-1);
+    setShowUserSuggestions(false);
+    setUserMentionFilter("");
+    setUserMentionStart(-1);
+    setComposerExpanded(false);
+    setShowComposerEmojiPicker(false);
+  } catch (e) {
+    console.error("[TaskDetailPanel] add comment:", e);
+    setToast("Failed to send comment");
+    setTimeout(() => setToast(null), 2500);
+  } finally {
+    setSending(false);
+  }
+}, [user, commentText, sending, task.id]);
+
+const handleAttachFile = useCallback(
+  async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+
+    // Allows selecting the same file again later
+    e.target.value = "";
+
+    if (!file) return;
+
+    if (!user?.uid) {
+      setToast("You must be signed in to upload files");
+      setTimeout(() => setToast(null), 2500);
+      return;
+    }
+
+    if (!task.id) {
+      setToast("Task ID is missing");
+      setTimeout(() => setToast(null), 2500);
+      return;
+    }
+
+    if (!task.projectId) {
+      setToast("Project ID is missing for this task");
+      setTimeout(() => setToast(null), 2500);
+      return;
+    }
+
+    const maxSizeMb = 25;
+    if (file.size > maxSizeMb * 1024 * 1024) {
+      setToast(`File is too large. Max ${maxSizeMb}MB allowed.`);
+      setTimeout(() => setToast(null), 2500);
+      return;
+    }
+
+    setUploadingAttachment(true);
+
     try {
-      const text = commentText.trim();
-      const authorName = user.displayName ?? user.email ?? "User";
-      await addDoc(
-        collection(db, "users", user.uid, "tasks", task.id, "comments"),
-        {
-          text,
-          authorId: user.uid,
-          authorName,
-          createdAt: serverTimestamp(),
-          mentions: extractMentions(text),
-        }
+      const attachment = await storageService.uploadFile(
+        user.uid,
+        task.projectId,
+        task.id,
+        file
       );
-            setCommentText("");
+
+      const authorName = user.displayName ?? user.email ?? "User";
+
+await addDoc(
+  collection(db, "users", user.uid, "tasks", task.id, "comments"),
+  {
+    text: "",
+    authorId: user.uid,
+    authorName,
+    createdAt: serverTimestamp(),
+    mentions: [],
+    attachments: [attachment],
+  }
+);
+
+
+      setCommentText("");
       setShowSuggestions(false);
       setMentionFilter("");
       setMentionStart(-1);
+      setShowUserSuggestions(false);
+      setUserMentionFilter("");
+      setUserMentionStart(-1);
       setComposerExpanded(false);
       setShowComposerEmojiPicker(false);
-    } catch (e) {
-      console.error("[TaskDetailPanel] add comment:", e);
+
+      setToast("File uploaded");
+      setTimeout(() => setToast(null), 1800);
+    } catch (err) {
+      console.error("[TaskDetailPanel] upload attachment:", err);
+      setToast("File upload failed");
+      setTimeout(() => setToast(null), 2500);
     } finally {
-      setSending(false);
+      setUploadingAttachment(false);
     }
-  }, [user, commentText, sending, task.id]);
+  },
+  [user, task.id, task.projectId, commentText]
+);
+
 
 
 
@@ -698,6 +812,307 @@ export default function TaskDetailPanel({
       return <span key={i}>{part}</span>;
     });
   }
+function applyInlineFormat(prefix: string, suffix: string, placeholder: string) {
+  const ta = inputRef.current;
+  const start = ta?.selectionStart ?? commentText.length;
+  const end = ta?.selectionEnd ?? commentText.length;
+  const selected = commentText.slice(start, end);
+  const content = selected || placeholder;
+  const inserted = `${prefix}${content}${suffix}`;
+  const next = commentText.slice(0, start) + inserted + commentText.slice(end);
+
+  setCommentText(next);
+
+  requestAnimationFrame(() => {
+    ta?.focus();
+    if (selected) {
+      ta?.setSelectionRange(start, start + inserted.length);
+    } else {
+      ta?.setSelectionRange(
+        start + prefix.length,
+        start + prefix.length + placeholder.length
+      );
+    }
+  });
+}
+
+function applyLineFormat(type: "bullet" | "number" | "quote") {
+  const ta = inputRef.current;
+  const start = ta?.selectionStart ?? commentText.length;
+  const end = ta?.selectionEnd ?? commentText.length;
+  const selected = commentText.slice(start, end) || "List item";
+
+  const lines = selected.split("\n");
+
+  const inserted = lines
+    .map((line, index) => {
+      const clean = line.replace(/^(-\s+|\d+\.\s+|>\s+)/, "");
+
+      if (type === "bullet") return `- ${clean}`;
+      if (type === "number") return `${index + 1}. ${clean}`;
+      return `> ${clean}`;
+    })
+    .join("\n");
+
+  const next = commentText.slice(0, start) + inserted + commentText.slice(end);
+
+  setCommentText(next);
+
+  requestAnimationFrame(() => {
+    ta?.focus();
+    ta?.setSelectionRange(start, start + inserted.length);
+  });
+}
+
+function applyCodeBlock() {
+  const ta = inputRef.current;
+  const start = ta?.selectionStart ?? commentText.length;
+  const end = ta?.selectionEnd ?? commentText.length;
+  const selected = commentText.slice(start, end) || "code";
+  const inserted = `\`\`\`\n${selected}\n\`\`\``;
+  const next = commentText.slice(0, start) + inserted + commentText.slice(end);
+
+  setCommentText(next);
+
+  requestAnimationFrame(() => {
+    ta?.focus();
+    ta?.setSelectionRange(start + 4, start + 4 + selected.length);
+  });
+}
+
+function applyLinkFormat() {
+  const ta = inputRef.current;
+  const start = ta?.selectionStart ?? commentText.length;
+  const end = ta?.selectionEnd ?? commentText.length;
+  const selected = commentText.slice(start, end) || "link text";
+
+  const url = window.prompt("Enter URL");
+  if (!url) {
+    requestAnimationFrame(() => ta?.focus());
+    return;
+  }
+
+  const safeUrl =
+    url.startsWith("http://") || url.startsWith("https://")
+      ? url
+      : `https://${url}`;
+
+  const inserted = `[${selected}](${safeUrl})`;
+  const next = commentText.slice(0, start) + inserted + commentText.slice(end);
+
+  setCommentText(next);
+
+  requestAnimationFrame(() => {
+    ta?.focus();
+    ta?.setSelectionRange(start, start + inserted.length);
+  });
+}
+
+function renderInlineFormattedText(
+  text: string,
+  isMine: boolean,
+  keyPrefix = "inline"
+): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+
+  const regex =
+    /(\*\*([\s\S]+?)\*\*|_([\s\S]+?)_|~~([\s\S]+?)~~|<u>([\s\S]+?)<\/u>|`([^`]+?)`|\[([^\]]+?)\]\((https?:\/\/[^\s)]+)\)|#(?:TSK|PRJ)-\d+)/g;
+
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let idx = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(
+        <React.Fragment key={`${keyPrefix}-plain-${idx}`}>
+          {renderCommentText(text.slice(lastIndex, match.index))}
+        </React.Fragment>
+      );
+      idx++;
+    }
+
+    const token = match[0];
+
+    if (token.startsWith("**")) {
+      nodes.push(
+        <strong key={`${keyPrefix}-bold-${idx}`} className="font-semibold">
+          {renderInlineFormattedText(match[2], isMine, `${keyPrefix}-bold-${idx}`)}
+        </strong>
+      );
+    } else if (token.startsWith("_")) {
+      nodes.push(
+        <em key={`${keyPrefix}-italic-${idx}`} className="italic">
+          {renderInlineFormattedText(match[3], isMine, `${keyPrefix}-italic-${idx}`)}
+        </em>
+      );
+    } else if (token.startsWith("~~")) {
+      nodes.push(
+        <span key={`${keyPrefix}-strike-${idx}`} className="line-through">
+          {renderInlineFormattedText(match[4], isMine, `${keyPrefix}-strike-${idx}`)}
+        </span>
+      );
+    } else if (token.startsWith("<u>")) {
+      nodes.push(
+        <span key={`${keyPrefix}-underline-${idx}`} className="underline underline-offset-2">
+          {renderInlineFormattedText(match[5], isMine, `${keyPrefix}-underline-${idx}`)}
+        </span>
+      );
+    } else if (token.startsWith("`")) {
+      nodes.push(
+        <code
+          key={`${keyPrefix}-code-${idx}`}
+          className={`px-1.5 py-0.5 rounded text-[12px] font-mono ${
+            isMine
+              ? "bg-white/15 text-white"
+              : "bg-slate-200/80 text-slate-800"
+          }`}
+        >
+          {match[6]}
+        </code>
+      );
+    } else if (token.startsWith("[")) {
+      nodes.push(
+        <a
+          key={`${keyPrefix}-link-${idx}`}
+          href={match[8]}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className={`font-medium underline underline-offset-2 ${
+            isMine
+              ? "text-white hover:text-violet-100"
+              : "text-violet-600 hover:text-violet-700"
+          }`}
+        >
+          {match[7]}
+        </a>
+      );
+    } else if (token.startsWith("#")) {
+      nodes.push(
+        <React.Fragment key={`${keyPrefix}-mention-${idx}`}>
+          {renderCommentText(token)}
+        </React.Fragment>
+      );
+    }
+
+    lastIndex = regex.lastIndex;
+    idx++;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(
+      <React.Fragment key={`${keyPrefix}-plain-end`}>
+        {renderCommentText(text.slice(lastIndex))}
+      </React.Fragment>
+    );
+  }
+
+  return nodes;
+}
+
+function renderFormattedCommentText(
+  text: string,
+  isMine: boolean
+): React.ReactNode {
+  const codeBlockRegex = /```([\s\S]*?)```/g;
+  const parts: React.ReactNode[] = [];
+
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let blockIndex = 0;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index);
+
+    if (before) {
+      parts.push(
+        <div key={`text-block-${blockIndex}`} className="space-y-1">
+          {renderFormattedLines(before, isMine, `before-${blockIndex}`)}
+        </div>
+      );
+    }
+
+    parts.push(
+      <pre
+        key={`code-block-${blockIndex}`}
+        className={`my-1 max-w-full overflow-x-auto rounded-xl px-3 py-2 text-xs font-mono leading-relaxed ${
+          isMine
+            ? "bg-black/20 text-white"
+            : "bg-slate-900 text-slate-100"
+        }`}
+      >
+        <code>{match[1].trim()}</code>
+      </pre>
+    );
+
+    lastIndex = codeBlockRegex.lastIndex;
+    blockIndex++;
+  }
+
+  const after = text.slice(lastIndex);
+
+  if (after) {
+    parts.push(
+      <div key="text-block-after" className="space-y-1">
+        {renderFormattedLines(after, isMine, "after")}
+      </div>
+    );
+  }
+
+  return <>{parts}</>;
+}
+
+function renderFormattedLines(
+  text: string,
+  isMine: boolean,
+  keyPrefix: string
+): React.ReactNode[] {
+  return text.split("\n").map((line, index) => {
+    const bulletMatch = line.match(/^-\s+(.+)$/);
+    const numberMatch = line.match(/^(\d+)\.\s+(.+)$/);
+    const quoteMatch = line.match(/^>\s+(.+)$/);
+
+    if (bulletMatch) {
+      return (
+        <div key={`${keyPrefix}-bullet-${index}`} className="flex gap-2">
+          <span className="mt-[1px]">•</span>
+          <span>{renderInlineFormattedText(bulletMatch[1], isMine, `${keyPrefix}-bullet-${index}`)}</span>
+        </div>
+      );
+    }
+
+    if (numberMatch) {
+      return (
+        <div key={`${keyPrefix}-number-${index}`} className="flex gap-2">
+          <span className="min-w-[18px]">{numberMatch[1]}.</span>
+          <span>{renderInlineFormattedText(numberMatch[2], isMine, `${keyPrefix}-number-${index}`)}</span>
+        </div>
+      );
+    }
+
+    if (quoteMatch) {
+      return (
+        <blockquote
+          key={`${keyPrefix}-quote-${index}`}
+          className={`border-l-2 pl-2 italic ${
+            isMine
+              ? "border-white/40 text-white/90"
+              : "border-slate-300 text-slate-600"
+          }`}
+        >
+          {renderInlineFormattedText(quoteMatch[1], isMine, `${keyPrefix}-quote-${index}`)}
+        </blockquote>
+      );
+    }
+
+    return (
+      <p key={`${keyPrefix}-line-${index}`} className="whitespace-pre-wrap break-words">
+        {renderInlineFormattedText(line, isMine, `${keyPrefix}-line-${index}`)}
+      </p>
+    );
+  });
+}
 
   // Mention autocomplete suggestions, split into groups
   const taskItems = useMemo(
@@ -1284,7 +1699,230 @@ export default function TaskDetailPanel({
 
                   const isPickerOpen = pickerForCommentId === c.id;
 
-                  return (
+const hasAttachments =
+  Array.isArray(c.attachments) && c.attachments.length > 0;
+
+const displayText = hasAttachments ? "" : c.text;
+
+const messageActions = (
+  <div
+    className={`relative flex shrink-0 items-center gap-1 pb-1 transition-opacity ${
+      isPickerOpen
+        ? "opacity-100"
+        : "opacity-100 md:opacity-0 md:group-hover:opacity-100"
+    }`}
+  >
+    <button
+      type="button"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        setPickerForCommentId((prev) =>
+          prev === c.id ? null : c.id
+        );
+        setShowSkinTonePicker(false);
+      }}
+      className={`w-7 h-7 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center hover:bg-violet-50 hover:text-violet-600 transition-colors ${
+        isPickerOpen
+          ? "text-violet-600 bg-violet-50"
+          : "text-slate-500"
+      }`}
+      title="Add reaction"
+      aria-label="Add reaction"
+    >
+      <Smile size={13} />
+    </button>
+
+    {isMine && (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleDelete(c);
+        }}
+        className="w-7 h-7 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+        title="Delete comment"
+        aria-label="Delete comment"
+      >
+        <Trash2 size={13} />
+      </button>
+    )}
+
+    {/* Compact emoji picker — anchored to the side action icon */}
+    {isPickerOpen && (
+      <div
+        ref={pickerRef}
+        onMouseDown={(e) => e.stopPropagation()}
+        className={`absolute bottom-9 z-[70] w-[280px] max-w-[calc(100vw-48px)] bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${
+          isMine ? "right-0" : "left-0"
+        }`}
+        role="dialog"
+        aria-label="Emoji reaction picker"
+      >
+        {/* Quick reactions row */}
+        <div className="flex items-center gap-1 px-2.5 pt-2.5 pb-2 border-b border-slate-100">
+          {QUICK_REACTIONS.map((e) => (
+            <button
+              key={e}
+              type="button"
+              onClick={() => handlePickEmoji(e, false)}
+              className="text-lg leading-none hover:scale-125 transition-transform p-1 rounded-md hover:bg-slate-50"
+              title={`React with ${e}`}
+            >
+              {e}
+            </button>
+          ))}
+
+          <div className="ml-auto relative">
+            <button
+              type="button"
+              onClick={() => setShowSkinTonePicker((v) => !v)}
+              className="w-7 h-7 rounded-lg border border-slate-200 hover:border-violet-300 flex items-center justify-center text-base bg-white"
+              title="Skin tone"
+              aria-label="Choose default skin tone"
+            >
+              {applySkinTone("✋", skinTone)}
+            </button>
+
+            {showSkinTonePicker && (
+              <div className="absolute right-0 top-8 bg-white border border-slate-200 rounded-lg shadow-lg p-1 flex gap-0.5 z-10">
+                {SKIN_TONES.map((tone) => (
+                  <button
+                    key={tone || "default"}
+                    type="button"
+                    onClick={() => {
+                      setSkinTone(tone);
+                      saveSkinTone(tone);
+                      setShowSkinTonePicker(false);
+                    }}
+                    className={`w-7 h-7 rounded-md flex items-center justify-center text-base hover:bg-slate-100 ${
+                      tone === skinTone
+                        ? "bg-violet-50 ring-1 ring-violet-300"
+                        : ""
+                    }`}
+                    title={tone ? `Tone ${tone}` : "Default"}
+                  >
+                    {applySkinTone("✋", tone)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Search */}
+        <div className="px-2.5 py-2 border-b border-slate-100">
+          <div className="relative">
+            <Search
+              size={13}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+            <input
+              ref={emojiSearchInputRef}
+              value={emojiSearch}
+              onChange={(e) => setEmojiSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (emojiSearch) setEmojiSearch("");
+                  else setPickerForCommentId(null);
+                }
+              }}
+              placeholder="Search emojis"
+              className="w-full h-8 bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 text-xs text-slate-700 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+            />
+          </div>
+        </div>
+
+        {/* Category tabs */}
+        {!emojiSearch && (
+          <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100 overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => setActiveCategory("recent")}
+              className={`flex-shrink-0 p-1.5 rounded-md transition-colors ${
+                activeCategory === "recent"
+                  ? "bg-violet-100 text-violet-600"
+                  : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              }`}
+              title="Recent"
+              aria-label="Recent"
+            >
+              <Clock3 size={14} />
+            </button>
+
+            {EMOJI_CATEGORIES.map((cat) => {
+              const Icon = cat.icon;
+              const active = activeCategory === cat.key;
+
+              return (
+                <button
+                  key={cat.key}
+                  type="button"
+                  onClick={() => setActiveCategory(cat.key)}
+                  className={`flex-shrink-0 p-1.5 rounded-md transition-colors ${
+                    active
+                      ? "bg-violet-100 text-violet-600"
+                      : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                  }`}
+                  title={cat.label}
+                  aria-label={cat.label}
+                >
+                  <Icon size={14} />
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Emoji grid */}
+        <div className="flex-1 overflow-y-auto max-h-[190px] px-2 py-2">
+          {visibleEmojiGroups.map((group) => (
+            <div key={group.key} className="mb-2">
+              <p className="text-[9px] uppercase tracking-wider text-slate-400 px-1.5 py-1 font-semibold">
+                {group.label}
+              </p>
+
+              {group.items.length === 0 ? (
+                <p className="text-xs text-slate-400 italic px-2 py-3 text-center">
+                  {emojiSearch ? "No emojis found" : "No recent emojis yet"}
+                </p>
+              ) : (
+                <div className="grid grid-cols-7 gap-0.5">
+                  {group.items.map((it, idx) => (
+                    <button
+                      key={`${group.key}-${it.emoji}-${idx}`}
+                      type="button"
+                      onClick={() =>
+                        handlePickEmoji(it.emoji, it.toneable)
+                      }
+                      className="text-lg leading-none p-1.5 rounded-lg hover:bg-violet-50 hover:scale-110 transition-all"
+                      title={
+                        it.toneable
+                          ? `${it.emoji} (skin tone applies)`
+                          : it.emoji
+                      }
+                    >
+                      {it.toneable
+                        ? applySkinTone(it.emoji, skinTone)
+                        : it.emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+  </div>
+);
+
+
+return (
+
+
                     <div key={c.id}>
                       {/* Day separator pill */}
                       {showDaySeparator && (
@@ -1312,82 +1950,138 @@ export default function TaskDetailPanel({
                           </div>
                         )}
 
-                        {/* Bubble + meta column */}
-                        <div
-                          className={`relative flex flex-col max-w-[75%] ${
-                            isMine ? "items-end" : "items-start"
-                          }`}
-                        >
-                          {/* Sender name (incoming only, first in a group) */}
-                          {!isMine && !sameAuthorAsPrev && (
-                            <span className="text-xs font-semibold text-slate-700 mb-1 px-1">
-                              {c.authorName}
-                            </span>
-                          )}
+                       {/* Bubble + meta column */}
+<div
+  className={`relative flex flex-col max-w-[82%] ${
+    isMine ? "items-end" : "items-start"
+  }`}
+>
+  {/* Sender name — incoming only, first in a group */}
+  {!isMine && !sameAuthorAsPrev && (
+    <span className="text-xs font-semibold text-slate-700 mb-1 px-1">
+      {c.authorName}
+    </span>
+  )}
 
-                          {/* The bubble */}
-                          <div
-                            className={`relative px-3.5 py-2 text-sm leading-snug shadow-sm break-words ${
-                              isMine
-                                ? "bg-violet-600 text-white"
-                                : "bg-slate-100 text-slate-800"
-                            } ${
-                              isMine
-                                ? `rounded-2xl ${
-                                    sameAuthorAsNext
-                                      ? "rounded-br-md"
-                                      : "rounded-br-sm"
-                                  }`
-                                : `rounded-2xl ${
-                                    sameAuthorAsNext
-                                      ? "rounded-bl-md"
-                                      : "rounded-bl-sm"
-                                  }`
-                            }`}
-                          >
-                            <p className="whitespace-pre-wrap break-words">
-                              {renderCommentText(c.text)}
-                            </p>
+  {/* Bubble row — actions sit beside the bubble/card like WhatsApp */}
+  <div
+    className={`flex items-end gap-1.5 max-w-full ${
+      isMine ? "justify-end" : "justify-start"
+    }`}
+  >
+    {isMine && messageActions}
 
-                            {/* Hover actions: react + delete (mine only) */}
-                            <div
-                              className={`absolute -top-3 ${
-                                isMine ? "-left-2" : "-right-2"
-                              } flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}
-                            >
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setPickerForCommentId((prev) =>
-                                    prev === c.id ? null : c.id
-                                  );
-                                  setShowSkinTonePicker(false);
-                                }}
-                                className={`w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center hover:bg-violet-50 hover:text-violet-600 ${
-                                  isPickerOpen
-                                    ? "text-violet-600 bg-violet-50"
-                                    : "text-slate-500"
-                                }`}
-                                title="Add reaction"
-                                aria-label="Add reaction"
-                              >
-                                <Smile size={12} />
-                              </button>
-                              {isMine && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleDelete(c)}
-                                  className="w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50"
-                                  title="Delete comment"
-                                  aria-label="Delete comment"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              )}
-                            </div>
-                          </div>
+    {/* The bubble */}
+    <div
+      className={`relative w-fit max-w-full px-2 py-2 text-sm leading-snug shadow-sm break-words ${
+
+    isMine
+      ? "bg-violet-600 text-white"
+      : "bg-slate-100 text-slate-800"
+  } ${
+    isMine
+      ? `rounded-2xl ${
+          sameAuthorAsNext
+            ? "rounded-br-md"
+            : "rounded-br-sm"
+        }`
+      : `rounded-2xl ${
+          sameAuthorAsNext
+            ? "rounded-bl-md"
+            : "rounded-bl-sm"
+        }`
+  }`}
+>
+
+{displayText && (
+  <div className={`break-words ${hasAttachments ? "mb-2" : ""}`}>
+    {renderFormattedCommentText(displayText, isMine)}
+  </div>
+)}
+
+
+{hasAttachments && (
+  <div className="space-y-2">
+    {c.attachments!.map((file) => {
+      const isImage = file.type?.startsWith("image/");
+      const sizeLabel =
+        typeof file.size === "number"
+          ? file.size >= 1024 * 1024
+            ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
+            : `${(file.size / 1024).toFixed(1)} KB`
+          : "Unknown size";
+
+      return (
+        <a
+          key={file.id || file.url}
+          href={file.url}
+          target="_blank"
+          rel="noreferrer"
+          download={file.name}
+          onClick={(e) => e.stopPropagation()}
+          className={`block w-[320px] max-w-[calc(100vw-96px)] rounded-xl overflow-hidden border transition-all ${
+            isMine
+              ? "border-white/20 bg-white/10 hover:bg-white/15 text-white"
+              : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+          }`}
+          title="Open attachment"
+        >
+          {isImage ? (
+            <div
+              className={`w-full h-[180px] overflow-hidden ${
+                isMine ? "bg-white/10" : "bg-slate-100"
+              }`}
+            >
+              <img
+                src={file.url}
+                alt={file.name}
+                loading="lazy"
+                className="w-full h-full object-cover"
+              />
+            </div>
+          ) : (
+            <div
+              className={`h-[92px] flex items-center justify-center ${
+                isMine ? "bg-white/10" : "bg-slate-50"
+              }`}
+            >
+              <Paperclip
+                size={28}
+                className={isMine ? "text-white/80" : "text-slate-400"}
+              />
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 px-3 py-2">
+            <Paperclip size={13} className="flex-shrink-0 opacity-80" />
+
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium truncate leading-tight">
+                {file.name}
+              </p>
+              <p
+                className={`text-[10px] mt-0.5 ${
+                  isMine ? "text-white/65" : "text-slate-400"
+                }`}
+              >
+                {sizeLabel}
+              </p>
+            </div>
+          </div>
+        </a>
+      );
+    })}
+  </div>
+)}
+
+
+
+
+                                </div>
+
+    {!isMine && messageActions}
+  </div>
+
 
                           {/* Timestamp — only on last message of a group */}
                           {!sameAuthorAsNext && (
@@ -1435,185 +2129,7 @@ export default function TaskDetailPanel({
                             </div>
                           )}
 
-                          {/* Emoji reaction picker — anchored to this bubble */}
-                          {isPickerOpen && (
-                            <div
-                              ref={pickerRef}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              className={`absolute z-[55] w-[340px] bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col bottom-full mb-2 ${
-                                isMine ? "right-0" : "left-0"
-                              }`}
-                              role="dialog"
-                              aria-label="Emoji reaction picker"
-                            >
-                              {/* Quick reactions row */}
-                              <div className="flex items-center gap-1 px-3 pt-3 pb-2 border-b border-slate-100">
-                                {QUICK_REACTIONS.map((e) => (
-                                  <button
-                                    key={e}
-                                    type="button"
-                                    onClick={() => handlePickEmoji(e, false)}
-                                    className="text-xl leading-none hover:scale-125 transition-transform p-1 rounded-md hover:bg-slate-50"
-                                    title={`React with ${e}`}
-                                  >
-                                    {e}
-                                  </button>
-                                ))}
-                                <div className="ml-auto relative">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setShowSkinTonePicker((v) => !v)
-                                    }
-                                    className="w-7 h-7 rounded-md border border-slate-200 hover:border-violet-300 flex items-center justify-center text-base"
-                                    title="Skin tone"
-                                    aria-label="Choose default skin tone"
-                                  >
-                                    {applySkinTone("✋", skinTone)}
-                                  </button>
-                                  {showSkinTonePicker && (
-                                    <div className="absolute right-0 top-9 bg-white border border-slate-200 rounded-lg shadow-lg p-1 flex gap-0.5 z-10">
-                                      {SKIN_TONES.map((tone) => (
-                                        <button
-                                          key={tone || "default"}
-                                          type="button"
-                                          onClick={() => {
-                                            setSkinTone(tone);
-                                            saveSkinTone(tone);
-                                            setShowSkinTonePicker(false);
-                                          }}
-                                          className={`w-7 h-7 rounded-md flex items-center justify-center text-base hover:bg-slate-100 ${
-                                            tone === skinTone
-                                              ? "bg-violet-50 ring-1 ring-violet-300"
-                                              : ""
-                                          }`}
-                                          title={
-                                            tone ? `Tone ${tone}` : "Default"
-                                          }
-                                        >
-                                          {applySkinTone("✋", tone)}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* Search */}
-                              <div className="px-3 py-2 border-b border-slate-100">
-                                <div className="relative">
-                                  <Search
-                                    size={14}
-                                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-                                  />
-                                  <input
-                                    ref={emojiSearchInputRef}
-                                    value={emojiSearch}
-                                    onChange={(e) =>
-                                      setEmojiSearch(e.target.value)
-                                    }
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Escape") {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        if (emojiSearch) setEmojiSearch("");
-                                        else setPickerForCommentId(null);
-                                      }
-                                    }}
-                                    placeholder="Search emojis"
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:border-violet-400"
-                                  />
-                                </div>
-                              </div>
-
-                              {/* Category tabs */}
-                              {!emojiSearch && (
-                                <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-slate-100 overflow-x-auto">
-                                  <button
-                                    type="button"
-                                    onClick={() => setActiveCategory("recent")}
-                                    className={`flex-shrink-0 p-1.5 rounded-md transition-colors ${
-                                      activeCategory === "recent"
-                                        ? "bg-violet-100 text-violet-600"
-                                        : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                                    }`}
-                                    title="Recent"
-                                    aria-label="Recent"
-                                  >
-                                    <Clock3 size={16} />
-                                  </button>
-                                  {EMOJI_CATEGORIES.map((cat) => {
-                                    const Icon = cat.icon;
-                                    const active = activeCategory === cat.key;
-                                    return (
-                                      <button
-                                        key={cat.key}
-                                        type="button"
-                                        onClick={() =>
-                                          setActiveCategory(cat.key)
-                                        }
-                                        className={`flex-shrink-0 p-1.5 rounded-md transition-colors ${
-                                          active
-                                            ? "bg-violet-100 text-violet-600"
-                                            : "text-slate-400 hover:text-slate-700 hover:bg-slate-100"
-                                        }`}
-                                        title={cat.label}
-                                        aria-label={cat.label}
-                                      >
-                                        <Icon size={16} />
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-
-                              {/* Emoji grid */}
-                              <div className="flex-1 overflow-y-auto max-h-64 px-2 py-2">
-                                {visibleEmojiGroups.map((group) => (
-                                  <div key={group.key} className="mb-2">
-                                    <p className="text-[10px] uppercase tracking-wider text-slate-400 px-1.5 py-1 font-semibold">
-                                      {group.label}
-                                    </p>
-                                    {group.items.length === 0 ? (
-                                      <p className="text-xs text-slate-400 italic px-2 py-3 text-center">
-                                        {emojiSearch
-                                          ? "No emojis found"
-                                          : "No recent emojis yet"}
-                                      </p>
-                                    ) : (
-                                      <div className="grid grid-cols-8 gap-0.5">
-                                        {group.items.map((it, idx) => (
-                                          <button
-                                            key={`${group.key}-${it.emoji}-${idx}`}
-                                            type="button"
-                                            onClick={() =>
-                                              handlePickEmoji(
-                                                it.emoji,
-                                                it.toneable
-                                              )
-                                            }
-                                            className="text-xl leading-none p-1.5 rounded-md hover:bg-violet-50 hover:scale-110 transition-all"
-                                            title={
-                                              it.toneable
-                                                ? `${it.emoji} (skin tone applies)`
-                                                : it.emoji
-                                            }
-                                          >
-                                            {it.toneable
-                                              ? applySkinTone(
-                                                  it.emoji,
-                                                  skinTone
-                                                )
-                                              : it.emoji}
-                                          </button>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                         
                         </div>
                       </div>
                     </div>
@@ -1681,16 +2197,130 @@ export default function TaskDetailPanel({
                     <Plus size={16} />
                   </button>
 
-                  {/* 2. Text formatting — Bold/Italic/Lists (Phase 2 with Tiptap) */}
-                  <button
-                    type="button"
-                    disabled
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 cursor-not-allowed"
-                    title="Text formatting (coming soon)"
-                    aria-label="Text formatting"
-                  >
-                    <Type size={16} />
-                  </button>
+                  {/* 2. Text formatting — Asana-style lightweight toolbar */}
+<div className="relative">
+  <button
+    type="button"
+    onMouseDown={(e) => e.preventDefault()}
+    onClick={() => {
+      setShowFormattingToolbar((v) => !v);
+      setShowComposerEmojiPicker(false);
+    }}
+    className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+      showFormattingToolbar
+        ? "bg-violet-100 text-violet-600"
+        : "text-slate-500 hover:bg-slate-100 hover:text-violet-600"
+    }`}
+    title="Text formatting"
+    aria-label="Text formatting"
+  >
+    <Type size={16} />
+  </button>
+
+  {showFormattingToolbar && (
+    <div
+      onMouseDown={(e) => e.preventDefault()}
+      className="absolute bottom-10 left-0 z-[60] rounded-2xl border border-slate-200 bg-white shadow-2xl p-2 flex items-center gap-1"
+      role="toolbar"
+      aria-label="Text formatting toolbar"
+    >
+      <button
+        type="button"
+        onClick={() => applyInlineFormat("**", "**", "bold text")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Bold"
+      >
+        <Bold size={15} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => applyInlineFormat("_", "_", "italic text")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Italic"
+      >
+        <Italic size={15} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => applyInlineFormat("<u>", "</u>", "underlined text")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Underline"
+      >
+        <Underline size={15} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => applyInlineFormat("~~", "~~", "strikethrough text")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Strikethrough"
+      >
+        <Strikethrough size={15} />
+      </button>
+
+      <div className="h-6 w-px bg-slate-200 mx-1" />
+
+      <button
+        type="button"
+        onClick={() => applyLineFormat("bullet")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Bullet list"
+      >
+        <List size={15} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => applyLineFormat("number")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Numbered list"
+      >
+        <ListOrdered size={15} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => applyLineFormat("quote")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Quote"
+      >
+        <Quote size={15} />
+      </button>
+
+      <div className="h-6 w-px bg-slate-200 mx-1" />
+
+      <button
+        type="button"
+        onClick={() => applyInlineFormat("`", "`", "code")}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Inline code"
+      >
+        <Code2 size={15} />
+      </button>
+
+      <button
+        type="button"
+        onClick={applyCodeBlock}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600 font-mono text-xs"
+        title="Code block"
+      >
+        {"{ }"}
+      </button>
+
+      <button
+        type="button"
+        onClick={applyLinkFormat}
+        className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+        title="Link"
+      >
+        <LinkIcon size={15} />
+      </button>
+    </div>
+  )}
+</div>
+
 
                   {/* 3. Emoji — works */}
                   <button
@@ -1744,16 +2374,33 @@ export default function TaskDetailPanel({
                     <Star size={16} />
                   </button>
 
-                  {/* 6. Attachment — Phase 3 placeholder */}
-                  <button
-                    type="button"
-                    disabled
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 cursor-not-allowed"
-                    title="Attachments (coming soon)"
-                    aria-label="Attach file"
-                  >
-                    <Paperclip size={16} />
-                  </button>
+                  {/* 6. Attachment — upload file */}
+<input
+  ref={fileInputRef}
+  type="file"
+  className="hidden"
+  onChange={handleAttachFile}
+/>
+
+<button
+  type="button"
+  disabled={uploadingAttachment}
+  onClick={() => fileInputRef.current?.click()}
+  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+    uploadingAttachment
+      ? "text-violet-400 bg-violet-50 cursor-wait"
+      : "text-slate-500 hover:bg-slate-100 hover:text-violet-600"
+  }`}
+  title={uploadingAttachment ? "Uploading..." : "Attach file"}
+  aria-label="Attach file"
+>
+  {uploadingAttachment ? (
+    <span className="w-4 h-4 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
+  ) : (
+    <Paperclip size={16} />
+  )}
+</button>
+
 
                   {/* 7. Sparkles — AI assistant (Phase 4 placeholder) */}
                   <button
@@ -1774,12 +2421,14 @@ export default function TaskDetailPanel({
                     <button
                       type="button"
                       onClick={() => {
-                        setCommentText("");
-                        setComposerExpanded(false);
-                        setShowComposerEmojiPicker(false);
-                        setShowSuggestions(false);
-                        setShowUserSuggestions(false);
-                      }}
+  setCommentText("");
+  setComposerExpanded(false);
+  setShowComposerEmojiPicker(false);
+  setShowFormattingToolbar(false);
+  setShowSuggestions(false);
+  setShowUserSuggestions(false);
+}}
+
                       className="text-xs px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
                     >
                       Cancel
@@ -1787,20 +2436,26 @@ export default function TaskDetailPanel({
                     <button
                       type="button"
                       onClick={handleSend}
-                      disabled={!commentText.trim() || sending}
+                      disabled={!commentText.trim() || sending || uploadingAttachment}
                       className="text-xs px-4 py-1.5 rounded-lg bg-violet-600 text-white font-medium hover:bg-violet-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
                     >
                       {sending ? (
-                        <>
-                          <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                          Sending...
-                        </>
-                      ) : (
-                        <>
-                          <Send size={12} />
-                          Comment
-                        </>
-                      )}
+  <>
+    <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+    Sending...
+  </>
+) : uploadingAttachment ? (
+  <>
+    <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+    Uploading...
+  </>
+) : (
+  <>
+    <Send size={12} />
+    Comment
+  </>
+)}
+
                     </button>
                   </div>
                 </div>
