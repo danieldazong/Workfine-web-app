@@ -74,27 +74,29 @@ export default function JoinWorkspacePage() {
       // ✅ STEP 1 — Add user to workspace members subcollection
       const memberRef = doc(db, "workspaces", workspaceId, "members", uid);
       batch.set(memberRef, {
-        userId:      uid,
-        email:       user.email ?? "",
-        displayName: user.displayName ?? user.email?.split("@")[0] ?? "Member",
-        avatar:      (user.displayName ?? user.email ?? "M")[0].toUpperCase(),
-        avatarColor: avatarColor(uid),
-        role:        role ?? "member",   // ← use invited role, never "owner"
-        status:      "active",
-        joinedAt:    serverTimestamp(),
-        invitedBy:   invite.invitedBy ?? "",
-        lastActive:  serverTimestamp(),
-        permissions: {
-  canCreateProjects: role !== "viewer",
-  canDeleteProjects: role === "admin",
-  canInviteMembers: role === "admin",
-  canManageTasks: role !== "viewer",
-  canEdit: role !== "viewer",
-  canDelete: role === "admin",
-  canInvite: role === "admin",
-},
+  userId: uid,
+  email: user.email ?? "",
+  displayName: user.displayName ?? user.email?.split("@")[0] ?? "Member",
+  photoURL: user.photoURL ?? "",
+  avatar: (user.displayName ?? user.email ?? "M")[0].toUpperCase(),
+  avatarColor: avatarColor(uid),
+  role: role ?? "member",
+  status: "active",
+  workspaceId,
+  joinedAt: serverTimestamp(),
+  invitedBy: invite.invitedBy ?? "",
+  lastActive: serverTimestamp(),
+  permissions: {
+    canCreateProjects: role !== "viewer",
+    canDeleteProjects: role === "admin",
+    canInviteMembers: role === "admin",
+    canManageTasks: role !== "viewer",
+    canEdit: role !== "viewer",
+    canDelete: role === "admin",
+    canInvite: role === "admin",
+  },
+});
 
-      });
 
       // ✅ STEP 2 — Mark GLOBAL invite as accepted
       // Path: invites/{inviteCode}

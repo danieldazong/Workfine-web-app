@@ -15,7 +15,9 @@ import {
 } from "firebase/firestore";
 import { db } from "../lib/firebase/config";
 import { useAuth } from "./AuthContext";
-import { subscribeToProjects, Project } from "../lib/firebase/projects";
+import { subscribeToProjects } from "../lib/firebase/projects";
+import { Project } from "../types";
+import { canUserAccessProject } from "../lib/projectAccess";
 
 interface Task {
   id: string;
@@ -286,11 +288,69 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     resolvedRef.current = false;
     setLoading(true);
 
-    let wsReady = false;
+       let wsReady = false;
     let membersReady = false;
     let invitesReady = false;
     let projectsReady = false;
     let tasksReady = false;
+
+    let latestMembers: WorkspaceMember[] = [];
+    let latestProjects: Project[] = [];
+    let latestTasks: Task[] = [];
+
+    function getMyWorkspaceRole() {
+      const mine = latestMembers.find((m) => m.userId === uid);
+      return mine?.role ?? null;
+    }
+
+    function getAccessibleProjects() {
+      const myRole = getMyWorkspaceRole();
+
+      return latestProjects.filter((project) =>
+        canUserAccessProject(project, uid, myRole)
+      );
+    }
+
+    function publishAccessibleData() {
+      const accessibleProjects = getAccessibleProjects();
+      const accessibleProjectIds = new Set(accessibleProjects.map((p) => p.id));
+
+      const myEmail = user?.email?.toLowerCase().trim() ?? "";
+
+      const accessibleTasks = latestTasks.filter((task: any) => {
+        /**
+         * Tasks attached to accessible projects are visible.
+         */
+        if (task.projectId && accessibleProjectIds.has(task.projectId)) {
+          return true;
+        }
+
+        /**
+         * Personal/unprojected tasks created by or assigned to the user
+         * can still appear in My Tasks.
+         */
+        if (task.createdBy === uid || task.ownerId === uid) {
+          return true;
+        }
+
+        if (task.assigneeId === uid) {
+          return true;
+        }
+
+        if (
+          myEmail &&
+          typeof task.assignee === "string" &&
+          task.assignee.toLowerCase().trim() === myEmail
+        ) {
+          return true;
+        }
+
+        return false;
+      });
+
+      setProjects(accessibleProjects);
+      setTasks(accessibleTasks);
+    }
 
     function tryResolve() {
       if (
@@ -306,6 +366,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         console.log("[AppData] ✅ Workspace data ready");
       }
     }
+
 
     const timeout = setTimeout(() => {
       if (!resolvedRef.current) {
@@ -348,9 +409,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           } as WorkspaceMember;
         });
 
+                latestMembers = data;
         setMembers(data);
+        publishAccessibleData();
 
         console.log("[AppData] workspace members:", data.length);
+
 
         const iStillMember = snap.docs.some((d) => d.id === uid);
 
@@ -398,11 +462,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    const unsubProjects = subscribeToProjects(workspaceId, (data) => {
-      setProjects(data);
+       const unsubProjects = subscribeToProjects(workspaceId, (data) => {
+      latestProjects = data;
+      publishAccessibleData();
+
       projectsReady = true;
       tryResolve();
     });
+
 
     const unsubTasks = onSnapshot(
       collection(db, "workspaces", workspaceId, "tasks"),
@@ -417,9 +484,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
         data.sort((a, b) => getSeconds(b.createdAt) - getSeconds(a.createdAt));
 
-        setTasks(data);
+                latestTasks = data;
+        publishAccessibleData();
 
         console.log("[AppData] workspace tasks:", data.length);
+
 
         tasksReady = true;
         tryResolve();

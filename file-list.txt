@@ -21,6 +21,8 @@ src\features\project\views\ProjectCalendarView.tsx
 src\features\project\views\ProjectListView.tsx
 src\features\project\views\ProjectTimelineView.tsx
 src\hooks\useMentionableUsers.ts
+src\hooks\usePageTitle.ts
+src\lib\projectAccess.ts
 src\lib\utils.ts
 src\lib\firebase\auth.ts
 src\lib\firebase\cleanup.ts

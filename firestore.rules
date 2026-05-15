@@ -1,13 +1,511 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ─── Helpers ────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelfUid(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function onlyChanged(allowed) {
+      return changedKeys().hasOnly(allowed);
+    }
+
+    function isActiveWorkspaceMember(workspaceId, uid) {
+      return exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data.status == "active";
+    }
+
+    function isWorkspaceOwnerOrAdmin(workspaceId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.status == "active"
+        && (
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.role == "owner" ||
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.role == "admin"
+        );
+    }
+
+    function isProjectCollaborator(projectId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/projects/$(projectId)/collaborators/$(request.auth.uid));
+    }
+
+    function isProjectOwner(projectData) {
+      return isSignedIn()
+        && (
+          (projectData.ownerId is string && projectData.ownerId == request.auth.uid) ||
+          (projectData.uid is string && projectData.uid == request.auth.uid)
+        );
+    }
+
+    function canWorkspaceAdminReadUser(userId) {
+      return isSignedIn()
+        && request.auth.uid != userId
+        && resource.data.workspaceId is string
+        && isWorkspaceOwnerOrAdmin(resource.data.workspaceId)
+        && isActiveWorkspaceMember(resource.data.workspaceId, userId);
+    }
+
+    function canWorkspaceAdminRemoveUser(userId) {
+      return isSignedIn()
+        && request.auth.uid != userId
+        && resource.data.workspaceId is string
+        && request.resource.data.lastRemovedFromWorkspaceId == resource.data.workspaceId
+        && isWorkspaceOwnerOrAdmin(resource.data.workspaceId)
+        && isActiveWorkspaceMember(resource.data.workspaceId, userId)
+        && request.resource.data.workspaceId == request.resource.data.personalWorkspaceId
+        && onlyChanged([
+          "workspaceId",
+          "personalWorkspaceId",
+          "lastRemovedFromWorkspaceId",
+          "removedFromWorkspaceAt",
+          "updatedAt"
+        ]);
+    }
+
+    function isSelfJoiningCollaborator(projectId) {
+      return isSignedIn()
+        && onlyChanged([
+          "collaboratorCount",
+          "isShared",
+          "collaboratorUids",
+          "collaboratorEmails",
+          "externalGuestUids",
+          "accessUpdatedAt",
+          "updatedAt"
+        ])
+        && request.resource.data.collaboratorUids is list
+        && request.auth.uid in request.resource.data.collaboratorUids;
+    }
+
+    // ─── Global invites ─────────────────────────────────────────────────
+    match /invites/{inviteCode} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    // ─── CollectionGroup: project collaborators ─────────────────────────
+    match /{path=**}/collaborators/{collaboratorId} {
+
+      allow get: if isSignedIn()
+        && (
+          collaboratorId == request.auth.uid ||
+          resource.data.uid == request.auth.uid ||
+          resource.data.userId == request.auth.uid
+        );
+
+      allow list: if isSignedIn()
+        && resource.data.uid == request.auth.uid;
+
+      allow create, update: if isSignedIn();
+
+      allow delete: if isSignedIn();
+    }
+
+    // ─── Legacy Root Projects ───────────────────────────────────────────
+    // Kept for backward compatibility with older project-sharing code.
+    // Current Wurkfine workspace projects live under:
+    // workspaces/{workspaceId}/projects/{projectId}
+    match /projects/{projectId} {
+
+      allow get: if isSignedIn() && (
+        isProjectOwner(resource.data) ||
+        (
+          resource.data.workspaceId is string &&
+          resource.data.visibility == "workspace" &&
+          isActiveWorkspaceMember(resource.data.workspaceId, request.auth.uid)
+        ) ||
+        isProjectCollaborator(projectId)
+      );
+
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && isProjectOwner(request.resource.data);
+
+      allow update: if isSignedIn() && (
+        isProjectOwner(resource.data) ||
+
+        (
+          resource.data.workspaceId is string &&
+          isWorkspaceOwnerOrAdmin(resource.data.workspaceId)
+        ) ||
+
+        (
+          isProjectCollaborator(projectId) &&
+          onlyChanged([
+            "collaboratorCount",
+            "isShared",
+            "collaboratorUids",
+            "collaboratorEmails",
+            "externalGuestUids",
+            "accessUpdatedAt",
+            "updatedAt"
+          ])
+        ) ||
+
+        isSelfJoiningCollaborator(projectId)
+      );
+
+      allow delete: if isSignedIn() && isProjectOwner(resource.data);
+
+      match /invites/{inviteCode} {
+        allow read, write: if isSignedIn();
+      }
+
+      match /collaborators/{uid} {
+        allow read: if isSignedIn() && (
+          uid == request.auth.uid ||
+          isProjectOwner(get(/databases/$(database)/documents/projects/$(projectId)).data)
+        );
+
+        allow write: if isSignedIn();
+      }
+
+      match /tasks/{taskId} {
+        allow read, write: if isSignedIn();
+
+        match /{document=**} {
+          allow read, write: if isSignedIn();
+        }
+      }
+    }
+
+    // ─── Workspaces ─────────────────────────────────────────────────────
+    match /workspaces/{workspaceId} {
+
+      function workspaceOwnerId() {
+        return get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId;
+      }
+
+      function isWorkspaceOwner() {
+        return isSignedIn()
+          && workspaceOwnerId() == request.auth.uid;
+      }
+
+      function isEditingCanonicalOwner(memberId) {
+        return memberId == workspaceOwnerId();
+      }
+
+      function isWorkspaceProjectVisibleToMe(projectData) {
+        return isSignedIn()
+          && (
+            isWorkspaceOwnerOrAdmin(workspaceId) ||
+
+            (
+              isActiveWorkspaceMember(workspaceId, request.auth.uid)
+              && (
+                !(projectData.visibility is string) ||
+                projectData.visibility == "workspace" ||
+                projectData.createdBy == request.auth.uid ||
+                projectData.ownerId == request.auth.uid ||
+                projectData.uid == request.auth.uid ||
+                (
+                  projectData.memberIds is list &&
+                  request.auth.uid in projectData.memberIds
+                ) ||
+                (
+                  projectData.collaboratorUids is list &&
+                  request.auth.uid in projectData.collaboratorUids
+                )
+              )
+            )
+          );
+      }
+
+      function canManageWorkspaceProject(projectData) {
+        return isSignedIn()
+          && (
+            isWorkspaceOwnerOrAdmin(workspaceId) ||
+            projectData.createdBy == request.auth.uid ||
+            projectData.ownerId == request.auth.uid ||
+            projectData.uid == request.auth.uid ||
+            (
+              projectData.memberIds is list &&
+              request.auth.uid in projectData.memberIds
+            )
+          );
+      }
+
+      // Workspace document
+      allow get: if isSignedIn() && (
+        isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+        isWorkspaceOwnerOrAdmin(workspaceId)
+      );
+
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn();
+
+      allow update, delete: if isSignedIn()
+        && isWorkspaceOwnerOrAdmin(workspaceId);
+
+      // Workspace members
+      match /members/{memberId} {
+        allow read: if isSignedIn() && (
+          memberId == request.auth.uid ||
+          isActiveWorkspaceMember(workspaceId, request.auth.uid)
+        );
+
+        /**
+         * Member creation:
+         * - invited user can create their own member doc
+         * - owner/admin can create member docs
+         * - user cannot create themselves as owner unless they are the
+         *   real owner from the workspace document
+         */
+        allow create: if isSignedIn() && (
+          (
+            memberId == request.auth.uid &&
+            request.resource.data.userId == request.auth.uid &&
+            (
+              request.resource.data.role != "owner" ||
+              workspaceOwnerId() == request.auth.uid
+            )
+          ) ||
+          isWorkspaceOwnerOrAdmin(workspaceId)
+        );
+
+        /**
+         * Member update:
+         * - users can only update safe profile/activity fields on themselves
+         * - owner/admin can manage members
+         * - admin cannot edit the canonical owner
+         * - only the real owner can edit the canonical owner doc
+         */
+        allow update: if isSignedIn() && (
+          (
+            memberId == request.auth.uid &&
+            onlyChanged([
+              "displayName",
+              "photoURL",
+              "avatar",
+              "avatarColor",
+              "lastActive",
+              "updatedAt"
+            ])
+          ) ||
+
+          (
+            isWorkspaceOwnerOrAdmin(workspaceId) &&
+            (
+              !isEditingCanonicalOwner(memberId) ||
+              isWorkspaceOwner()
+            )
+          )
+        );
+
+        /**
+         * Member delete:
+         * - user can leave/delete themselves only if they are not the owner
+         * - owner/admin can remove members
+         * - nobody can delete the canonical owner member doc
+         */
+        allow delete: if isSignedIn() && (
+          (
+            memberId == request.auth.uid &&
+            workspaceOwnerId() != request.auth.uid
+          ) ||
+          (
+            isWorkspaceOwnerOrAdmin(workspaceId) &&
+            !isEditingCanonicalOwner(memberId)
+          )
+        );
+      }
+
+      // Optional workspace people/profile cache
+      match /people/{personId} {
+        allow read: if isSignedIn() && (
+          personId == request.auth.uid ||
+          isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+          isWorkspaceOwnerOrAdmin(workspaceId)
+        );
+
+        allow write: if isSignedIn();
+      }
+
+      // Workspace invites
+      match /invites/{inviteCode} {
+        allow read, write: if isSignedIn();
+      }
+
+      // Workspace projects
+      match /projects/{projectId} {
+        allow get: if isWorkspaceProjectVisibleToMe(resource.data);
+
+        /**
+         * Transitional rule:
+         * The app currently listens to all workspace projects and filters
+         * accessible/private projects in AppDataContext.
+         *
+         * Later, for stricter server-side project privacy, update the frontend
+         * listeners to use query-based access:
+         * - visibility == "workspace"
+         * - memberIds array-contains current uid
+         * - createdBy == current uid
+         *
+         * Then this list rule can be made stricter.
+         */
+        allow list: if isSignedIn()
+          && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+
+        allow create: if isSignedIn()
+          && isActiveWorkspaceMember(workspaceId, request.auth.uid)
+          && request.resource.data.workspaceId == workspaceId
+          && (
+            isWorkspaceOwnerOrAdmin(workspaceId) ||
+            request.resource.data.createdBy == request.auth.uid
+          );
+
+        allow update: if isSignedIn()
+          && canManageWorkspaceProject(resource.data);
+
+        allow delete: if isSignedIn()
+          && (
+            isWorkspaceOwnerOrAdmin(workspaceId) ||
+            resource.data.ownerId == request.auth.uid ||
+            resource.data.createdBy == request.auth.uid
+          );
+
+        match /{document=**} {
+          allow read, write: if isSignedIn()
+            && canManageWorkspaceProject(
+              get(/databases/$(database)/documents/workspaces/$(workspaceId)/projects/$(projectId)).data
+            );
+        }
+      }
+
+      // Workspace tasks
+      match /tasks/{taskId} {
+        allow read: if isSignedIn()
+          && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+
+        allow create: if isSignedIn()
+          && isActiveWorkspaceMember(workspaceId, request.auth.uid)
+          && request.resource.data.workspaceId == workspaceId;
+
+        allow update, delete: if isSignedIn()
+          && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+
+        match /{document=**} {
+          allow read, write: if isSignedIn()
+            && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+        }
+      }
+
+      /**
+       * No broad workspace fallback.
+       * Future workspace subcollections must get explicit rules.
+       */
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+
+    // ─── Users ──────────────────────────────────────────────────────────
     match /users/{userId} {
-      allow read, write: if request.auth != null
-                         && request.auth.uid == userId;
+      allow read: if isSelfUid(userId) || canWorkspaceAdminReadUser(userId);
+
+      allow create: if isSelfUid(userId);
+
+      allow update: if isSelfUid(userId) || canWorkspaceAdminRemoveUser(userId);
+
+      allow delete: if isSelfUid(userId);
+
+      match /notifications/{notificationId} {
+        allow read, update, delete: if isSelfUid(userId);
+
+        allow create: if isSignedIn()
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.recipientUid == userId
+          && request.resource.data.keys().hasAll([
+            "type",
+            "senderUid",
+            "recipientUid",
+            "projectId",
+            "createdAt"
+          ]);
+      }
+
+      // Legacy user-scoped projects
+      match /projects/{projectId} {
+        allow read, write: if isSelfUid(userId);
+
+        match /{document=**} {
+          allow read, write: if isSelfUid(userId);
+        }
+      }
+
+      // Legacy user-scoped tasks
+      match /tasks/{taskId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+
+        match /comments/{commentId} {
+          allow read: if isSignedIn();
+
+          allow create: if isSignedIn()
+            && request.resource.data.authorId == request.auth.uid;
+
+          allow delete: if isSignedIn()
+            && (
+              resource.data.authorId == request.auth.uid ||
+              userId == request.auth.uid
+            );
+
+          allow update: if isSignedIn() && (
+            (
+              resource.data.authorId == request.auth.uid
+              && onlyChanged([
+                "text",
+                "editedAt",
+                "editHistory",
+                "mentions",
+                "mentionedUids"
+              ])
+              && (
+                resource.data.createdAt == null ||
+                request.time < resource.data.createdAt + duration.value(15, "m")
+              )
+            )
+            ||
+            (
+              onlyChanged(["deliveredTo"])
+              && request.resource.data.deliveredTo.hasAll(resource.data.deliveredTo)
+              && request.resource.data.deliveredTo
+                .removeAll(resource.data.deliveredTo)
+                .hasOnly([request.auth.uid])
+            )
+            ||
+            (
+              onlyChanged(["readBy"])
+              && request.resource.data.readBy.hasAll(resource.data.readBy)
+              && request.resource.data.readBy
+                .removeAll(resource.data.readBy)
+                .hasOnly([request.auth.uid])
+            )
+            ||
+            onlyChanged(["reactions"])
+          );
+        }
+
+        match /{document=**} {
+          allow read, write: if isSignedIn();
+        }
+      }
+
       match /{subcollection}/{docId} {
-        allow read, write, create, delete:
-          if request.auth != null
-          && request.auth.uid == userId;
+        allow read, write, create, delete: if isSelfUid(userId);
       }
     }
   }

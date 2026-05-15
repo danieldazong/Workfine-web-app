@@ -19,7 +19,39 @@ import {
   Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Task, Attachment, TaskPriority, TaskStatus } from '../../types';
+type TaskPriority = 'Urgent' | 'High' | 'Medium' | 'Low';
+
+type TaskStatus = 'To Do' | 'In Progress' | 'In Review' | 'Done';
+
+type Attachment = {
+  id?: string;
+  name: string;
+  url: string;
+  type?: string;
+  size?: number;
+  uploadedAt?: any;
+  uploadedBy?: string;
+};
+
+type Task = {
+  id: string;
+  title?: string;
+  description?: string;
+  priority?: TaskPriority;
+  status?: TaskStatus;
+  projectId?: string;
+  workspaceId?: string;
+  assignee?: string;
+  assigneeId?: string;
+  assigneeIds?: string[];
+  dueDate?: any;
+  sectionId?: string;
+  attachments?: Attachment[];
+  createdAt?: any;
+  updatedAt?: any;
+  [key: string]: any;
+};
+
 import { taskService } from '../../lib/firebase/tasks';
 import { storageService } from '../../lib/firebase/storage';
 import { useAuth } from '../../context/AuthContext';
@@ -49,12 +81,13 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
     try {
       if (task) {
         await taskService.updateTask(task.id, {
-          title,
-          description,
-          priority,
-          status,
-          dueDate
-        });
+  title,
+  description,
+  priority,
+  status,
+  dueDate
+}, workspaceId);
+
       } else {
         await taskService.createTask({
           projectId,
@@ -78,14 +111,15 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !user || !task) return;
+   if (!file || !user || !task || !workspaceId) return;
+
 
     setIsUploading(true);
     try {
       const attachment = await storageService.uploadFile(user.uid, projectId, task.id, file);
       await taskService.updateTask(task.id, {
-        attachments: [...(task.attachments || []), attachment]
-      });
+  attachments: [...(task.attachments || []), attachment]
+}, workspaceId);
     } catch (error) {
       console.error('Upload failed', error);
     } finally {
@@ -229,7 +263,10 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{file.name}</p>
-                        <p className="text-[10px] text-muted-text">{(file.size / 1024).toFixed(1)} KB</p>
+                        <p className="text-[10px] text-muted-text">
+  {file.size ? `${(file.size / 1024).toFixed(1)} KB` : "Unknown size"}
+</p>
+
                       </div>
                     </a>
                   ))}
@@ -245,9 +282,14 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
 
           <div className="p-6 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-border-dark flex items-center justify-between">
             <button
-               onClick={() => task && taskService.deleteTask(task.id).then(() => onClose())} 
-               className="p-2 text-slate-400 hover:text-danger hover:bg-danger/5 rounded-xl transition-all"
-            >
+   onClick={() => {
+     if (task && workspaceId) {
+       taskService.deleteTask(task.id, workspaceId).then(() => onClose());
+     }
+   }} 
+   className="p-2 text-slate-400 hover:text-danger hover:bg-danger/5 rounded-xl transition-all"
+>
+
               <Trash2 size={20} />
             </button>
             <div className="flex items-center gap-3">

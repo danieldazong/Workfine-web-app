@@ -1,88 +1,86 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
-export interface User {
-  uid: string;
-  displayName: string | null;
-  email: string | null;
-  photoURL: string | null;
-  createdAt: string;
-  lastActive: string;
-  settings: {
-    theme: 'light' | 'dark';
-    notifications: boolean;
-  };
-}
-
-export interface Workspace {
-  id: string;
-  name: string;
-  ownerId: string;
-  memberIds: string[];
-  createdAt: string;
-}
+export type WorkspaceRole = "owner" | "admin" | "member" | "viewer";
+export type ProjectVisibility = "workspace" | "private";
 
 export interface Project {
   id: string;
   workspaceId: string;
-  name: string;
-  description?: string;
-  ownerId: string;
-  color: string;
-  memberRoles: Record<string, 'Owner' | 'Admin' | 'Member'>;
-  createdAt: string;
-}
 
-export type TaskPriority = 'Urgent' | 'High' | 'Medium' | 'Low';
-export type TaskStatus = 'To Do' | 'In Progress' | 'In Review' | 'Done';
+  name: string;
+  description: string;
+  color: string;
+
+  status: "active" | "archived" | string;
+  priority?: "low" | "medium" | "high" | "urgent" | string;
+  dueDate?: string | null;
+  code?: string | null;
+
+  visibility?: ProjectVisibility;
+  pinnedToWorkspace?: boolean;
+
+  memberIds?: string[];
+  collaboratorUids?: string[];
+
+  createdBy?: string;
+  ownerId?: string;
+  uid?: string;
+
+  taskCount?: number;
+  completedTaskCount?: number;
+  progress?: number;
+
+  createdAt: unknown;
+  updatedAt?: unknown;
+
+  [key: string]: any;
+}
+export type TaskPriority = "low" | "medium" | "high" | "urgent";
+
+export type TaskStatus =
+  | "todo"
+  | "in-progress"
+  | "review"
+  | "done"
+  | "blocked";
 
 export interface Attachment {
+  id?: string;
   name: string;
   url: string;
-  size: number;
-  type: string;
-  uploadedAt: string;
-  userId: string;
+  type?: string;
+  size?: number;
+  uploadedAt?: any;
+  uploadedBy?: string;
+}
+
+export interface Comment {
+  id?: string;
+  taskId?: string;
+  text: string;
+  authorId?: string;
+  authorName?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface Task {
   id: string;
-  projectId: string;
-  workspaceId: string;
   title: string;
-  description: string;
-  assigneeIds: string[];
-  dueDate: string | null;
-  priority: TaskPriority;
-  status: TaskStatus;
-  sectionId: string;
-  attachments: Attachment[];
-  subtasks: Subtask[];
-  createdAt: string;
-  updatedAt: string;
-}
+  description?: string;
+  projectId?: string;
 
-export interface Subtask {
-  id: string;
-  title: string;
-  completed: boolean;
-}
+  status?: TaskStatus | string;
+  priority?: TaskPriority | string;
 
-export interface Comment {
-  id: string;
-  taskId: string;
-  userId: string;
-  text: string;
-  createdAt: string;
-}
+  assignee?: string;
+  assigneeId?: string;
+  assigneeIds?: string[];
 
-export interface Activity {
-  id: string;
-  taskId: string;
-  userId: string;
-  type: 'status_change' | 'assignment' | 'comment' | 'edit';
-  details: string;
-  createdAt: string;
+  dueDate?: any;
+  createdAt?: any;
+  updatedAt?: any;
+
+  attachments?: Attachment[];
+  comments?: Comment[];
+
+  [key: string]: any;
 }

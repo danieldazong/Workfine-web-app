@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Settings as SettingsIcon,
@@ -24,8 +24,10 @@ import {
   AlertTriangle,
   ArrowRightLeft,
   ChevronDown,
-  Lock,
+   Lock,
+  Loader2,
 } from "lucide-react";
+
 
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase/config";
@@ -40,6 +42,9 @@ import {
   transferOwnership,
   WorkspaceRole,
 } from "../lib/firebase/workspaceMembers";
+import { isProjectPinnedToWorkspace } from "../lib/projectAccess";
+import { addExistingProjectToWorkspace } from "../lib/firebase/projects";
+
 
 type TabId = "overview" | "members" | "settings";
 
@@ -58,8 +63,13 @@ export default function WorkspacePage() {
   const activeTab: TabId =
     tab === "members" || tab === "settings" ? (tab as TabId) : "overview";
 
-  const [showInvite, setShowInvite] = useState(false);
-  const [showCreateProject, setShowCreateProject] = useState(false);
+ const [showInvite, setShowInvite] = useState(false);
+const [showCreateProject, setShowCreateProject] = useState(false);
+const [showAddExistingProject, setShowAddExistingProject] = useState(false);
+const [addingProjectId, setAddingProjectId] = useState<string | null>(null);
+const [addProjectError, setAddProjectError] = useState("");
+
+
 
   const wsId = workspaceData?.id ?? workspaceData?.workspaceId ?? authWorkspaceId ?? "";
 const wsName = workspaceData?.name ?? "My Workspace";
@@ -114,9 +124,52 @@ const canManage =
   myMembership?.role === "owner" ||
   myMembership?.role === "admin";
 
+const availableProjectsToAdd = useMemo(() => {
+  return projects.filter((project: any) => {
+    return project && project.id && project.pinnedToWorkspace !== true;
+  });
+}, [projects]);
 
-  return (
-    <div className="bg-[#f4f5f7] min-h-screen overflow-y-auto">
+async function handleAddExistingProject(projectId: string) {
+  setAddProjectError("");
+
+  if (!user?.uid) {
+    setAddProjectError("You must be signed in to add a project.");
+    return;
+  }
+
+  if (!wsId) {
+    setAddProjectError("No workspace was found.");
+    return;
+  }
+
+  if (!canManage) {
+    setAddProjectError("Only workspace owners or admins can add projects.");
+    return;
+  }
+
+  try {
+    setAddingProjectId(projectId);
+
+    await addExistingProjectToWorkspace(wsId, projectId, user.uid);
+
+    setShowAddExistingProject(false);
+  } catch (error) {
+    console.error("Failed to add project to workspace:", error);
+
+    setAddProjectError(
+      error instanceof Error
+        ? error.message
+        : "Failed to add project to workspace."
+    );
+  } finally {
+    setAddingProjectId(null);
+  }
+}
+
+return (
+  <div className="bg-[#f4f5f7] min-h-screen overflow-y-auto">
+
       <div className="max-w-6xl mx-auto px-6 pt-14 pb-10">
 
         {/* ── Header row ─────────────────────────────────────────────── */}
@@ -195,19 +248,24 @@ const canManage =
 
         {/* ── Tab content ────────────────────────────────────────────── */}
         {activeTab === "overview" && (
-          <OverviewTab
-            workspaceData={workspaceData}
-            workspaceName={wsName}
-            workspaceColor={wsColor}
-            workspaceInitial={wsInitial}
-            members={activeMembers}
-            projects={projects}
-            tasks={tasks}
-            canManage={canManage}
-            onInvite={() => setShowInvite(true)}
-            onCreateProject={() => setShowCreateProject(true)}
-            onOpenSettings={() => navigate("/workspace/settings")}
-          />
+         <OverviewTab
+  workspaceData={workspaceData}
+  workspaceName={wsName}
+  workspaceColor={wsColor}
+  workspaceInitial={wsInitial}
+  members={activeMembers}
+  projects={projects}
+  tasks={tasks}
+  canManage={canManage}
+  onInvite={() => setShowInvite(true)}
+  onCreateProject={() => setShowCreateProject(true)}
+  onAddExistingProject={() => {
+    setAddProjectError("");
+    setShowAddExistingProject(true);
+  }}
+  onOpenSettings={() => navigate("/workspace/settings")}
+/>
+
         )}
 
        {activeTab === "members" && (
@@ -250,9 +308,24 @@ const canManage =
 )}
 
 
-      {showCreateProject && (
-        <CreateProjectModal onClose={() => setShowCreateProject(false)} />
-      )}
+      <CreateProjectModal
+  isOpen={showCreateProject}
+  onClose={() => setShowCreateProject(false)}
+/>
+<AddExistingProjectModal
+  isOpen={showAddExistingProject}
+  projects={availableProjectsToAdd}
+  addingProjectId={addingProjectId}
+  error={addProjectError}
+  onClose={() => {
+    if (!addingProjectId) {
+      setShowAddExistingProject(false);
+      setAddProjectError("");
+    }
+  }}
+  onAdd={handleAddExistingProject}
+/>
+
     </div>
   );
 }
@@ -272,11 +345,13 @@ function OverviewTab({
   canManage,
   onInvite,
   onCreateProject,
+  onAddExistingProject,
   onOpenSettings,
 }: any) {
   const description = workspaceData?.description ?? "";
   const hasDescription = description.trim().length > 0;
-  const hasProjects    = projects.length > 0;
+    const curatedProjects = projects.filter(isProjectPinnedToWorkspace);
+  const hasProjects    = curatedProjects.length > 0;
   const hasTeammates   = members.length > 1;
 
   // Lifted editing state so the setup checklist can open the description editor.
@@ -438,20 +513,27 @@ function OverviewTab({
             </button>
           </div>
 
-          {projects.length === 0 ? (
+                    {curatedProjects.length === 0 ? (
             <div className="text-center py-8">
               <FolderKanban className="mx-auto text-gray-300 mb-3" size={32} />
               <p className="text-sm text-gray-500 mb-3">No projects yet</p>
-              <button
-                onClick={onCreateProject}
-                className="inline-flex items-center gap-2 px-3 py-2 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
-              >
-                <Plus size={13} /> Create first project
-              </button>
+                            {canManage ? (
+                <button
+                  onClick={onCreateProject}
+                  className="inline-flex items-center gap-2 px-3 py-2 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
+                >
+                  <Plus size={13} /> Create first project
+                </button>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  No shared projects have been added to this workspace yet.
+                </p>
+              )}
+
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {projects.slice(0, 4).map((p: any) => {
+                            {curatedProjects.slice(0, 4).map((p: any) => {
                 const pt   = tasks.filter((t: any) => t.projectId === p.id);
                 const done = pt.filter((t: any) => t.status === "Done").length;
                 const pct  = pt.length > 0 ? Math.round((done / pt.length) * 100) : 0;
@@ -491,14 +573,16 @@ function OverviewTab({
             </div>
           )}
 
-          {projects.length > 0 && (
-            <button
-              onClick={onCreateProject}
-              className="mt-3 w-full py-2 border border-dashed border-gray-300 text-gray-500 hover:text-violet-600 hover:border-violet-300 rounded-xl text-xs font-medium transition-colors flex items-center justify-center gap-1"
-            >
-              <Plus size={13} /> Add another project
-            </button>
-          )}
+                    {curatedProjects.length > 0 && canManage && (
+  <button
+    type="button"
+    onClick={onAddExistingProject}
+    className="mt-3 w-full py-2 border border-dashed border-gray-300 text-gray-500 hover:text-violet-600 hover:border-violet-300 rounded-xl text-xs font-medium transition-colors flex items-center justify-center gap-1"
+  >
+    <Plus size={13} /> Add another project
+  </button>
+)}
+
         </div>
       </div>
 
@@ -520,16 +604,42 @@ function OverviewTab({
             <p className="text-xs text-gray-400 italic">No members yet</p>
           ) : (
             <div className="flex flex-wrap gap-2 mb-3">
-              {members.slice(0, 6).map((m: any) => (
-                <div
-                  key={m.userId}
-                  title={m.displayName}
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold border-2 border-white shadow-sm"
-                  style={{ backgroundColor: m.avatarColor || "#8b5cf6" }}
-                >
-                  {m.avatar || (m.displayName?.[0] ?? "M").toUpperCase()}
-                </div>
-              ))}
+              {members.slice(0, 6).map((m: any) => {
+  const label =
+    m.displayName ||
+    m.email ||
+    "Member";
+
+  const initials =
+    m.avatar ||
+    label
+      .split(" ")
+      .map((part: string) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase();
+
+  return (
+    <div
+      key={m.userId}
+      title={`${m.displayName || "Member"}${m.email ? ` • ${m.email}` : ""}`}
+      className="w-9 h-9 rounded-full border-2 border-white shadow-sm overflow-hidden flex items-center justify-center text-white text-xs font-bold bg-violet-500"
+      style={{ backgroundColor: m.photoURL ? undefined : m.avatarColor || "#8b5cf6" }}
+    >
+      {m.photoURL ? (
+        <img
+          src={m.photoURL}
+          alt={label}
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        initials
+      )}
+    </div>
+  );
+})}
+
               {members.length > 6 && (
                 <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-xs text-gray-500 font-semibold border-2 border-white shadow-sm">
                   +{members.length - 6}
@@ -1037,11 +1147,27 @@ const removable =
           >
             <div className="flex items-center gap-3 min-w-0">
               <div
-                className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                style={{ backgroundColor: m.avatarColor || "#8b5cf6" }}
-              >
-                {m.avatar || (m.displayName?.[0] ?? "M").toUpperCase()}
-              </div>
+  className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden bg-violet-500"
+  style={{ backgroundColor: m.photoURL ? undefined : m.avatarColor || "#8b5cf6" }}
+>
+  {m.photoURL ? (
+    <img
+      src={m.photoURL}
+      alt={m.displayName || m.email || "Member"}
+      className="w-full h-full object-cover"
+      referrerPolicy="no-referrer"
+    />
+  ) : (
+    m.avatar ||
+    (m.displayName || m.email || "M")
+      .split(" ")
+      .map((part: string) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase()
+  )}
+</div>
+
               <div className="min-w-0">
                 <p className="text-sm font-medium text-gray-800 truncate">
                   {m.displayName}
@@ -1561,11 +1687,27 @@ function TransferOwnershipDialog({
                       }`}
                     >
                       <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                        style={{ backgroundColor: c.avatarColor || "#8b5cf6" }}
-                      >
-                        {c.avatar || (c.displayName?.[0] ?? "M").toUpperCase()}
-                      </div>
+  className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden bg-violet-500"
+  style={{ backgroundColor: c.photoURL ? undefined : c.avatarColor || "#8b5cf6" }}
+>
+  {c.photoURL ? (
+    <img
+      src={c.photoURL}
+      alt={c.displayName || c.email || "Member"}
+      className="w-full h-full object-cover"
+      referrerPolicy="no-referrer"
+    />
+  ) : (
+    c.avatar ||
+    (c.displayName || c.email || "M")
+      .split(" ")
+      .map((part: string) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase()
+  )}
+</div>
+
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{c.displayName}</p>
                         <p className="text-xs text-gray-400 truncate">{c.email}</p>
@@ -1632,11 +1774,130 @@ function TransferOwnershipDialog({
             )}
           </button>
         </div>
-
         <style>{`
           @keyframes dlgFadeIn { from { opacity: 0; } to { opacity: 1; } }
           @keyframes dlgSlideUp { from { opacity: 0; transform: translateY(12px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
         `}</style>
+      </div>
+    </div>
+  );
+}
+
+function AddExistingProjectModal({
+  isOpen,
+  projects,
+  addingProjectId,
+  error,
+  onClose,
+  onAdd,
+}: {
+  isOpen: boolean;
+  projects: any[];
+  addingProjectId: string | null;
+  error: string;
+  onClose: () => void;
+  onAdd: (projectId: string) => void;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-sm">
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">
+              Add project to workspace
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Choose an existing project to show in curated work.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={!!addingProjectId}
+            className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Close add project modal"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
+          {error && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
+          {projects.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center">
+              <FolderKanban className="mx-auto mb-3 text-slate-300" size={34} />
+
+              <p className="text-sm font-medium text-slate-900">
+                No projects available
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                All available projects are already added to curated work.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {projects.map((project: any) => (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => onAdd(project.id)}
+                  disabled={!!addingProjectId}
+                  className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-violet-300 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-semibold text-white"
+                      style={{
+                        backgroundColor: project.color || "#7C3AED",
+                      }}
+                    >
+                      {project.name?.charAt(0)?.toUpperCase() || "P"}
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-slate-900">
+                        {project.name || "Untitled Project"}
+                      </p>
+
+                      <p className="truncate text-xs text-slate-500">
+                        {project.code || "No code"} ·{" "}
+                        {project.visibility || "private"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="ml-4 shrink-0 text-sm font-medium text-violet-600">
+                    {addingProjectId === project.id ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      "Add"
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end border-t border-slate-200 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={!!addingProjectId}
+            className="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );

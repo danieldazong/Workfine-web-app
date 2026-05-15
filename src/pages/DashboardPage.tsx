@@ -493,7 +493,7 @@ const DashboardPage = () => {
           <div className="mb-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-800">
-                My Projects
+                 Accessible Projects
               </h3>
               <button type="button" onClick={() => setShowCreateProject(true)}
                       className="text-xs text-blue-600 hover:underline">
@@ -756,8 +756,12 @@ const DashboardPage = () => {
 
       {/* ══ CREATE PROJECT MODAL ══════════════════════════════════════════ */}
       {showCreateProject && (
-        <CreateProjectModal onClose={() => setShowCreateProject(false)} />
-      )}
+  <CreateProjectModal
+    isOpen={showCreateProject}
+    onClose={() => setShowCreateProject(false)}
+  />
+)}
+
     </div>
   );
 };

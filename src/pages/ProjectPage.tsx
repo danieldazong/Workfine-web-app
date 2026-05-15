@@ -1,9 +1,17 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate }               from "react-router-dom";
 import {
-  collection, onSnapshot, addDoc, updateDoc,
-  deleteDoc, doc, serverTimestamp,
+  collection,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+  query,
+  where,
 } from "firebase/firestore";
+
 import { db }          from "../lib/firebase/config";
 import { useAuth }     from "../context/AuthContext";
 import { useAppData }  from "../context/AppDataContext";
@@ -53,7 +61,7 @@ const emptyTask = () => ({
 const ProjectPage = () => {
   const { id }          = useParams<{ id: string }>();
   const { user, workspaceId } = useAuth();
-  const { projects }    = useAppData();
+  const { projects, loading } = useAppData();
   const navigate        = useNavigate();
 
   const [tasks,       setTasks]       = useState<Task[]>([]);
@@ -70,24 +78,48 @@ const ProjectPage = () => {
 
   // ── Real-time tasks listener ───────────────────────────────────────────
  useEffect(() => {
-  if (!workspaceId || !id) return;
+  if (!workspaceId || !id) {
+    setTasks([]);
+    return;
+  }
 
-  const ref = collection(db, "workspaces", workspaceId, "tasks");
+  const q = query(
+    collection(db, "workspaces", workspaceId, "tasks"),
+    where("projectId", "==", id)
+  );
 
   const unsub = onSnapshot(
-    ref,
+    q,
     (snap) => {
-      const all = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as Task))
-        .filter((t) => (t as any).projectId === id);
+      const data = snap.docs.map(
+        (d) => ({ id: d.id, ...d.data() } as Task)
+      );
 
-      setTasks(all);
+      data.sort((a: any, b: any) => {
+        const aMs =
+          typeof a.createdAt?.toMillis === "function"
+            ? a.createdAt.toMillis()
+            : new Date(a.createdAt ?? 0).getTime();
+
+        const bMs =
+          typeof b.createdAt?.toMillis === "function"
+            ? b.createdAt.toMillis()
+            : new Date(b.createdAt ?? 0).getTime();
+
+        return bMs - aMs;
+      });
+
+      setTasks(data);
     },
-    (err) => console.error("[ProjectPage] tasks:", err.code)
+    (err) => {
+      console.error("[ProjectPage] tasks:", err.code, err.message);
+      setTasks([]);
+    }
   );
 
   return () => unsub();
 }, [workspaceId, id]);
+
 
 
   // ── Keep drawerTask in sync with the latest task data ─────────────────
@@ -129,12 +161,29 @@ const ProjectPage = () => {
   ];
 
   // ── Filtered tasks ─────────────────────────────────────────────────────
-  const assignedToMe = (task: Task): boolean => {
-    if (!user?.email) return false;
-    const assignee = (task.assignee ?? "").toLowerCase().trim();
-    const myEmail  = user.email.toLowerCase().trim();
-    return assignee === myEmail;
-  };
+  const assignedToMe = (task: any): boolean => {
+  if (!user?.uid && !user?.email) return false;
+
+  if (task.assigneeId === user?.uid) return true;
+
+  if (
+    Array.isArray(task.assigneeIds) &&
+    user?.uid &&
+    task.assigneeIds.includes(user.uid)
+  ) {
+    return true;
+  }
+
+  if (user?.email) {
+    const assignee = String(task.assignee ?? "").toLowerCase().trim();
+    const myEmail = user.email.toLowerCase().trim();
+
+    if (assignee === myEmail) return true;
+  }
+
+  return false;
+};
+
 
   const filtered = useMemo(() => {
     let list = [...tasks];
@@ -225,17 +274,32 @@ await updateDoc(doc(db, "workspaces", workspaceId, "tasks", task.id), {
     openEdit(task);
   };
 
-  if (!project) return (
-    <div className="ml-0 bg-[#f4f5f7] min-h-screen flex items-center justify-center">
+  if (loading) {
+  return (
+    <div className="bg-[#f4f5f7] min-h-screen flex items-center justify-center">
+      <div className="text-sm text-gray-400">Loading project...</div>
+    </div>
+  );
+}
+
+if (!project) {
+  return (
+    <div className="bg-[#f4f5f7] min-h-screen flex items-center justify-center">
       <div className="text-center">
-        <p className="text-gray-400 text-sm mb-3">Project not found</p>
-        <button onClick={() => navigate("/dashboard")}
-                className="text-blue-600 text-sm hover:underline">
-          ← Back to Dashboard
+        <p className="text-gray-400 text-sm mb-3">
+          Project not found or you do not have access.
+        </p>
+        <button
+          onClick={() => navigate("/projects")}
+          className="text-blue-600 text-sm hover:underline"
+        >
+          ← Back to Projects
         </button>
       </div>
     </div>
   );
+}
+
 
   return (
     <div className="ml-0 bg-[#f4f5f7] min-h-screen overflow-y-auto">
