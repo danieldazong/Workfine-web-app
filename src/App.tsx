@@ -27,6 +27,7 @@ import ProjectPage from "./pages/ProjectPage";
 import CalendarPage from "./pages/CalendarPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import JoinWorkspacePage from "./pages/JoinWorkspacePage";
+import AcceptTaskInvitePage from "./pages/AcceptTaskInvitePage";
 
 function ProtectedRoute() {
   const { user, loading } = useAuth();
@@ -39,15 +40,17 @@ function ProtectedRoute() {
     );
   }
 
-  if (!user) return <Navigate to="/login" />;
+  if (!user) return <Navigate to="/login" replace />;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white">
-      <Sidebar />
-      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        <Outlet />
+    <AppDataProvider>
+      <div className="flex h-screen w-screen overflow-hidden bg-white">
+        <Sidebar />
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          <Outlet />
+        </div>
       </div>
-    </div>
+    </AppDataProvider>
   );
 }
 
@@ -57,9 +60,17 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   if (loading) return null;
 
   if (user) {
+    const pendingTaskInviteUrl = localStorage.getItem("pendingTaskInviteUrl");
+
+    if (pendingTaskInviteUrl) {
+      localStorage.removeItem("pendingTaskInviteUrl");
+      return <Navigate to={pendingTaskInviteUrl} replace />;
+    }
+
     const pendingInviteCode = localStorage.getItem("pendingInviteCode");
 
     if (pendingInviteCode) {
+      localStorage.removeItem("pendingInviteCode");
       return <Navigate to={`/join/${pendingInviteCode}`} replace />;
     }
 
@@ -72,42 +83,42 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <AuthProvider>
-      <AppDataProvider>
-        <Router>
-          <Routes>
-            {/* Public login route */}
-            <Route
-              path="/login"
-              element={
-                <PublicRoute>
-                  <LoginPage />
-                </PublicRoute>
-              }
-            />
+      <Router>
+        <Routes>
+          {/* Public login route */}
+          <Route
+            path="/login"
+            element={
+              <PublicRoute>
+                <LoginPage />
+              </PublicRoute>
+            }
+          />
 
-            {/* Public invite route.
-                Important: this must NOT be inside ProtectedRoute.
-                It must open for both signed-in and signed-out users. */}
-            <Route path="/join/:inviteCode" element={<JoinWorkspacePage />} />
+          {/* Public workspace invite route */}
+          <Route path="/join/:inviteCode" element={<JoinWorkspacePage />} />
 
-            {/* Protected app routes */}
-            <Route element={<ProtectedRoute />}>
-              <Route element={<AppShell />}>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/my-tasks" element={<MyTasksPage />} />
-                <Route path="/insights" element={<InsightsPage />} />
-                <Route path="/calendar" element={<CalendarPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/projects/:id" element={<ProjectPage />} />
-                <Route path="/workspace" element={<WorkspacePage />} />
-                <Route path="/workspace/:tab" element={<WorkspacePage />} />
-              </Route>
+          {/* Public task invite route.
+              Important: this is OUTSIDE AppDataProvider and ProtectedRoute. */}
+          <Route path="/accept-task-invite" element={<AcceptTaskInvitePage />} />
+
+          {/* Protected app routes */}
+          <Route element={<ProtectedRoute />}>
+            <Route element={<AppShell />}>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/my-tasks" element={<MyTasksPage />} />
+              <Route path="/insights" element={<InsightsPage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/projects/:id" element={<ProjectPage />} />
+              <Route path="/workspace" element={<WorkspacePage />} />
+              <Route path="/workspace/:tab" element={<WorkspacePage />} />
             </Route>
+          </Route>
 
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Router>
-      </AppDataProvider>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Router>
     </AuthProvider>
   );
 }

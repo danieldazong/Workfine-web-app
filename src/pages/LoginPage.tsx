@@ -69,16 +69,27 @@ export default function LoginPage() {
   // ─── Sign-in ────────────────────────────────────────────────────────────────
 
   function redirectAfterAuth() {
-    const pending = localStorage.getItem('pendingInviteCode');
-    if (pending) {
-      localStorage.removeItem('pendingInviteCode');
-      navigate('/join/' + pending);
-    } else {
-      navigate('/');
-    }
+  const pendingTaskInviteUrl = localStorage.getItem('pendingTaskInviteUrl');
+
+  if (pendingTaskInviteUrl) {
+    localStorage.removeItem('pendingTaskInviteUrl');
+    navigate(pendingTaskInviteUrl, { replace: true });
+    return;
   }
 
-  const handleSignIn = async () => {
+  const pending = localStorage.getItem('pendingInviteCode');
+
+  if (pending) {
+    localStorage.removeItem('pendingInviteCode');
+    navigate('/join/' + pending, { replace: true });
+    return;
+  }
+
+  navigate('/', { replace: true });
+}
+
+const handleSignIn = async () => {
+
     resetState();
 
     if (!email.trim() || !password.trim()) {
@@ -172,17 +183,20 @@ export default function LoginPage() {
   // ─── Google sign-in ─────────────────────────────────────────────────────────
 
   const handleGoogleSignIn = async () => {
-    resetState();
-    setLoading(true);
-    try {
-      await authService.signInWithGoogle();
-      navigate('/');
-    } catch (err: any) {
-      setError(err?.message ?? 'Failed to sign in with Google.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  resetState();
+  setLoading(true);
+
+  try {
+    await authService.signInWithGoogle();
+    redirectAfterAuth();
+  } catch (err: any) {
+    setError(err?.message ?? 'Failed to sign in with Google.');
+  } finally {
+    setLoading(false);
+  }
+};
+
+
 
   // ─── Unified form submit ─────────────────────────────────────────────────────
 

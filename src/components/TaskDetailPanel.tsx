@@ -1,71 +1,72 @@
-  import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-  import emailjs from "@emailjs/browser";
-  import { useNavigate } from "react-router-dom";
-  import { useAppData } from "../context/AppDataContext";
-  import { useAuth } from "../context/AuthContext";
-  import { db } from "../lib/firebase/config";
-  import {
-    collection,
-    addDoc,
-    deleteDoc,
-    doc,
-    onSnapshot,
-    orderBy,
-    query as firestoreQuery,
-    serverTimestamp,
-    updateDoc,
-    setDoc,
-  } from "firebase/firestore";
+ import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import emailjs from "@emailjs/browser";
+import { useNavigate } from "react-router-dom";
+import { useAppData } from "../context/AppDataContext";
+import { useAuth } from "../context/AuthContext";
+import { db } from "../lib/firebase/config";
+import {
+  arrayRemove,
+  arrayUnion,
+  collection,
+  addDoc,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  orderBy,
+  query as firestoreQuery,
+  serverTimestamp,
+  updateDoc,
+  setDoc,
+} from "firebase/firestore";
 
+import {
+  X,
+  Send,
+  Trash2,
+  Edit2,
+  ArrowLeft,
+  Calendar,
+  User as UserIcon,
+  Tag,
+  Clock,
+  MessageCircle,
+  FolderKanban,
+  Smile,
+  Search,
+  Clock3,
+  Heart,
+  Coffee,
+  Activity,
+  Plane,
+  Lightbulb,
+  Hash,
+  Flag,
+  Plus,
+  Type,
+  AtSign,
+  Star,
+  Paperclip,
+  Sparkles,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  List,
+  ListOrdered,
+  Quote,
+  Code2,
+  Link as LinkIcon,
+  Share2,
+  ThumbsUp,
+  Copy,
+  Check,
+} from "lucide-react";
 
-  import {
-    X,
-    Send,
-    Trash2,
-    Edit2,
-    ArrowLeft,
-    Calendar,
-    User as UserIcon,
-    Tag,
-    Clock,
-    MessageCircle,
-    FolderKanban,
-    Smile,
-    Search,
-    Clock3,
-    Heart,
-    Coffee,
-    Activity,
-    Plane,
-    Lightbulb,
-    Hash,
-    Flag,
-    Plus,
-    Type,
-    AtSign,
-    Star,
-    Paperclip,
-    Sparkles,
-    Bold,
-    Italic,
-    Underline,
-    Strikethrough,
-    List,
-    ListOrdered,
-    Quote,
-        Code2,
-    Link as LinkIcon,
-    Share2,
-    ThumbsUp,
-    Copy,
-    Check,
-  } from "lucide-react";
+import data from "@emoji-mart/data";
+import Picker from "@emoji-mart/react";
+import { useMentionableUsers } from "../hooks/useMentionableUsers";
+import { storageService, UploadedAttachment } from "../lib/firebase/storage";
 
-
-  import data from "@emoji-mart/data";
-  import Picker from "@emoji-mart/react";
-  import { useMentionableUsers } from "../hooks/useMentionableUsers";
-  import { storageService, UploadedAttachment } from "../lib/firebase/storage";
 
 
 
@@ -105,14 +106,50 @@ interface TaskComment {
 
 interface TaskShare {
   id: string;
-  sharedWithEmail: string;
+
+  // Existing share fields used by your share modal
+  sharedWithEmail?: string;
   sharedByUid?: string;
   sharedByName?: string;
   sharedByEmail?: string;
-  status?: string;
+
+  // Extra invite fields used by AcceptTaskInvitePage
+  invitedEmail?: string;
+  invitedEmailLower?: string;
+  invitedBy?: string;
+  invitedByName?: string;
+  invitedByEmail?: string;
+
+  taskId?: string;
+  taskTitle?: string;
+  taskCode?: string;
+  taskStatus?: string;
+  taskPriority?: string;
+  taskDueDate?: string;
+  taskLink?: string;
+
+  workspaceId?: string;
+  projectId?: string;
+  projectName?: string;
+
+  message?: string;
+  status?: "pending" | "active" | "revoked" | "failed" | "accepted" | string;
   accessType?: string;
+  inviteLink?: string;
+
+  acceptedAt?: any;
+  acceptedBy?: string;
+  acceptedByUid?: string;
+  acceptedByEmail?: string;
+
+  revokedAt?: any;
+  revokedByUid?: string;
+
   createdAt?: any;
+  updatedAt?: any;
 }
+
+
 type TaskAccessMode = "task_project" | "invited_only" | "anyone_with_link";
 
 const TASK_ACCESS_OPTIONS: {
@@ -162,12 +199,14 @@ const TASK_ACCESS_OPTIONS: {
   const SKIN_TONE_KEY = "wf:emojiSkinTone";
   const MAX_RECENT = 24;
   const QUICK_REACTIONS = ["👍", "❤️", "😂", "🎉", "😮", "😢"];
-  // ── EmailJS credentials for Task Share ──────────────────────────────────────
-  // Reusing your existing EmailJS service/public key from InviteMemberModal.
-  // If you create a separate EmailJS template for task sharing, replace EJ_TASK_TEMPLATE.
-  const EJ_SERVICE = "service_mexk2nq";
-  const EJ_TASK_TEMPLATE = "template_tbhiftp";
-  const EJ_PUBLIC_KEY = "meHwiauyfE3xFWE66";
+ // ── EmailJS credentials for Task Share ──────────────────────────────────────
+// IMPORTANT:
+// Workspace invites use their own EmailJS template elsewhere.
+// Task sharing uses only this dedicated task invite template.
+const EJ_SERVICE = "service_mexk2nq";
+const EJ_TASK_TEMPLATE = "template_v6ojdzn";
+const EJ_PUBLIC_KEY = "meHwiauyfE3xFWE66";
+
 
   type EmojiCategoryKey =
     | "recent"
@@ -1613,12 +1652,15 @@ setShowFormattingToolbar(false);
   const unsub = onSnapshot(
     sharesQuery,
     (snap) => {
-      const shares: TaskShare[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<TaskShare, "id">),
-      }));
+      const shares: TaskShare[] = snap.docs
+  .map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<TaskShare, "id">),
+  }))
+  .filter((share) => share.status !== "revoked");
 
-      setTaskShares(shares);
+setTaskShares(shares);
+
     },
     (err) => {
       console.error("[TaskDetailPanel] shares listener:", err.message);
@@ -1750,6 +1792,65 @@ async function handleChangeTaskAccessMode(nextMode: TaskAccessMode) {
     setSavingTaskAccess(false);
   }
 }
+async function handleRevokeTaskShare(share: TaskShare) {
+  if (!user?.uid) {
+    setShareError("You must be signed in to remove access.");
+    return;
+  }
+
+  if (!taskWorkspaceId || !taskView.id || !share.id) {
+    setShareError("Task share information is missing.");
+    return;
+  }
+
+  const shareEmail =
+    share.sharedWithEmail || share.invitedEmail || share.invitedEmailLower || "";
+
+  if (!shareEmail) {
+    setShareError("This share is missing the invited email address.");
+    return;
+  }
+
+  const confirmRemove = window.confirm(`Remove access for ${shareEmail}?`);
+
+  if (!confirmRemove) return;
+
+  try {
+    await updateDoc(
+      doc(
+        db,
+        "workspaces",
+        taskWorkspaceId,
+        "tasks",
+        taskView.id,
+        "shares",
+        share.id
+      ),
+      {
+        status: "revoked",
+        revokedAt: serverTimestamp(),
+        revokedByUid: user.uid,
+        updatedAt: serverTimestamp(),
+      }
+    );
+
+    await setDoc(
+      doc(db, "workspaces", taskWorkspaceId, "tasks", taskView.id),
+      {
+        sharedWithEmails: arrayRemove(shareEmail.toLowerCase()),
+        accessUpdatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    setToast("Access removed");
+    window.setTimeout(() => setToast(null), 1800);
+  } catch (error) {
+    console.error("[TaskDetailPanel] revoke task share:", error);
+    setShareError("Could not remove access. Please try again.");
+  }
+}
+
 
 
 
@@ -1788,120 +1889,170 @@ async function handleChangeTaskAccessMode(nextMode: TaskAccessMode) {
     }
 
     async function handleSendTaskShare() {
-      setShareError("");
+  setShareError("");
 
-      const recipientEmail = shareEmail.trim().toLowerCase();
+  const recipientEmail = shareEmail.trim().toLowerCase();
 
-      if (!isValidEmail(recipientEmail)) {
-        setShareError("Please enter a valid email address.");
-        return;
-      }
-
-      if (!user?.uid) {
-        setShareError("You must be signed in to share a task.");
-        return;
-      }
-
-      if (!taskWorkspaceId || !taskView.id) {
-        setShareError("Task workspace is missing.");
-        return;
-      }
-
-      if (sharingTask) return;
-
-      setSharingTask(true);
-
-      try {
-        const senderName =
-          user.displayName || user.email?.split("@")[0] || "Someone";
-
-        const taskTitle = taskView.title || task.title || "Untitled task";
-        const projectName = project?.name || "No project";
-        const status = taskView.status || task.status || "To Do";
-        const priority = taskView.priority || task.priority || "Low";
-        const dueDate = taskView.dueDate || task.dueDate || "No due date";
-
-        await emailjs.send(
-          EJ_SERVICE,
-          EJ_TASK_TEMPLATE,
-          {
-            to_email: recipientEmail,
-            to_name: recipientEmail.split("@")[0],
-
-            from_name: senderName,
-            from_email: user.email ?? "",
-            reply_to: user.email ?? "",
-
-            task_title: taskTitle,
-            task_link: taskLink,
-            task_code: taskView.taskCode || task.taskCode || "",
-            task_status: status,
-            task_priority: priority,
-            task_due_date: dueDate,
-            project_name: projectName,
-            workspace_id: taskWorkspaceId,
-
-            message:
-              shareMessage.trim() ||
-              `${senderName} shared a task with you on Wurkfine.`,
-
-            // Compatibility fields in case your existing EmailJS template uses invite naming.
-            workspace_name: projectName,
-            invite_link: taskLink,
-            invite_code: taskView.taskCode || task.taskCode || taskView.id,
-            role: "Task viewer",
-            expires_in: "No expiration",
-          },
-          {
-            publicKey: EJ_PUBLIC_KEY,
-          }
-        );
-
-        await addDoc(
-  collection(
-    db,
-    "workspaces",
-    taskWorkspaceId,
-    "tasks",
-    taskView.id,
-    "shares"
-  ),
-  {
-    taskId: taskView.id,
-    taskTitle,
-    taskCode: taskView.taskCode || task.taskCode || "",
-    taskLink,
-    workspaceId: taskWorkspaceId,
-    projectId: taskView.projectId || task.projectId || "",
-    projectName,
-
-    sharedByUid: user.uid,
-    sharedByName: senderName,
-    sharedByEmail: user.email ?? "",
-
-    sharedWithEmail: recipientEmail,
-    message: shareMessage.trim(),
-    status: "sent",
-    accessType: "email_invite",
-    createdAt: serverTimestamp(),
+  if (!isValidEmail(recipientEmail)) {
+    setShareError("Please enter a valid email address.");
+    return;
   }
-);
 
-setShareSent(true);
-setShareEmail("");
-setShareMessage("");
+  if (!user?.uid) {
+    setShareError("You must be signed in to share a task.");
+    return;
+  }
 
-window.setTimeout(() => {
-  setShareSent(false);
-}, 2500);
+  if (!taskWorkspaceId || !taskView.id) {
+    setShareError("Task workspace is missing.");
+    return;
+  }
 
-      } catch (err) {
-        console.error("[TaskDetailPanel] share task failed:", err);
-        setShareError("Failed to share task. Please try again.");
-      } finally {
-        setSharingTask(false);
+  if (sharingTask) return;
+
+  const alreadyShared = taskShares.some((share) => {
+    const existingEmail =
+      share.sharedWithEmail?.toLowerCase?.() ||
+      (share as any).invitedEmail?.toLowerCase?.() ||
+      "";
+
+    return existingEmail === recipientEmail && share.status !== "revoked";
+  });
+
+  if (alreadyShared) {
+    setShareError("This email already has access or has a pending invite.");
+    return;
+  }
+
+  setSharingTask(true);
+
+  try {
+    const senderName =
+      user.displayName || user.email?.split("@")[0] || "Someone";
+
+    const taskTitle = taskView.title || task.title || "Untitled task";
+    const projectName = project?.name || "No project";
+    const status = taskView.status || task.status || "To Do";
+    const priority = taskView.priority || task.priority || "Low";
+    const dueDate = taskView.dueDate || task.dueDate || "No due date";
+
+    const shareRef = doc(
+      collection(
+        db,
+        "workspaces",
+        taskWorkspaceId,
+        "tasks",
+        taskView.id,
+        "shares"
+      )
+    );
+
+    const taskInviteLink = `${window.location.origin}/accept-task-invite?workspaceId=${encodeURIComponent(
+      taskWorkspaceId
+    )}&taskId=${encodeURIComponent(taskView.id)}&shareId=${encodeURIComponent(
+      shareRef.id
+    )}`;
+
+    await setDoc(shareRef, {
+      taskId: taskView.id,
+      taskTitle,
+      taskCode: taskView.taskCode || task.taskCode || "",
+      taskLink,
+      inviteLink: taskInviteLink,
+
+      workspaceId: taskWorkspaceId,
+      projectId: taskView.projectId || task.projectId || "",
+      projectName,
+
+      taskStatus: status,
+      taskPriority: priority,
+      taskDueDate: dueDate,
+
+      // Existing share fields used by your share modal
+      sharedByUid: user.uid,
+      sharedByName: senderName,
+      sharedByEmail: user.email ?? "",
+      sharedWithEmail: recipientEmail,
+
+      // Extra invite fields used by AcceptTaskInvitePage
+      invitedBy: user.uid,
+      invitedByName: senderName,
+      invitedByEmail: user.email ?? "",
+      invitedEmail: recipientEmail,
+      invitedEmailLower: recipientEmail.toLowerCase(),
+
+      message: shareMessage.trim(),
+      status: "pending",
+      accessType: "email_invite",
+
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    await setDoc(
+      doc(db, "workspaces", taskWorkspaceId, "tasks", taskView.id),
+      {
+        sharedWithEmails: arrayUnion(recipientEmail),
+        accessUpdatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    await emailjs.send(
+      EJ_SERVICE,
+      EJ_TASK_TEMPLATE,
+      {
+        to_email: recipientEmail,
+        to_name: recipientEmail.split("@")[0],
+
+        from_name: senderName,
+        from_email: user.email ?? "",
+        reply_to: user.email ?? "",
+
+        task_title: taskTitle,
+        task_code: taskView.taskCode || task.taskCode || "",
+        task_status: status,
+        task_priority: priority,
+        task_due_date: dueDate,
+
+        project_name: projectName,
+        workspace_id: taskWorkspaceId,
+        share_id: shareRef.id,
+
+        message:
+          shareMessage.trim() ||
+          `${senderName} shared a task with you on Workfine.`,
+
+        invite_link: taskInviteLink,
+        task_link: taskInviteLink,
+
+        workspace_name: "Workfine Task Share",
+        invite_code: shareRef.id,
+        role: "Task viewer",
+        expires_in: "No expiration",
+      },
+      {
+        publicKey: EJ_PUBLIC_KEY,
       }
-    }
+    );
+
+    setShareSent(true);
+    setShareEmail("");
+    setShareMessage("");
+    setShowShareMessage(false);
+
+    window.setTimeout(() => {
+      setShareSent(false);
+    }, 2500);
+  } catch (err) {
+    console.error("[TaskDetailPanel] share task failed:", err);
+    setShareError("Failed to share task. Please try again.");
+  } finally {
+    setSharingTask(false);
+  }
+}
+
+
 
 
 
@@ -1987,11 +2138,13 @@ window.setTimeout(() => {
                   />
                 )}
 
-                {taskLikeCount > 0 && (
+                              {taskLikeCount > 0 && (
                   <span className="text-[11px] font-semibold">
                     {taskLikeCount}
                   </span>
                 )}
+
+
               </button>
 
 
@@ -3373,7 +3526,7 @@ window.setTimeout(() => {
           </div>
         </div>
 
-        {/* Invite with email */}
+                {/* Invite with email */}
         <div className="mb-3">
           <div className="flex items-center justify-between mb-1.5">
             <label className="text-xs font-semibold text-slate-700">
@@ -3381,8 +3534,8 @@ window.setTimeout(() => {
             </label>
 
             {shareSent && (
-              <span className="text-[10px] font-medium text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-full px-2 py-0.5">
-                Sent
+              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-100 rounded-full px-2 py-0.5">
+                Invite sent · Pending
               </span>
             )}
           </div>
@@ -3439,6 +3592,7 @@ window.setTimeout(() => {
             </button>
           </div>
         </div>
+
 
         {/* Optional message - collapsed by default */}
         <div className="mb-4">
@@ -3656,30 +3810,72 @@ window.setTimeout(() => {
               </div>
             )}
 
-            {/* Email shares */}
-            {taskShares.map((share) => (
-              <div
-                key={share.id}
-                className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors"
-              >
-                <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center justify-center flex-shrink-0">
-                  {share.sharedWithEmail?.[0]?.toUpperCase() || "S"}
-                </div>
+           {/* Email shares */}
+{taskShares.map((share) => {
+  const shareStatus = share.status || "pending";
 
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-slate-800 truncate leading-tight">
-                    {share.sharedWithEmail}
-                  </p>
-                  <p className="text-[11px] text-slate-400 truncate">
-                    Shared by {share.sharedByName || "a workspace member"}
-                  </p>
-                </div>
+  const shareEmail =
+    share.sharedWithEmail || share.invitedEmail || share.invitedEmailLower || "";
 
-                <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-100 capitalize flex-shrink-0">
-                  {share.status || "sent"}
-                </span>
-              </div>
-            ))}
+  const shareSenderName =
+    share.sharedByName || share.invitedByName || "a workspace member";
+
+  const acceptedEmail = share.acceptedByEmail || "";
+
+  const statusClass =
+    shareStatus === "active" || shareStatus === "accepted"
+      ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+      : shareStatus === "pending"
+        ? "bg-amber-50 text-amber-600 border-amber-100"
+        : "bg-slate-50 text-slate-500 border-slate-100";
+
+  return (
+    <div
+      key={share.id}
+      className="group flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors"
+    >
+      <div
+        className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 ${
+          shareStatus === "active" || shareStatus === "accepted"
+            ? "bg-emerald-100 text-emerald-700"
+            : "bg-amber-100 text-amber-700"
+        }`}
+      >
+        {shareEmail?.[0]?.toUpperCase() || "S"}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-slate-800 truncate leading-tight">
+          {shareEmail || "Unknown email"}
+        </p>
+
+        <p className="text-[11px] text-slate-400 truncate">
+          {shareStatus === "active" || shareStatus === "accepted"
+            ? `Accepted${acceptedEmail ? ` by ${acceptedEmail}` : ""}`
+            : `Invited by ${shareSenderName}`}
+        </p>
+      </div>
+
+      <span
+        className={`text-[10px] px-2 py-0.5 rounded-md border capitalize flex-shrink-0 ${statusClass}`}
+      >
+        {shareStatus === "accepted" ? "active" : shareStatus}
+      </span>
+
+      <button
+        type="button"
+        onClick={() => handleRevokeTaskShare(share)}
+        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0"
+        title={`Remove access for ${shareEmail || "this user"}`}
+        aria-label={`Remove access for ${shareEmail || "this user"}`}
+      >
+        <Trash2 size={13} />
+      </button>
+    </div>
+  );
+})}
+
+
 
             {!project && !task.assignee && taskShares.length === 0 && (
               <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-center">

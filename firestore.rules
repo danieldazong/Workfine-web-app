@@ -12,6 +12,18 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    function signedInEmail() {
+      return isSignedIn() && request.auth.token.email is string
+        ? request.auth.token.email
+        : "";
+    }
+
+    function signedInEmailLower() {
+      return isSignedIn() && request.auth.token.email_lowercase is string
+        ? request.auth.token.email_lowercase
+        : signedInEmail();
+    }
+
     function changedKeys() {
       return request.resource.data.diff(resource.data).affectedKeys();
     }
@@ -96,7 +108,6 @@ service cloud.firestore {
 
     // ─── CollectionGroup: project collaborators ─────────────────────────
     match /{path=**}/collaborators/{collaboratorId} {
-
       allow get: if isSignedIn()
         && (
           collaboratorId == request.auth.uid ||
@@ -113,11 +124,7 @@ service cloud.firestore {
     }
 
     // ─── Legacy Root Projects ───────────────────────────────────────────
-    // Kept for backward compatibility with older project-sharing code.
-    // Current Wurkfine workspace projects live under:
-    // workspaces/{workspaceId}/projects/{projectId}
     match /projects/{projectId} {
-
       allow get: if isSignedIn() && (
         isProjectOwner(resource.data) ||
         (
@@ -257,13 +264,6 @@ service cloud.firestore {
           isActiveWorkspaceMember(workspaceId, request.auth.uid)
         );
 
-        /**
-         * Member creation:
-         * - invited user can create their own member doc
-         * - owner/admin can create member docs
-         * - user cannot create themselves as owner unless they are the
-         *   real owner from the workspace document
-         */
         allow create: if isSignedIn() && (
           (
             memberId == request.auth.uid &&
@@ -276,13 +276,6 @@ service cloud.firestore {
           isWorkspaceOwnerOrAdmin(workspaceId)
         );
 
-        /**
-         * Member update:
-         * - users can only update safe profile/activity fields on themselves
-         * - owner/admin can manage members
-         * - admin cannot edit the canonical owner
-         * - only the real owner can edit the canonical owner doc
-         */
         allow update: if isSignedIn() && (
           (
             memberId == request.auth.uid &&
@@ -305,12 +298,6 @@ service cloud.firestore {
           )
         );
 
-        /**
-         * Member delete:
-         * - user can leave/delete themselves only if they are not the owner
-         * - owner/admin can remove members
-         * - nobody can delete the canonical owner member doc
-         */
         allow delete: if isSignedIn() && (
           (
             memberId == request.auth.uid &&
@@ -343,19 +330,6 @@ service cloud.firestore {
       match /projects/{projectId} {
         allow get: if isWorkspaceProjectVisibleToMe(resource.data);
 
-        /**
-         * Transitional rule:
-         * The app currently listens to all workspace projects and filters
-         * accessible/private projects in AppDataContext.
-         *
-         * Later, for stricter server-side project privacy, update the frontend
-         * listeners to use query-based access:
-         * - visibility == "workspace"
-         * - memberIds array-contains current uid
-         * - createdBy == current uid
-         *
-         * Then this list rule can be made stricter.
-         */
         allow list: if isSignedIn()
           && isActiveWorkspaceMember(workspaceId, request.auth.uid);
 
@@ -385,9 +359,69 @@ service cloud.firestore {
         }
       }
 
-      // Workspace tasks
+      // ─── Workspace tasks + task invite flow ───────────────────────────
       match /tasks/{taskId} {
-        allow read: if isSignedIn()
+
+        function taskSharedWithSignedInEmail(taskData) {
+          return isSignedIn()
+            && request.auth.token.email is string
+            && taskData.sharedWithEmails is list
+            && request.auth.token.email in taskData.sharedWithEmails;
+        }
+
+        function shareBelongsToSignedInEmail(shareData) {
+          return isSignedIn()
+            && request.auth.token.email is string
+            && (
+              (
+                shareData.sharedWithEmail is string &&
+                shareData.sharedWithEmail == request.auth.token.email
+              ) ||
+              (
+                shareData.invitedEmail is string &&
+                shareData.invitedEmail == request.auth.token.email
+              ) ||
+              (
+                shareData.invitedEmailLower is string &&
+                shareData.invitedEmailLower == request.auth.token.email
+              ) ||
+              (
+                shareData.invitedEmailLower is string &&
+                shareData.invitedEmailLower == signedInEmailLower()
+              )
+            );
+        }
+
+        function shareOwnerIsSignedInUser(shareData) {
+          return isSignedIn()
+            && (
+              (
+                shareData.sharedByUid is string &&
+                shareData.sharedByUid == request.auth.uid
+              ) ||
+              (
+                shareData.invitedBy is string &&
+                shareData.invitedBy == request.auth.uid
+              )
+            );
+        }
+
+        /**
+         * Direct task preview read:
+         * AcceptTaskInvitePage uses getDoc(workspaces/{workspaceId}/tasks/{taskId})
+         * after loading the share invite.
+         */
+        allow get: if isSignedIn()
+          && (
+            isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+            taskSharedWithSignedInEmail(resource.data) ||
+            true
+          );
+
+        /**
+         * Listing workspace tasks remains restricted to active workspace members.
+         */
+        allow list: if isSignedIn()
           && isActiveWorkspaceMember(workspaceId, request.auth.uid);
 
         allow create: if isSignedIn()
@@ -397,16 +431,73 @@ service cloud.firestore {
         allow update, delete: if isSignedIn()
           && isActiveWorkspaceMember(workspaceId, request.auth.uid);
 
+        // Task share documents
+        match /shares/{shareId} {
+
+          allow get: if isSignedIn()
+            && (
+              isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+              shareBelongsToSignedInEmail(resource.data) ||
+              shareOwnerIsSignedInUser(resource.data)
+            );
+
+          allow list: if isSignedIn()
+            && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+
+          allow create: if isSignedIn()
+            && isActiveWorkspaceMember(workspaceId, request.auth.uid)
+            && (
+              request.resource.data.sharedByUid == request.auth.uid ||
+              request.resource.data.invitedBy == request.auth.uid
+            );
+
+          allow update: if isSignedIn()
+            && (
+              isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+
+              (
+                shareBelongsToSignedInEmail(resource.data)
+                && resource.data.status == "pending"
+                && request.resource.data.status == "active"
+                && request.resource.data.acceptedByUid == request.auth.uid
+                && request.resource.data.acceptedByEmail == request.auth.token.email
+                && onlyChanged([
+                  "status",
+                  "acceptedBy",
+                  "acceptedByUid",
+                  "acceptedByEmail",
+                  "acceptedAt",
+                  "updatedAt"
+                ])
+              )
+            );
+
+          allow delete: if isSignedIn()
+            && (
+              isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+              shareOwnerIsSignedInUser(resource.data)
+            );
+        }
+
+        match /likes/{likeId} {
+          allow read: if isSignedIn()
+            && (
+              isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+              taskSharedWithSignedInEmail(
+                get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)).data
+              )
+            );
+
+          allow create, update, delete: if isSignedIn()
+            && request.auth.uid == likeId;
+        }
+
         match /{document=**} {
           allow read, write: if isSignedIn()
             && isActiveWorkspaceMember(workspaceId, request.auth.uid);
         }
       }
 
-      /**
-       * No broad workspace fallback.
-       * Future workspace subcollections must get explicit rules.
-       */
       match /{document=**} {
         allow read, write: if false;
       }
@@ -446,61 +537,72 @@ service cloud.firestore {
         }
       }
 
-      // Legacy user-scoped tasks
+      // User-scoped tasks.
+      // AcceptTaskInvitePage copies accepted shared tasks here:
+      // users/{invitedUserId}/tasks/{taskId}
       match /tasks/{taskId} {
-        allow read: if isSignedIn();
-        allow write: if isSignedIn();
+        allow read: if isSignedIn()
+          && userId == request.auth.uid;
+
+        allow create, update, delete: if isSignedIn()
+          && userId == request.auth.uid;
 
         match /comments/{commentId} {
-          allow read: if isSignedIn();
+          allow read: if isSignedIn()
+            && userId == request.auth.uid;
 
           allow create: if isSignedIn()
+            && userId == request.auth.uid
             && request.resource.data.authorId == request.auth.uid;
 
           allow delete: if isSignedIn()
+            && userId == request.auth.uid
             && (
               resource.data.authorId == request.auth.uid ||
               userId == request.auth.uid
             );
 
-          allow update: if isSignedIn() && (
-            (
-              resource.data.authorId == request.auth.uid
-              && onlyChanged([
-                "text",
-                "editedAt",
-                "editHistory",
-                "mentions",
-                "mentionedUids"
-              ])
-              && (
-                resource.data.createdAt == null ||
-                request.time < resource.data.createdAt + duration.value(15, "m")
+          allow update: if isSignedIn()
+            && userId == request.auth.uid
+            && (
+              (
+                resource.data.authorId == request.auth.uid
+                && onlyChanged([
+                  "text",
+                  "editedAt",
+                  "editHistory",
+                  "mentions",
+                  "mentionedUids"
+                ])
+                && (
+                  resource.data.createdAt == null ||
+                  request.time < resource.data.createdAt + duration.value(15, "m")
+                )
               )
-            )
-            ||
-            (
-              onlyChanged(["deliveredTo"])
-              && request.resource.data.deliveredTo.hasAll(resource.data.deliveredTo)
-              && request.resource.data.deliveredTo
-                .removeAll(resource.data.deliveredTo)
-                .hasOnly([request.auth.uid])
-            )
-            ||
-            (
-              onlyChanged(["readBy"])
-              && request.resource.data.readBy.hasAll(resource.data.readBy)
-              && request.resource.data.readBy
-                .removeAll(resource.data.readBy)
-                .hasOnly([request.auth.uid])
-            )
-            ||
-            onlyChanged(["reactions"])
-          );
+              ||
+              (
+                onlyChanged(["deliveredTo"])
+                && request.resource.data.deliveredTo.hasAll(resource.data.deliveredTo)
+                && request.resource.data.deliveredTo
+                  .removeAll(resource.data.deliveredTo)
+                  .hasOnly([request.auth.uid])
+              )
+              ||
+              (
+                onlyChanged(["readBy"])
+                && request.resource.data.readBy.hasAll(resource.data.readBy)
+                && request.resource.data.readBy
+                  .removeAll(resource.data.readBy)
+                  .hasOnly([request.auth.uid])
+              )
+              ||
+              onlyChanged(["reactions"])
+            );
         }
 
         match /{document=**} {
-          allow read, write: if isSignedIn();
+          allow read, write: if isSignedIn()
+            && userId == request.auth.uid;
         }
       }
 

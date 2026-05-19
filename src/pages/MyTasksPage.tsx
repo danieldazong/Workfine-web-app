@@ -5,9 +5,17 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useLocation } from "react-router-dom";
-import { useAppData } from "../context/AppDataContext";
 import { useAuth }    from "../context/AuthContext";
-import { doc, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
+
 import { db } from "../lib/firebase/config";
 import { getOverdueTasks } from "../utils/overdueUtils";
 import TaskDetailPanel, { Task as DetailTask } from "../components/TaskDetailPanel";
@@ -40,9 +48,9 @@ const filterFromQuery = (raw: string | null): FilterType | null => {
 };
 
 export default function MyTasksPage() {
-  const { user, workspaceId } = useAuth();
-  const { tasks } = useAppData();
-  const location  = useLocation();
+    const { user, workspaceId } = useAuth();
+  const location = useLocation();
+  const [tasks, setTasks] = useState<any[]>([]);
   const [filter, setFilter] = useState<FilterType>("All");
   const [detailTask, setDetailTask] = useState<DetailTask | null>(null);
   const [editTask, setEditTask] = useState<DetailTask | null>(null);

@@ -189,6 +189,16 @@ export function subscribeToProjects(
   workspaceId: string,
   callback: (projects: Project[]) => void
 ): Unsubscribe {
+  const isTaskInviteRoute =
+    typeof window !== "undefined" &&
+    window.location.pathname.startsWith("/accept-task-invite");
+
+  if (isTaskInviteRoute) {
+    console.log("[Projects] Skipping project listener on task invite route");
+    callback([]);
+    return () => {};
+  }
+
   if (!workspaceId) {
     callback([]);
     return () => {};
@@ -212,8 +222,18 @@ export function subscribeToProjects(
       callback(list);
     },
     (err) => {
-      console.error("[Projects] ❌ Listener error:", err.code, err.message);
+      if (err.code === "permission-denied") {
+        console.warn(
+          "[Projects] Project listener skipped because user does not have workspace access:",
+          workspaceId
+        );
+      } else {
+        console.error("[Projects] ❌ Listener error:", err.code, err.message);
+      }
+
       callback([]);
     }
   );
 }
+
+
