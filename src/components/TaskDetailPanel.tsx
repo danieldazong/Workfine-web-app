@@ -8,6 +8,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  getDocs,
   addDoc,
   deleteDoc,
   doc,
@@ -19,6 +20,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 
+
 import {
   X,
   Send,
@@ -28,7 +30,6 @@ import {
   Calendar,
   User as UserIcon,
   Tag,
-  Clock,
   MessageCircle,
   FolderKanban,
   Smile,
@@ -97,12 +98,17 @@ interface TaskComment {
   text: string;
   authorId: string;
   authorName: string;
+  authorEmail?: string;
+  authorPhotoURL?: string;
+  workspaceId?: string;
+  taskId?: string;
   createdAt?: any;
   mentions?: string[];
   attachments?: UploadedAttachment[];
   /** emoji char → array of user UIDs who reacted */
   reactions?: Record<string, string[]>;
 }
+
 
 interface TaskShare {
   id: string;
@@ -147,6 +153,51 @@ interface TaskShare {
 
   createdAt?: any;
   updatedAt?: any;
+}
+interface ResolvedUserProfile {
+  uid?: string;
+  email: string;
+  name: string;
+  photoURL: string;
+}
+
+function getProviderPhotoURL(user: any): string {
+  const providers = Array.isArray(user?.providerData) ? user.providerData : [];
+
+  const providerWithPhoto = providers.find((provider: any) =>
+    String(provider?.photoURL || "").trim()
+  );
+
+  return String(providerWithPhoto?.photoURL || "").trim();
+}
+
+function isGeneratedInitialAvatar(url?: string | null): boolean {
+  const clean = String(url || "").trim().toLowerCase();
+
+  if (!clean) return false;
+
+  return (
+    clean.includes("ui-avatars.com") ||
+    clean.includes("dicebear") ||
+    clean.includes("initial") ||
+    clean.includes("avatar.iran.liara.run") ||
+    clean.startsWith("data:image/svg")
+  );
+}
+
+function getFirstRealPhotoURL(...values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const clean = String(value || "").trim();
+
+    if (!clean) continue;
+
+    // This prevents generated firstname/initial avatars from being used.
+    if (isGeneratedInitialAvatar(clean)) continue;
+
+    return clean;
+  }
+
+  return "";
 }
 
 
@@ -406,6 +457,296 @@ const EJ_PUBLIC_KEY = "meHwiauyfE3xFWE66";
     if (typeof v?.seconds === "number") return v.seconds * 1000;
     return new Date(v).getTime();
   }
+  function normalizeEmail(email?: string | null): string {
+    return String(email || "").trim().toLowerCase();
+  }
+
+  function isGoogleEmail(email?: string | null): boolean {
+    const clean = normalizeEmail(email);
+    return clean.endsWith("@gmail.com") || clean.endsWith("@googlemail.com");
+  }
+
+  function getAvatarInitials(name?: string | null, email?: string | null): string {
+    const display = String(name || email || "U").trim();
+
+    if (!display) return "U";
+
+    const clean = display
+      .replace(/@.+$/, "")
+      .replace(/[._-]+/g, " ")
+      .trim();
+
+    const parts = clean.split(/\s+/).filter(Boolean);
+
+    if (parts.length >= 2) {
+      return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+    }
+
+    return (clean[0] || "U").toUpperCase();
+  }
+
+  function hashString(value: string): number {
+    let hash = 0;
+    const input = value || "user";
+
+    for (let i = 0; i < input.length; i++) {
+      hash = input.charCodeAt(i) + ((hash << 5) - hash);
+    }
+
+    return Math.abs(hash);
+  }
+
+  function avatarGradient(email?: string | null, name?: string | null): string {
+    const key = normalizeEmail(email) || String(name || "user");
+    const gradients = [
+      "linear-gradient(135deg, #8b5cf6, #6366f1)",
+      "linear-gradient(135deg, #06b6d4, #3b82f6)",
+      "linear-gradient(135deg, #10b981, #059669)",
+      "linear-gradient(135deg, #f59e0b, #ef4444)",
+      "linear-gradient(135deg, #ec4899, #8b5cf6)",
+      "linear-gradient(135deg, #14b8a6, #0ea5e9)",
+      "linear-gradient(135deg, #f97316, #db2777)",
+      "linear-gradient(135deg, #84cc16, #10b981)",
+    ];
+
+    return gradients[hashString(key) % gradients.length];
+  }
+
+  function ModernAvatar({
+  email,
+  name,
+  photoURL,
+  size = 32,
+  className = "",
+}: {
+  email?: string | null;
+  name?: string | null;
+  photoURL?: string | null;
+  size?: number;
+  className?: string;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  const safePhotoURL = getFirstRealPhotoURL(photoURL);
+  const showPhoto = Boolean(safePhotoURL) && !imageFailed;
+  const showGoogleBadge = showPhoto && isGoogleEmail(email);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [safePhotoURL]);
+
+  return (
+    <div
+      className={`relative flex-shrink-0 ${className}`}
+      style={{ width: size, height: size }}
+      title={String(name || email || "User")}
+    >
+      {showPhoto ? (
+        <img
+          src={safePhotoURL}
+          alt={String(name || email || "User")}
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          decoding="async"
+          onError={() => setImageFailed(true)}
+          className="w-full h-full rounded-full object-cover ring-1 ring-slate-200 bg-slate-100"
+        />
+      ) : (
+        <div className="w-full h-full rounded-full bg-slate-100 text-slate-400 flex items-center justify-center ring-1 ring-slate-200 shadow-sm">
+          <UserIcon size={Math.max(14, Math.floor(size * 0.5))} />
+        </div>
+      )}
+
+      {showGoogleBadge && (
+        <span
+          className="absolute -right-0.5 -bottom-0.5 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center font-black"
+          style={{
+            width: Math.max(12, Math.floor(size * 0.42)),
+            height: Math.max(12, Math.floor(size * 0.42)),
+            fontSize: Math.max(8, Math.floor(size * 0.24)),
+            color: "#4285F4",
+            lineHeight: 1,
+          }}
+          title="Google account"
+        >
+          G
+        </span>
+      )}
+    </div>
+  );
+}
+
+function formatAttachmentSize(size?: number): string {
+  if (typeof size !== "number") return "Unknown size";
+
+  if (size >= 1024 * 1024) {
+    return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  return `${(size / 1024).toFixed(1)} KB`;
+}
+
+function getAttachmentExtension(name?: string): string {
+  const clean = String(name || "").trim();
+  const ext = clean.includes(".") ? clean.split(".").pop() : "";
+
+  return ext ? ext.toUpperCase() : "FILE";
+}
+
+function isImageAttachment(file: UploadedAttachment): boolean {
+  return String(file.type || "").startsWith("image/");
+}
+
+function OptimizedAttachmentCard({
+  file,
+  isMine,
+}: {
+  file: UploadedAttachment;
+  isMine: boolean;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const isImage = isImageAttachment(file);
+  const sizeLabel = formatAttachmentSize(file.size);
+  const extension = getAttachmentExtension(file.name);
+
+  /**
+   * Use the lightweight preview in the chat bubble.
+   * Use the original full-quality URL when clicked.
+   */
+  const previewSrc = file.previewUrl || file.url;
+  const originalSrc = file.url;
+
+  const imageWidth = file.previewWidth || file.width || 640;
+  const imageHeight = file.previewHeight || file.height || 420;
+
+  const aspectRatio =
+    imageWidth > 0 && imageHeight > 0
+      ? `${imageWidth} / ${imageHeight}`
+      : "16 / 10";
+
+  return (
+    <a
+      href={originalSrc}
+      target="_blank"
+      rel="noreferrer"
+      download={file.name}
+      onClick={(e) => e.stopPropagation()}
+      className={`block w-[340px] max-w-[calc(100vw-96px)] rounded-2xl overflow-hidden border shadow-sm transition-all ${
+        isMine
+          ? "border-white/20 bg-white/10 hover:bg-white/15 text-white"
+          : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+      }`}
+      title="Open original file"
+    >
+      {isImage ? (
+        <div
+          className={`relative w-full overflow-hidden ${
+            isMine ? "bg-white/10" : "bg-slate-100"
+          }`}
+          style={{
+            aspectRatio,
+            maxHeight: 280,
+          }}
+        >
+          {!loaded && !failed && (
+            <div
+              className="absolute inset-0 animate-pulse"
+              style={{
+                backgroundImage: file.blurDataUrl
+                  ? `url(${file.blurDataUrl})`
+                  : undefined,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+                backgroundColor: isMine
+                  ? "rgba(255,255,255,0.12)"
+                  : "rgb(241 245 249)",
+                filter: file.blurDataUrl ? "blur(10px)" : undefined,
+                transform: file.blurDataUrl ? "scale(1.08)" : undefined,
+              }}
+            />
+          )}
+
+          {!failed ? (
+            <img
+              src={previewSrc}
+              alt={file.name}
+              loading="lazy"
+              decoding="async"
+              fetchPriority="low"
+              onLoad={() => setLoaded(true)}
+              onError={() => {
+                setLoaded(true);
+                setFailed(true);
+              }}
+              className={`relative z-10 w-full h-full object-contain transition-opacity duration-300 ${
+                loaded ? "opacity-100" : "opacity-0"
+              }`}
+            />
+          ) : (
+            <div className="h-[150px] flex items-center justify-center">
+              <Paperclip
+                size={28}
+                className={isMine ? "text-white/80" : "text-slate-400"}
+              />
+            </div>
+          )}
+
+          {file.previewUrl && (
+            <span
+              className={`absolute right-2 top-2 z-20 rounded-full px-2 py-0.5 text-[10px] font-semibold backdrop-blur ${
+                isMine
+                  ? "bg-black/25 text-white"
+                  : "bg-white/85 text-slate-500 border border-white"
+              }`}
+            >
+              Fast preview
+            </span>
+          )}
+        </div>
+      ) : (
+        <div
+          className={`h-[104px] flex items-center justify-center ${
+            isMine ? "bg-white/10" : "bg-slate-50"
+          }`}
+        >
+          <div
+            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center border ${
+              isMine
+                ? "bg-white/10 border-white/15 text-white"
+                : "bg-white border-slate-200 text-slate-500"
+            }`}
+          >
+            <Paperclip size={20} />
+            <span className="text-[9px] font-bold mt-1 max-w-[42px] truncate">
+              {extension}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <Paperclip size={13} className="flex-shrink-0 opacity-80" />
+
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium truncate leading-tight">
+            {file.name}
+          </p>
+
+          <p
+            className={`text-[10px] mt-0.5 ${
+              isMine ? "text-white/65" : "text-slate-400"
+            }`}
+          >
+            {sizeLabel}
+            {isImage && file.previewUrl ? " · opens original quality" : ""}
+          </p>
+        </div>
+      </div>
+    </a>
+  );
+}
 
   function timeAgo(timestamp: any): string {
     const ms = toMs(timestamp);
@@ -443,20 +784,99 @@ const EJ_PUBLIC_KEY = "meHwiauyfE3xFWE66";
     onEdit,
   }: TaskDetailPanelProps) {
     const navigate = useNavigate();
-  const { user, workspaceId } = useAuth();
-  const { projects = [], tasks: allTasks = [] } = useAppData() as any;
+    const { user, workspaceId } = useAuth();
+  const { projects = [], tasks: allTasks = [], members = [] } = useAppData() as any;
 
-  const [taskView, setTaskView] = useState<Task>(task);
+
+    const [taskView, setTaskView] = useState<Task>(task);
+
+  const taskWorkspaceId = useMemo(() => {
+    return (
+      (taskView as any).workspaceId ||
+      (task as any).workspaceId ||
+      workspaceId ||
+      ""
+    );
+  }, [taskView.workspaceId, (task as any).workspaceId, workspaceId]);
+
+  const sourceTaskId = useMemo(() => {
+    return (
+      (taskView as any).originalTaskId ||
+      (taskView as any).sharedTaskId ||
+      (task as any).originalTaskId ||
+      (task as any).sharedTaskId ||
+      taskView.id ||
+      task.id ||
+      ""
+    );
+  }, [
+    (taskView as any).originalTaskId,
+    (taskView as any).sharedTaskId,
+    (task as any).originalTaskId,
+    (task as any).sharedTaskId,
+    taskView.id,
+    task.id,
+  ]);
+
+  function getCanonicalCommentsCollection() {
+    if (!taskWorkspaceId || !sourceTaskId) return null;
+
+    return collection(
+      db,
+      "workspaces",
+      taskWorkspaceId,
+      "tasks",
+      sourceTaskId,
+      "comments"
+    );
+  }
 
 const [comments, setComments] = useState<TaskComment[]>([]);
 
 
-// Keep the task panel synced with Firestore so saved description appears immediately
-// and remains visible after database updates.
+
+// Keep the task panel synced with the canonical workspace task when possible.
+// Shared tasks must show the original task data, not only the user's copied index.
 useEffect(() => {
   setTaskView(task);
 
-  if (!user?.uid || !task.id) return;
+  if (!task.id) return;
+
+  if (taskWorkspaceId && sourceTaskId) {
+    const sourceTaskRef = doc(
+      db,
+      "workspaces",
+      taskWorkspaceId,
+      "tasks",
+      sourceTaskId
+    );
+
+    const unsub = onSnapshot(
+      sourceTaskRef,
+      (snap) => {
+        if (!snap.exists()) return;
+
+        setTaskView((prev) => ({
+          ...prev,
+          ...task,
+          ...(snap.data() as Partial<Task>),
+          id: task.id,
+          originalTaskId: sourceTaskId,
+          workspaceId: taskWorkspaceId,
+          isSharedTask: (task as any).isSharedTask ?? (prev as any).isSharedTask,
+          sharedWithMe: (task as any).sharedWithMe ?? (prev as any).sharedWithMe,
+          shareId: (task as any).shareId ?? (prev as any).shareId,
+        }));
+      },
+      (err) => {
+        console.error("[TaskDetailPanel] source task listener:", err.message);
+      }
+    );
+
+    return () => unsub();
+  }
+
+  if (!user?.uid) return;
 
   const taskRef = doc(db, "users", user.uid, "tasks", task.id);
 
@@ -473,12 +893,13 @@ useEffect(() => {
       }));
     },
     (err) => {
-      console.error("[TaskDetailPanel] task listener:", err.message);
+      console.error("[TaskDetailPanel] user task listener:", err.message);
     }
   );
 
   return () => unsub();
-}, [user?.uid, task.id, task]);
+}, [user?.uid, task.id, task, taskWorkspaceId, sourceTaskId]);
+
 
 
     const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -543,6 +964,237 @@ const [taskAccessMode, setTaskAccessMode] = useState<TaskAccessMode>(() => {
 const activeTaskAccessOption =
   TASK_ACCESS_OPTIONS.find((option) => option.value === taskAccessMode) ??
   TASK_ACCESS_OPTIONS[0];
+  const workspaceMembers = useMemo(() => {
+  return Array.isArray(members) ? members : [];
+}, [members]);
+const getWorkspaceMemberByEmail = useCallback(
+  (email?: string | null) => {
+    const targetEmail = normalizeEmail(email);
+
+    if (!targetEmail) return null;
+
+    return (
+      workspaceMembers.find((member: any) => {
+        return normalizeEmail(member.email) === targetEmail;
+      }) || null
+    );
+  },
+  [workspaceMembers]
+);
+
+
+const [resolvedProfilesByUid, setResolvedProfilesByUid] = useState<
+  Record<string, ResolvedUserProfile>
+>({});
+
+const [resolvedProfilesByEmail, setResolvedProfilesByEmail] = useState<
+  Record<string, ResolvedUserProfile>
+>({});
+
+const currentUserRealPhotoURL = getFirstRealPhotoURL(
+  user?.photoURL,
+  (user as any)?.googlePhotoURL,
+  (user as any)?.providerPhotoURL,
+  getProviderPhotoURL(user)
+);
+
+const userProfileUidsToWatch = useMemo(() => {
+  const ids = new Set<string>();
+
+  if (user?.uid) ids.add(user.uid);
+
+  comments.forEach((comment) => {
+    if (comment.authorId) ids.add(comment.authorId);
+  });
+
+  taskShares.forEach((share) => {
+    if (share.acceptedByUid) ids.add(share.acceptedByUid);
+    if (share.acceptedBy) ids.add(share.acceptedBy);
+    if (share.sharedByUid) ids.add(share.sharedByUid);
+    if (share.invitedBy) ids.add(share.invitedBy);
+  });
+
+  workspaceMembers.forEach((member: any) => {
+    const memberUid = member?.uid || member?.userId || member?.id;
+
+    if (memberUid) ids.add(memberUid);
+  });
+
+  return Array.from(ids)
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .slice(0, 80);
+}, [user?.uid, comments, taskShares, workspaceMembers]);
+
+const userProfileUidsKey = userProfileUidsToWatch.join("|");
+
+useEffect(() => {
+  if (!userProfileUidsToWatch.length) {
+    setResolvedProfilesByUid({});
+    setResolvedProfilesByEmail({});
+    return;
+  }
+
+  const unsubscribers = userProfileUidsToWatch.map((profileUid) => {
+    const profileRef = doc(db, "users", profileUid);
+
+    return onSnapshot(
+      profileRef,
+      (snap) => {
+        const raw = snap.exists() ? snap.data() : {};
+
+        const isCurrentUser = user?.uid === profileUid;
+
+        const email = normalizeEmail(
+          raw.email ||
+            raw.emailLower ||
+            raw.emailAddress ||
+            (isCurrentUser ? user?.email : "")
+        );
+
+        const name =
+          raw.displayName ||
+          raw.name ||
+          raw.fullName ||
+          (isCurrentUser ? user?.displayName : "") ||
+          email ||
+          "User";
+
+        const realPhotoURL = getFirstRealPhotoURL(
+          raw.photoURL,
+          raw.googlePhotoURL,
+          raw.providerPhotoURL,
+          raw.authPhotoURL,
+          isCurrentUser ? currentUserRealPhotoURL : ""
+        );
+
+        const profile: ResolvedUserProfile = {
+          uid: profileUid,
+          email,
+          name,
+          photoURL: realPhotoURL,
+        };
+
+        setResolvedProfilesByUid((prev) => ({
+          ...prev,
+          [profileUid]: profile,
+        }));
+
+        if (email) {
+          setResolvedProfilesByEmail((prev) => ({
+            ...prev,
+            [email]: profile,
+          }));
+        }
+      },
+      (err) => {
+        console.warn(
+          "[TaskDetailPanel] user profile avatar listener skipped:",
+          profileUid,
+          err.message
+        );
+      }
+    );
+  });
+
+  return () => {
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+  };
+}, [
+  userProfileUidsKey,
+  user?.uid,
+  user?.email,
+  user?.displayName,
+  currentUserRealPhotoURL,
+]);
+
+const getResolvedUserProfile = useCallback(
+  ({
+    uid,
+    email,
+    name,
+    photoURL,
+  }: {
+    uid?: string | null;
+    email?: string | null;
+    name?: string | null;
+    photoURL?: string | null;
+  }) => {
+    const cleanEmail = normalizeEmail(email);
+    const cleanUid = String(uid || "").trim();
+
+    const profileByUid = cleanUid ? resolvedProfilesByUid[cleanUid] : null;
+    const profileByEmail = cleanEmail ? resolvedProfilesByEmail[cleanEmail] : null;
+
+    const memberByEmail = cleanEmail
+      ? workspaceMembers.find((member: any) => {
+          return normalizeEmail(member.email || member.emailLower) === cleanEmail;
+        })
+      : null;
+
+    const memberByUid = cleanUid
+      ? workspaceMembers.find((member: any) => {
+          return (
+            member.userId === cleanUid ||
+            member.uid === cleanUid ||
+            member.id === cleanUid
+          );
+        })
+      : null;
+
+    const matchedMember = memberByEmail || memberByUid;
+
+    const isCurrentUser =
+      Boolean(cleanUid && user?.uid && cleanUid === user.uid) ||
+      Boolean(cleanEmail && user?.email && cleanEmail === normalizeEmail(user.email));
+
+    const resolvedEmail =
+      cleanEmail ||
+      normalizeEmail(profileByUid?.email) ||
+      normalizeEmail(profileByEmail?.email) ||
+      normalizeEmail(matchedMember?.email || matchedMember?.emailLower) ||
+      (isCurrentUser ? normalizeEmail(user?.email) : "");
+
+    const resolvedName =
+      name ||
+      profileByUid?.name ||
+      profileByEmail?.name ||
+      matchedMember?.displayName ||
+      matchedMember?.name ||
+      matchedMember?.fullName ||
+      (isCurrentUser ? user?.displayName || "" : "") ||
+      resolvedEmail ||
+      "User";
+
+    const resolvedPhotoURL = getFirstRealPhotoURL(
+      photoURL,
+      profileByUid?.photoURL,
+      profileByEmail?.photoURL,
+      matchedMember?.photoURL,
+      matchedMember?.googlePhotoURL,
+      matchedMember?.providerPhotoURL,
+      matchedMember?.authPhotoURL,
+      isCurrentUser ? currentUserRealPhotoURL : ""
+    );
+
+    return {
+      name: resolvedName,
+      email: resolvedEmail,
+      photoURL: resolvedPhotoURL,
+    };
+  },
+  [
+    workspaceMembers,
+    resolvedProfilesByUid,
+    resolvedProfilesByEmail,
+    user?.uid,
+    user?.displayName,
+    user?.email,
+    currentUserRealPhotoURL,
+  ]
+);
+
+
 useEffect(() => {
   const savedMode = (taskView as any).shareAccessMode || (task as any).shareAccessMode;
 
@@ -709,32 +1361,145 @@ useEffect(() => {
         setActiveCategory("smileys");
       }
     }, [pickerForCommentId]);
-    // Toggle a reaction on a comment (atomic write of the reactions map)
+        // Toggle a reaction on a comment (atomic write of the reactions map)
     const toggleReaction = useCallback(
       async (comment: TaskComment, emoji: string) => {
         if (!user?.uid) return;
-        const reactions: Record<string, string[]> = { ...(comment.reactions ?? {}) };
+        if (!taskWorkspaceId || !sourceTaskId) return;
+
+        const reactions: Record<string, string[]> = {
+          ...(comment.reactions ?? {}),
+        };
+
         const current = reactions[emoji] ?? [];
         const has = current.includes(user.uid);
+
         const next = has
-          ? current.filter((u) => u !== user.uid)
+          ? current.filter((uid) => uid !== user.uid)
           : [...current, user.uid];
+
         if (next.length === 0) {
           delete reactions[emoji];
         } else {
           reactions[emoji] = next;
         }
+
         try {
           await updateDoc(
-            doc(db, "users", user.uid, "tasks", task.id, "comments", comment.id),
+            doc(
+              db,
+              "workspaces",
+              taskWorkspaceId,
+              "tasks",
+              sourceTaskId,
+              "comments",
+              comment.id
+            ),
             { reactions }
           );
         } catch (e) {
           console.error("[TaskDetailPanel] toggle reaction:", e);
         }
       },
-      [user?.uid, task.id]
+      [user?.uid, taskWorkspaceId, sourceTaskId]
     );
+const migrateMyLegacyCommentsToCanonical = useCallback(async () => {
+  if (!user?.uid || !taskWorkspaceId || !sourceTaskId || !task.id) return;
+
+  try {
+    const canonicalRef = collection(
+      db,
+      "workspaces",
+      taskWorkspaceId,
+      "tasks",
+      sourceTaskId,
+      "comments"
+    );
+
+    const legacyRef = collection(
+      db,
+      "users",
+      user.uid,
+      "tasks",
+      task.id,
+      "comments"
+    );
+
+    const [canonicalSnap, legacySnap] = await Promise.all([
+      getDocs(canonicalRef),
+      getDocs(legacyRef),
+    ]);
+
+    if (legacySnap.empty) return;
+
+    const existingCanonicalIds = new Set(
+      canonicalSnap.docs.map((commentDoc) => commentDoc.id)
+    );
+
+    const writes = legacySnap.docs
+      .filter((legacyDoc) => !existingCanonicalIds.has(legacyDoc.id))
+      .map((legacyDoc) =>
+        setDoc(
+          doc(
+            db,
+            "workspaces",
+            taskWorkspaceId,
+            "tasks",
+            sourceTaskId,
+            "comments",
+            legacyDoc.id
+          ),
+          {
+  ...legacyDoc.data(),
+  authorId: legacyDoc.data().authorId || user.uid,
+  authorName:
+    legacyDoc.data().authorName ||
+    user.displayName ||
+    user.email ||
+    "User",
+  authorEmail:
+    legacyDoc.data().authorEmail ||
+    user.email ||
+    "",
+  authorPhotoURL: getFirstRealPhotoURL(
+  legacyDoc.data().authorPhotoURL,
+  currentUserRealPhotoURL
+),
+
+  workspaceId: taskWorkspaceId,
+  taskId: sourceTaskId,
+  migratedFromLegacyUserTask: user.uid,
+  migratedAt: serverTimestamp(),
+},
+
+          { merge: true }
+        )
+      );
+
+    if (writes.length > 0) {
+      await Promise.all(writes);
+      console.log(
+        "[TaskDetailPanel] Migrated my legacy comments before sharing:",
+        writes.length
+      );
+    }
+  } catch (err) {
+    console.warn(
+      "[TaskDetailPanel] pre-share legacy comment migration skipped:",
+      err
+    );
+  }
+}, [
+  user?.uid,
+  user?.displayName,
+  user?.email,
+  taskWorkspaceId,
+  sourceTaskId,
+  task.id,
+  currentUserRealPhotoURL,
+]);
+
+
 
     const handlePickEmoji = useCallback(
       (rawEmoji: string, isToneable: boolean) => {
@@ -752,28 +1517,147 @@ useEffect(() => {
     );
 
 
-    // Real-time comments listener — oldest first (chat order)
+        // Real-time comments listener — canonical shared task comments.
+    // This is the modern/shared behavior:
+    // every accepted user sees the same comments for the same task.
     useEffect(() => {
-      if (!user?.uid || !task.id) return;
-      const q = firestoreQuery(
-        collection(db, "users", user.uid, "tasks", task.id, "comments"),
-        orderBy("createdAt", "asc")
+      if (!user?.uid || !taskWorkspaceId || !sourceTaskId) {
+        setComments([]);
+        return;
+      }
+
+      const commentsRef = collection(
+        db,
+        "workspaces",
+        taskWorkspaceId,
+        "tasks",
+        sourceTaskId,
+        "comments"
       );
+
+      const q = firestoreQuery(commentsRef, orderBy("createdAt", "asc"));
 
       const unsub = onSnapshot(
         q,
         (snap) => {
-        const data: TaskComment[] = snap.docs.map((d) => ({
-  id: d.id,
-  ...(d.data() as Omit<TaskComment, "id">),
-}));
+          const data: TaskComment[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<TaskComment, "id">),
+          }));
 
           setComments(data);
         },
-        (err) => console.error("[TaskDetailPanel] comments listener:", err.message)
+        (err) =>
+          console.error(
+            "[TaskDetailPanel] canonical comments listener:",
+            err.message
+          )
       );
+
       return () => unsub();
-    }, [user?.uid, task.id]);
+    }, [user?.uid, taskWorkspaceId, sourceTaskId]);
+    // One-time legacy migration:
+    // Older comments were stored under users/{uid}/tasks/{taskId}/comments.
+    // New shared comments must live under workspaces/{workspaceId}/tasks/{taskId}/comments.
+    // When the task owner opens the task, their old comments are copied into the shared location.
+    useEffect(() => {
+      if (!user?.uid || !taskWorkspaceId || !sourceTaskId || !task.id) return;
+
+      let cancelled = false;
+
+      async function migrateLegacyCommentsIfNeeded() {
+        try {
+          const canonicalRef = collection(
+            db,
+            "workspaces",
+            taskWorkspaceId,
+            "tasks",
+            sourceTaskId,
+            "comments"
+          );
+
+          const canonicalSnap = await getDocs(canonicalRef);
+
+          // Do not duplicate comments if canonical comments already exist.
+          if (!canonicalSnap.empty || cancelled) return;
+
+          const legacyRef = collection(
+            db,
+            "users",
+            user.uid,
+            "tasks",
+            task.id,
+            "comments"
+          );
+
+          const legacySnap = await getDocs(legacyRef);
+
+          if (legacySnap.empty || cancelled) return;
+
+          await Promise.all(
+            legacySnap.docs.map((legacyDoc) =>
+              setDoc(
+                doc(
+                  db,
+                  "workspaces",
+                  taskWorkspaceId,
+                  "tasks",
+                  sourceTaskId,
+                  "comments",
+                  legacyDoc.id
+                ),
+                {
+  ...legacyDoc.data(),
+  authorId: legacyDoc.data().authorId || user.uid,
+  authorName:
+    legacyDoc.data().authorName ||
+    user.displayName ||
+    user.email ||
+    "User",
+  authorEmail:
+    legacyDoc.data().authorEmail ||
+    user.email ||
+    "",
+  authorPhotoURL:
+    legacyDoc.data().authorPhotoURL ||
+    user.photoURL ||
+    "",
+  workspaceId: taskWorkspaceId,
+  taskId: sourceTaskId,
+  migratedFromLegacyUserTask: user.uid,
+  migratedAt: serverTimestamp(),
+},
+
+                { merge: true }
+              )
+            )
+          );
+
+          console.log(
+            "[TaskDetailPanel] Migrated legacy comments:",
+            legacySnap.docs.length
+          );
+        } catch (err) {
+          console.warn("[TaskDetailPanel] legacy comment migration skipped:", err);
+        }
+      }
+
+      migrateLegacyCommentsIfNeeded();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [
+  user?.uid,
+  user?.displayName,
+  user?.email,
+  taskWorkspaceId,
+  sourceTaskId,
+  task.id,
+  currentUserRealPhotoURL,
+]);
+
+
 
     const handleClose = useCallback(() => {
       setClosing(true);
@@ -789,17 +1673,27 @@ useEffect(() => {
       const text = commentText.trim();
       const authorName = user.displayName ?? user.email ?? "User";
 
-      await addDoc(
-        collection(db, "users", user.uid, "tasks", task.id, "comments"),
-        {
-          text,
-          authorId: user.uid,
-          authorName,
-          createdAt: serverTimestamp(),
-          mentions: extractMentions(text),
-          attachments: [],
-        }
-      );
+            const commentsRef = getCanonicalCommentsCollection();
+
+      if (!commentsRef) {
+        setToast("Task comments are not available yet");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
+      await addDoc(commentsRef, {
+        text,
+        authorId: user.uid,
+        authorName,
+        authorEmail: user.email ?? "",
+        authorPhotoURL: currentUserRealPhotoURL,
+        workspaceId: taskWorkspaceId,
+        taskId: sourceTaskId,
+        createdAt: serverTimestamp(),
+        mentions: extractMentions(text),
+        attachments: [],
+      });
+
 
       setCommentText("");
       setShowSuggestions(false);
@@ -819,7 +1713,8 @@ setShowFormattingToolbar(false);
     } finally {
       setSending(false);
     }
-  }, [user, commentText, sending, task.id]);
+   }, [user, commentText, sending, taskWorkspaceId, sourceTaskId, currentUserRealPhotoURL]);
+
 
   const handleAttachFile = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -842,11 +1737,9 @@ setShowFormattingToolbar(false);
         return;
       }
 
-      if (!task.projectId) {
-        setToast("Project ID is missing for this task");
-        setTimeout(() => setToast(null), 2500);
-        return;
-      }
+      const uploadProjectId = taskView.projectId || task.projectId || "shared";
+const uploadTaskId = sourceTaskId || task.id;
+
 
       const maxSizeMb = 25;
       if (file.size > maxSizeMb * 1024 * 1024) {
@@ -859,25 +1752,36 @@ setShowFormattingToolbar(false);
 
       try {
         const attachment = await storageService.uploadFile(
-          user.uid,
-          task.projectId,
-          task.id,
-          file
-        );
+  user.uid,
+  uploadProjectId,
+  uploadTaskId,
+  file
+);
+
 
         const authorName = user.displayName ?? user.email ?? "User";
 
-  await addDoc(
-    collection(db, "users", user.uid, "tasks", task.id, "comments"),
-    {
-      text: "",
-      authorId: user.uid,
-      authorName,
-      createdAt: serverTimestamp(),
-      mentions: [],
-      attachments: [attachment],
-    }
-  );
+  const commentsRef = getCanonicalCommentsCollection();
+
+  if (!commentsRef) {
+    setToast("Task comments are not available yet");
+    setTimeout(() => setToast(null), 2500);
+    return;
+  }
+
+  await addDoc(commentsRef, {
+    text: "",
+    authorId: user.uid,
+    authorName,
+    authorEmail: user.email ?? "",
+    authorPhotoURL: currentUserRealPhotoURL,
+    workspaceId: taskWorkspaceId,
+    taskId: sourceTaskId,
+    createdAt: serverTimestamp(),
+    mentions: [],
+    attachments: [attachment],
+  });
+
 
 
         setCommentText("");
@@ -902,8 +1806,18 @@ setShowFormattingToolbar(false);
         setUploadingAttachment(false);
       }
     },
-    [user, task.id, task.projectId, commentText]
+       [
+  user,
+  task.id,
+  task.projectId,
+  taskView.projectId,
+  taskWorkspaceId,
+  sourceTaskId,
+  currentUserRealPhotoURL,
+]
+
   );
+
 
 
 
@@ -977,15 +1891,26 @@ setShowFormattingToolbar(false);
 
     async function handleDelete(c: TaskComment) {
       if (!user?.uid) return;
+      if (!taskWorkspaceId || !sourceTaskId) return;
       if (c.authorId !== user.uid) return;
+
       try {
         await deleteDoc(
-          doc(db, "users", user.uid, "tasks", task.id, "comments", c.id)
+          doc(
+            db,
+            "workspaces",
+            taskWorkspaceId,
+            "tasks",
+            sourceTaskId,
+            "comments",
+            c.id
+          )
         );
       } catch (e) {
         console.error("[TaskDetailPanel] delete comment:", e);
       }
     }
+
 
     function handleMentionClick(code: string) {
 
@@ -1548,33 +2473,31 @@ setShowFormattingToolbar(false);
 
 
 
-    const dueDateLabel = task.dueDate
-      ? new Date(task.dueDate + "T12:00:00").toLocaleDateString("en-US", {
+      const dueDateLabel = (() => {
+      const rawDueDate = taskView.dueDate || task.dueDate;
+
+      if (!rawDueDate || rawDueDate === "Invalid Date") return "—";
+
+      try {
+        const date =
+          typeof rawDueDate === "string"
+            ? new Date(rawDueDate + "T12:00:00")
+            : new Date(toMs(rawDueDate));
+
+        if (Number.isNaN(date.getTime())) return "—";
+
+        return date.toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",
-        })
-      : "—";
+        });
+      } catch {
+        return "—";
+      }
+    })();
 
-    const createdLabel = task.createdAt
-      ? new Date(toMs(task.createdAt)).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })
-      : "—";
 
-       const userInitial =
-      (user?.displayName ?? user?.email ?? "U")[0]?.toUpperCase() ?? "U";
-
-        const taskWorkspaceId = useMemo(() => {
-      return (
-        taskView.workspaceId ||
-        task.workspaceId ||
-        workspaceId ||
-        ""
-      );
-    }, [taskView.workspaceId, task.workspaceId, workspaceId]);
+       
 
     const taskLink = useMemo(() => {
       const baseUrl = window.location.origin;
@@ -1632,19 +2555,21 @@ setShowFormattingToolbar(false);
     }
 
   useEffect(() => {
-  if (!user?.uid || !taskWorkspaceId || !taskView.id) {
+    if (!user?.uid || !taskWorkspaceId || !sourceTaskId) {
     setTaskShares([]);
     return;
   }
+
 
   const sharesQuery = firestoreQuery(
     collection(
       db,
       "workspaces",
       taskWorkspaceId,
-      "tasks",
-      taskView.id,
+            "tasks",
+      sourceTaskId,
       "shares"
+
     ),
     orderBy("createdAt", "desc")
   );
@@ -1668,7 +2593,8 @@ setTaskShares(shares);
   );
 
   return () => unsub();
-}, [user?.uid, taskWorkspaceId, taskView.id]);
+}, [user?.uid, taskWorkspaceId, sourceTaskId]);
+
 
 
     async function handleToggleTaskLike() {
@@ -1678,11 +2604,12 @@ setTaskShares(shares);
         return;
       }
 
-      if (!taskWorkspaceId || !taskView.id) {
+            if (!taskWorkspaceId || !sourceTaskId) {
         setToast("Task workspace is missing");
         window.setTimeout(() => setToast(null), 2500);
         return;
       }
+
 
       if (likingTask) return;
 
@@ -1693,8 +2620,8 @@ setTaskShares(shares);
           db,
           "workspaces",
           taskWorkspaceId,
-          "tasks",
-          taskView.id,
+                   "tasks",
+          sourceTaskId,
           "likes",
           user.uid
         );
@@ -1708,8 +2635,8 @@ setTaskShares(shares);
               uid: user.uid,
               displayName: user.displayName ?? user.email ?? "User",
               email: user.email ?? "",
-              photoURL: user.photoURL ?? "",
-              taskId: taskView.id,
+              photoURL: currentUserRealPhotoURL,
+                            taskId: sourceTaskId,
               workspaceId: taskWorkspaceId,
               createdAt: serverTimestamp(),
             },
@@ -1798,10 +2725,11 @@ async function handleRevokeTaskShare(share: TaskShare) {
     return;
   }
 
-  if (!taskWorkspaceId || !taskView.id || !share.id) {
+    if (!taskWorkspaceId || !sourceTaskId || !share.id) {
     setShareError("Task share information is missing.");
     return;
   }
+
 
   const shareEmail =
     share.sharedWithEmail || share.invitedEmail || share.invitedEmailLower || "";
@@ -1821,8 +2749,8 @@ async function handleRevokeTaskShare(share: TaskShare) {
         db,
         "workspaces",
         taskWorkspaceId,
-        "tasks",
-        taskView.id,
+                "tasks",
+        sourceTaskId,
         "shares",
         share.id
       ),
@@ -1835,7 +2763,7 @@ async function handleRevokeTaskShare(share: TaskShare) {
     );
 
     await setDoc(
-      doc(db, "workspaces", taskWorkspaceId, "tasks", taskView.id),
+            doc(db, "workspaces", taskWorkspaceId, "tasks", sourceTaskId),
       {
         sharedWithEmails: arrayRemove(shareEmail.toLowerCase()),
         accessUpdatedAt: serverTimestamp(),
@@ -1903,10 +2831,11 @@ async function handleRevokeTaskShare(share: TaskShare) {
     return;
   }
 
-  if (!taskWorkspaceId || !taskView.id) {
+    if (!taskWorkspaceId || !sourceTaskId) {
     setShareError("Task workspace is missing.");
     return;
   }
+
 
   if (sharingTask) return;
 
@@ -1926,9 +2855,12 @@ async function handleRevokeTaskShare(share: TaskShare) {
 
   setSharingTask(true);
 
-  try {
-    const senderName =
-      user.displayName || user.email?.split("@")[0] || "Someone";
+try {
+  await migrateMyLegacyCommentsToCanonical();
+
+  const senderName =
+    user.displayName || user.email?.split("@")[0] || "Someone";
+
 
     const taskTitle = taskView.title || task.title || "Untitled task";
     const projectName = project?.name || "No project";
@@ -1941,20 +2873,21 @@ async function handleRevokeTaskShare(share: TaskShare) {
         db,
         "workspaces",
         taskWorkspaceId,
-        "tasks",
-        taskView.id,
+                "tasks",
+        sourceTaskId,
         "shares"
+
       )
     );
 
     const taskInviteLink = `${window.location.origin}/accept-task-invite?workspaceId=${encodeURIComponent(
       taskWorkspaceId
-    )}&taskId=${encodeURIComponent(taskView.id)}&shareId=${encodeURIComponent(
+        )}&taskId=${encodeURIComponent(sourceTaskId)}&shareId=${encodeURIComponent(
       shareRef.id
     )}`;
 
     await setDoc(shareRef, {
-      taskId: taskView.id,
+            taskId: sourceTaskId,
       taskTitle,
       taskCode: taskView.taskCode || task.taskCode || "",
       taskLink,
@@ -1990,7 +2923,7 @@ async function handleRevokeTaskShare(share: TaskShare) {
     });
 
     await setDoc(
-      doc(db, "workspaces", taskWorkspaceId, "tasks", taskView.id),
+            doc(db, "workspaces", taskWorkspaceId, "tasks", sourceTaskId),
       {
         sharedWithEmails: arrayUnion(recipientEmail),
         accessUpdatedAt: serverTimestamp(),
@@ -2541,8 +3474,7 @@ async function handleRevokeTaskShare(share: TaskShare) {
                         })
                       : "";
 
-                    const initial =
-                      (c.authorName ?? "U")[0]?.toUpperCase() ?? "U";
+                    
 
                     const reactionEntries = Object.entries(
                       c.reactions ?? {}
@@ -2553,7 +3485,7 @@ async function handleRevokeTaskShare(share: TaskShare) {
   const hasAttachments =
     Array.isArray(c.attachments) && c.attachments.length > 0;
 
-  const displayText = hasAttachments ? "" : c.text;
+  const displayText = String(c.text || "").trim();
 
   const messageActions = (
     <div
@@ -2790,16 +3722,31 @@ async function handleRevokeTaskShare(share: TaskShare) {
                             isMine ? "justify-end" : "justify-start"
                           } ${sameAuthorAsPrev ? "mt-0.5" : "mt-3"}`}
                         >
-                          {/* Left avatar (incoming only, last in a group) */}
-                          {!isMine && (
-                            <div className="w-7 flex-shrink-0">
-                              {!sameAuthorAsNext && (
-                                <div className="w-7 h-7 rounded-full bg-violet-100 text-violet-600 text-xs font-bold flex items-center justify-center">
-                                  {initial}
-                                </div>
-                              )}
-                            </div>
-                          )}
+                         {/* Left avatar (incoming only, last in a group) */}
+{!isMine && (
+  <div className="w-7 flex-shrink-0">
+    {!sameAuthorAsNext &&
+      (() => {
+        const profile = getResolvedUserProfile({
+          uid: c.authorId,
+          email: c.authorEmail,
+          name: c.authorName,
+          photoURL: c.authorPhotoURL,
+        });
+
+        return (
+          <ModernAvatar
+            name={profile.name}
+            email={profile.email}
+            photoURL={profile.photoURL}
+            size={28}
+          />
+        );
+      })()}
+  </div>
+)}
+
+
 
                         {/* Bubble + meta column */}
   <div
@@ -2808,11 +3755,22 @@ async function handleRevokeTaskShare(share: TaskShare) {
     }`}
   >
     {/* Sender name — incoming only, first in a group */}
-    {!isMine && !sameAuthorAsPrev && (
+{!isMine && !sameAuthorAsPrev &&
+  (() => {
+    const profile = getResolvedUserProfile({
+      uid: c.authorId,
+      email: c.authorEmail,
+      name: c.authorName,
+      photoURL: c.authorPhotoURL,
+    });
+
+    return (
       <span className="text-xs font-semibold text-slate-700 mb-1 px-1">
-        {c.authorName}
+        {profile.name}
       </span>
-    )}
+    );
+  })()}
+
 
     {/* Bubble row — actions sit beside the bubble/card like WhatsApp */}
     <div
@@ -2852,78 +3810,19 @@ async function handleRevokeTaskShare(share: TaskShare) {
 
 
   {hasAttachments && (
-    <div className="space-y-2">
-      {c.attachments!.map((file) => {
-        const isImage = file.type?.startsWith("image/");
-        const sizeLabel =
-          typeof file.size === "number"
-            ? file.size >= 1024 * 1024
-              ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
-              : `${(file.size / 1024).toFixed(1)} KB`
-            : "Unknown size";
+  <div className="space-y-2">
+    {c.attachments!.map((file) => (
+      <React.Fragment key={file.id || file.url}>
+        <OptimizedAttachmentCard
+          file={file}
+          isMine={isMine}
+        />
+      </React.Fragment>
+    ))}
+  </div>
+)}
 
-        return (
-          <a
-            key={file.id || file.url}
-            href={file.url}
-            target="_blank"
-            rel="noreferrer"
-            download={file.name}
-            onClick={(e) => e.stopPropagation()}
-            className={`block w-[320px] max-w-[calc(100vw-96px)] rounded-xl overflow-hidden border transition-all ${
-              isMine
-                ? "border-white/20 bg-white/10 hover:bg-white/15 text-white"
-                : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
-            }`}
-            title="Open attachment"
-          >
-            {isImage ? (
-              <div
-                className={`w-full h-[180px] overflow-hidden ${
-                  isMine ? "bg-white/10" : "bg-slate-100"
-                }`}
-              >
-                <img
-                  src={file.url}
-                  alt={file.name}
-                  loading="lazy"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            ) : (
-              <div
-                className={`h-[92px] flex items-center justify-center ${
-                  isMine ? "bg-white/10" : "bg-slate-50"
-                }`}
-              >
-                <Paperclip
-                  size={28}
-                  className={isMine ? "text-white/80" : "text-slate-400"}
-                />
-              </div>
-            )}
 
-            <div className="flex items-center gap-2 px-3 py-2">
-              <Paperclip size={13} className="flex-shrink-0 opacity-80" />
-
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium truncate leading-tight">
-                  {file.name}
-                </p>
-                <p
-                  className={`text-[10px] mt-0.5 ${
-                    isMine ? "text-white/65" : "text-slate-400"
-                  }`}
-                >
-                  {sizeLabel}
-                </p>
-              </div>
-            </div>
-          </a>
-        );
-      })}
-    </div>
-  )}
 
 
 
@@ -3006,9 +3905,16 @@ async function handleRevokeTaskShare(share: TaskShare) {
                 }}
                 className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border border-slate-200 bg-slate-50 hover:border-violet-300 hover:bg-white transition-colors text-left group"
               >
-                <div className="w-8 h-8 rounded-full bg-violet-600 text-white flex items-center justify-center flex-shrink-0 font-bold text-xs">
-                  {userInitial}
-                </div>
+                                <ModernAvatar
+  name={user?.displayName || user?.email || "You"}
+  email={user?.email || ""}
+  photoURL={currentUserRealPhotoURL}
+
+  size={32}
+  className="mt-1"
+/>
+
+
                 <span className="text-sm text-slate-400 group-hover:text-slate-500 transition-colors flex-1">
                   Add a comment...
                 </span>
@@ -3019,9 +3925,15 @@ async function handleRevokeTaskShare(share: TaskShare) {
             ) : (
               // ── EXPANDED STATE — full composer with toolbar ───────────────────
               <div className="flex items-start gap-2 relative">
-                <div className="w-8 h-8 rounded-full bg-violet-600 text-white flex items-center justify-center flex-shrink-0 font-bold text-xs mt-1">
-                  {userInitial}
-                </div>
+                                <ModernAvatar
+                  name={user?.displayName || "You"}
+                  email={user?.email || ""}
+                  photoURL={currentUserRealPhotoURL}
+
+                  size={32}
+                  className="mt-1"
+                />
+
                 <div className="flex-1 relative border border-violet-300 rounded-2xl bg-white focus-within:border-violet-500 focus-within:ring-2 focus-within:ring-violet-100 transition-shadow">
                   <textarea
                     ref={inputRef}
@@ -3416,9 +4328,17 @@ async function handleRevokeTaskShare(share: TaskShare) {
                             onClick={() => insertUserMention(u)}
                             className="w-full text-left px-2 py-1.5 hover:bg-violet-50 rounded-lg flex items-center gap-2 transition-colors"
                           >
-                            <span className="w-6 h-6 rounded-full bg-violet-500 text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">
-                              {u.name[0]?.toUpperCase()}
-                            </span>
+                           <ModernAvatar
+  name={u.name}
+  email={(u as any).email || ""}
+  photoURL={getFirstRealPhotoURL(
+    (u as any).photoURL,
+    (u as any).googlePhotoURL,
+    (u as any).providerPhotoURL
+  )}
+  size={24}
+/>
+
                             <span className="text-sm text-slate-700 truncate">{u.name}</span>
                             {u.email && (
                               <span className="text-xs text-slate-400 truncate ml-auto">
@@ -3770,9 +4690,14 @@ async function handleRevokeTaskShare(share: TaskShare) {
 
             {/* Current user */}
             <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors">
-              <div className="w-8 h-8 rounded-full bg-violet-600 text-white text-xs font-bold flex items-center justify-center flex-shrink-0">
-                {(user?.displayName || user?.email || "You")[0]?.toUpperCase()}
-              </div>
+                            <ModernAvatar
+                name={user?.displayName || "You"}
+                email={user?.email || ""}
+                photoURL={currentUserRealPhotoURL}
+
+                size={32}
+              />
+
 
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-800 truncate leading-tight">
@@ -3791,9 +4716,13 @@ async function handleRevokeTaskShare(share: TaskShare) {
             {/* Assignee */}
             {task.assignee && task.assignee !== user?.displayName && (
               <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors">
-                <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center flex-shrink-0">
-                  {task.assignee[0]?.toUpperCase()}
-                </div>
+                                <ModernAvatar
+                  name={task.assignee}
+                  email=""
+                  photoURL=""
+                  size={32}
+                />
+
 
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-slate-800 truncate leading-tight">
@@ -3814,35 +4743,41 @@ async function handleRevokeTaskShare(share: TaskShare) {
 {taskShares.map((share) => {
   const shareStatus = share.status || "pending";
 
-  const shareEmail =
-    share.sharedWithEmail || share.invitedEmail || share.invitedEmailLower || "";
+const shareEmail =
+  share.sharedWithEmail || share.invitedEmail || share.invitedEmailLower || "";
 
-  const shareSenderName =
-    share.sharedByName || share.invitedByName || "a workspace member";
+const shareSenderName =
+  share.sharedByName || share.invitedByName || "a workspace member";
 
-  const acceptedEmail = share.acceptedByEmail || "";
+const acceptedEmail = share.acceptedByEmail || "";
 
-  const statusClass =
-    shareStatus === "active" || shareStatus === "accepted"
-      ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-      : shareStatus === "pending"
-        ? "bg-amber-50 text-amber-600 border-amber-100"
-        : "bg-slate-50 text-slate-500 border-slate-100";
+const shareProfile = getResolvedUserProfile({
+  uid: share.acceptedByUid || share.acceptedBy || "",
+  email: acceptedEmail || shareEmail,
+  name: acceptedEmail || shareEmail || "Shared user",
+  photoURL: "",
+});
+
+const statusClass =
+  shareStatus === "active" || shareStatus === "accepted"
+    ? "bg-emerald-50 text-emerald-600 border-emerald-100"
+    : shareStatus === "pending"
+      ? "bg-amber-50 text-amber-600 border-amber-100"
+      : "bg-slate-50 text-slate-500 border-slate-100";
+
 
   return (
     <div
       key={share.id}
       className="group flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors"
     >
-      <div
-        className={`w-8 h-8 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 ${
-          shareStatus === "active" || shareStatus === "accepted"
-            ? "bg-emerald-100 text-emerald-700"
-            : "bg-amber-100 text-amber-700"
-        }`}
-      >
-        {shareEmail?.[0]?.toUpperCase() || "S"}
-      </div>
+           <ModernAvatar
+  name={shareProfile.name}
+  email={shareProfile.email}
+  photoURL={shareProfile.photoURL}
+  size={32}
+/>
+
 
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-slate-800 truncate leading-tight">

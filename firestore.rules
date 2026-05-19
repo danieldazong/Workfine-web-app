@@ -363,11 +363,29 @@ service cloud.firestore {
       match /tasks/{taskId} {
 
         function taskSharedWithSignedInEmail(taskData) {
-          return isSignedIn()
-            && request.auth.token.email is string
-            && taskData.sharedWithEmails is list
-            && request.auth.token.email in taskData.sharedWithEmails;
-        }
+  return isSignedIn()
+    && taskData != null
+    && taskData.sharedWithEmails is list
+    && (
+      signedInEmail() in taskData.sharedWithEmails ||
+      signedInEmailLower() in taskData.sharedWithEmails
+    );
+}
+
+function canReadTaskData(taskData) {
+  return isSignedIn()
+    && (
+      isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+      taskSharedWithSignedInEmail(taskData)
+    );
+}
+
+function canReadCurrentTask() {
+  return canReadTaskData(
+    get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)).data
+  );
+}
+
 
         function shareBelongsToSignedInEmail(shareData) {
           return isSignedIn()
@@ -411,18 +429,13 @@ service cloud.firestore {
          * AcceptTaskInvitePage uses getDoc(workspaces/{workspaceId}/tasks/{taskId})
          * after loading the share invite.
          */
-        allow get: if isSignedIn()
-          && (
-            isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
-            taskSharedWithSignedInEmail(resource.data) ||
-            true
-          );
+        allow get: if canReadTaskData(resource.data);
 
         /**
          * Listing workspace tasks remains restricted to active workspace members.
          */
-        allow list: if isSignedIn()
-          && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+        allow list: if canReadCurrentTask();
+
 
         allow create: if isSignedIn()
           && isActiveWorkspaceMember(workspaceId, request.auth.uid)
@@ -478,19 +491,48 @@ service cloud.firestore {
               shareOwnerIsSignedInUser(resource.data)
             );
         }
+// Canonical shared task comments.
+// These are the real-time comments used by TaskDetailPanel:
+// workspaces/{workspaceId}/tasks/{taskId}/comments/{commentId}
+match /comments/{commentId} {
+  allow read: if canReadCurrentTask();
+
+  allow create: if canReadCurrentTask()
+    && request.resource.data.authorId == request.auth.uid
+    && request.resource.data.workspaceId == workspaceId
+    && request.resource.data.taskId == taskId;
+
+  allow update: if canReadCurrentTask()
+    && (
+      onlyChanged(["reactions"]) ||
+      (
+        resource.data.authorId == request.auth.uid
+        && onlyChanged([
+          "text",
+          "editedAt",
+          "editHistory",
+          "mentions",
+          "mentionedUids",
+          "attachments",
+          "reactions"
+        ])
+      )
+    );
+
+  allow delete: if canReadCurrentTask()
+    && (
+      resource.data.authorId == request.auth.uid ||
+      isActiveWorkspaceMember(workspaceId, request.auth.uid)
+    );
+}
 
         match /likes/{likeId} {
-          allow read: if isSignedIn()
-            && (
-              isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
-              taskSharedWithSignedInEmail(
-                get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)).data
-              )
-            );
+  allow read: if canReadCurrentTask();
 
-          allow create, update, delete: if isSignedIn()
-            && request.auth.uid == likeId;
-        }
+  allow create, update, delete: if canReadCurrentTask()
+    && request.auth.uid == likeId;
+}
+
 
         match /{document=**} {
           allow read, write: if isSignedIn()

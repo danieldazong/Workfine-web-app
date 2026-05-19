@@ -347,9 +347,14 @@ export default function AcceptTaskInvitePage() {
 
       setState("accepted");
 
-      setTimeout(() => {
-        navigate("/my-tasks", { replace: true });
+            setTimeout(() => {
+        navigate(
+          `/my-tasks?view=shared&highlight=${encodeURIComponent(taskId)}`,
+          { replace: true }
+        );
       }, 1200);
+
+
     } catch (err: any) {
       console.error("Failed to accept task invite:", err);
       setState("error");
@@ -523,16 +528,23 @@ export default function AcceptTaskInvitePage() {
             <h2 className="text-xl font-bold text-slate-800 mb-1">
               Task invite accepted
             </h2>
-            <p className="text-sm text-slate-400 mb-6">
-              This task has been added to your My Tasks list.
+                        <p className="text-sm text-slate-400 mb-6">
+              This task has been added to your Shared with me tasks.
             </p>
 
-            <button
-              onClick={() => navigate("/my-tasks", { replace: true })}
+
+                        <button
+              onClick={() =>
+                navigate(
+                  `/my-tasks?view=shared&highlight=${encodeURIComponent(taskId)}`,
+                  { replace: true }
+                )
+              }
               className="w-full py-3 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-colors"
             >
-              Go to My Tasks
+              Go to Shared Task
             </button>
+
           </div>
         )}
 
