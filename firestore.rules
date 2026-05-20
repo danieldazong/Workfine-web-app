@@ -363,29 +363,28 @@ service cloud.firestore {
       match /tasks/{taskId} {
 
         function taskSharedWithSignedInEmail(taskData) {
-  return isSignedIn()
-    && taskData != null
-    && taskData.sharedWithEmails is list
-    && (
-      signedInEmail() in taskData.sharedWithEmails ||
-      signedInEmailLower() in taskData.sharedWithEmails
-    );
-}
+          return isSignedIn()
+            && taskData != null
+            && taskData.sharedWithEmails is list
+            && (
+              signedInEmail() in taskData.sharedWithEmails ||
+              signedInEmailLower() in taskData.sharedWithEmails
+            );
+        }
 
-function canReadTaskData(taskData) {
-  return isSignedIn()
-    && (
-      isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
-      taskSharedWithSignedInEmail(taskData)
-    );
-}
+        function canReadTaskData(taskData) {
+          return isSignedIn()
+            && (
+              isActiveWorkspaceMember(workspaceId, request.auth.uid) ||
+              taskSharedWithSignedInEmail(taskData)
+            );
+        }
 
-function canReadCurrentTask() {
-  return canReadTaskData(
-    get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)).data
-  );
-}
-
+        function canReadCurrentTask() {
+          return canReadTaskData(
+            get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)).data
+          );
+        }
 
         function shareBelongsToSignedInEmail(shareData) {
           return isSignedIn()
@@ -424,18 +423,10 @@ function canReadCurrentTask() {
             );
         }
 
-        /**
-         * Direct task preview read:
-         * AcceptTaskInvitePage uses getDoc(workspaces/{workspaceId}/tasks/{taskId})
-         * after loading the share invite.
-         */
         allow get: if canReadTaskData(resource.data);
 
-        /**
-         * Listing workspace tasks remains restricted to active workspace members.
-         */
-        allow list: if canReadCurrentTask();
-
+        allow list: if isSignedIn()
+          && isActiveWorkspaceMember(workspaceId, request.auth.uid);
 
         allow create: if isSignedIn()
           && isActiveWorkspaceMember(workspaceId, request.auth.uid)
@@ -491,42 +482,80 @@ function canReadCurrentTask() {
               shareOwnerIsSignedInUser(resource.data)
             );
         }
-// Canonical shared task comments.
-// These are the real-time comments used by TaskDetailPanel:
-// workspaces/{workspaceId}/tasks/{taskId}/comments/{commentId}
-match /comments/{commentId} {
-  allow read: if canReadCurrentTask();
 
-  allow create: if canReadCurrentTask()
-    && request.resource.data.authorId == request.auth.uid
-    && request.resource.data.workspaceId == workspaceId
-    && request.resource.data.taskId == taskId;
+        // Canonical shared task comments.
+        // workspaces/{workspaceId}/tasks/{taskId}/comments/{commentId}
+        match /comments/{commentId} {
+          allow read: if canReadCurrentTask();
 
-  allow update: if canReadCurrentTask()
-    && (
-      onlyChanged(["reactions"]) ||
-      (
-        resource.data.authorId == request.auth.uid
-        && onlyChanged([
-          "text",
-          "editedAt",
-          "editHistory",
-          "mentions",
-          "mentionedUids",
-          "attachments",
-          "reactions"
-        ])
-      )
-    );
+          allow create: if canReadCurrentTask()
+            && request.resource.data.authorId == request.auth.uid
+            && request.resource.data.workspaceId == workspaceId
+            && request.resource.data.taskId == taskId
+            && request.resource.data.pinned == false
+            && request.resource.data.keys().hasAll([
+              "text",
+              "authorId",
+              "authorName",
+              "workspaceId",
+              "taskId",
+              "createdAt",
+              "pinned"
+            ])
+            && (
+              !("attachments" in request.resource.data) ||
+              request.resource.data.attachments is list
+            );
 
-  allow delete: if canReadCurrentTask()
-    && (
-      resource.data.authorId == request.auth.uid ||
-      isActiveWorkspaceMember(workspaceId, request.auth.uid)
-    );
-}
+          allow update: if canReadCurrentTask()
+            && (
+              onlyChanged(["reactions"]) ||
 
-                match /likes/{likeId} {
+              (
+                resource.data.authorId == request.auth.uid
+                && onlyChanged([
+                  "text",
+                  "editedAt",
+                  "editedBy",
+                  "editHistory",
+                  "mentions",
+                  "mentionedUids"
+                ])
+                && request.resource.data.editedBy == request.auth.uid
+                && (
+                  resource.data.createdAt == null ||
+                  request.time < resource.data.createdAt + duration.value(15, "m")
+                )
+              ) ||
+
+              (
+                onlyChanged([
+                  "pinned",
+                  "pinnedAt",
+                  "pinnedBy"
+                ])
+                && (
+                  (
+                    request.resource.data.pinned == true
+                    && request.resource.data.pinnedBy == request.auth.uid
+                  ) ||
+                  (
+                    request.resource.data.pinned == false
+                    && request.resource.data.pinnedBy == ""
+                  )
+                )
+              )
+            );
+
+          allow delete: if canReadCurrentTask()
+            && (
+              resource.data.authorId == request.auth.uid ||
+              isActiveWorkspaceMember(workspaceId, request.auth.uid)
+            );
+        }
+
+        // Task likes
+        match /likes/{likeId} {
           allow read: if canReadCurrentTask();
 
           allow create: if canReadCurrentTask()
@@ -551,8 +580,6 @@ match /comments/{commentId} {
             && resource.data.taskId == taskId;
         }
 
-
-
         match /{document=**} {
           allow read, write: if isSignedIn()
             && isActiveWorkspaceMember(workspaceId, request.auth.uid);
@@ -566,7 +593,7 @@ match /comments/{commentId} {
 
     // ─── Users ──────────────────────────────────────────────────────────
     match /users/{userId} {
-      allow read: if isSelfUid(userId) || canWorkspaceAdminReadUser(userId);
+      allow read: if isSignedIn();
 
       allow create: if isSelfUid(userId);
 

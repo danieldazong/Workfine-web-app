@@ -24,10 +24,62 @@ const toMs = (v: any): number => {
   return new Date(v).getTime();
 };
 
-const fmtDate = (d: string) =>
-  new Date(d + "T12:00:00").toLocaleDateString("en-US",{
-    month: "short", day: "numeric", year: "numeric",
-  });
+const toDisplayText = (value: unknown, fallback = ""): string => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+};
+
+const toDateValue = (value: unknown): Date | null => {
+  if (!value) return null;
+
+  try {
+    if (value instanceof Date) return value;
+
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "toDate" in value &&
+      typeof (value as any).toDate === "function"
+    ) {
+      return (value as any).toDate();
+    }
+
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "seconds" in value &&
+      typeof (value as any).seconds === "number"
+    ) {
+      return new Date((value as any).seconds * 1000);
+    }
+
+    if (typeof value === "string" || typeof value === "number") {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const fmtDate = (value: unknown): string => {
+  const date = toDateValue(value);
+  if (!date) return "";
+  return date.toLocaleDateString();
+};
+
+const isPastDate = (value: unknown, compareTo: Date): boolean => {
+  const date = toDateValue(value);
+  if (!date) return false;
+  return date < compareTo;
+};
+
 
 // ─── Add Task Modal ────────────────────────────────────────────────────────
 const emptyTask = () => ({
@@ -190,7 +242,7 @@ const DashboardPage = () => {
               ⚠️ {overdueTasks.length} Overdue{" "}
               {overdueTasks.length === 1 ? "Task" : "Tasks"}:{" "}
               <span className="font-normal">
-                {overdueTasks.map(t => t.title).join(", ")}
+                {overdueTasks.map(t => toDisplayText((t as any).title, "Untitled task")).join(", ")}
               </span>
             </p>
             <div className="flex items-center gap-3">
@@ -240,30 +292,35 @@ const DashboardPage = () => {
             </div>
             {projectProgress.length > 0 ? (
               <div className="space-y-3 max-h-[200px] overflow-y-auto pr-1">
-                {projectProgress.map(p => (
-                  <div key={p.id}
-                       className="cursor-pointer"
-                       onClick={() => navigate(`/projects/${p.id}`)}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full flex-shrink-0"
-                              style={{ backgroundColor: p.color ?? "#3b82f6" }} />
-                        <span className="text-xs font-medium text-gray-700 truncate max-w-[140px]">
-                          {p.name}
+                               {projectProgress.map(p => {
+                  const projectName = toDisplayText((p as any).name, "Untitled project");
+                  const projectColor = toDisplayText((p as any).color, "#3b82f6");
+
+                  return (
+                    <div key={p.id}
+                         className="cursor-pointer"
+                         onClick={() => navigate(`/projects/${p.id}`)}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: projectColor }} />
+                          <span className="text-xs font-medium text-gray-700 truncate max-w-[140px]">
+                            {projectName}
+                          </span>
+                        </div>
+                        <span className="text-xs text-gray-400">
+                          {p.done}/{p.total} · {p.pct}%
                         </span>
                       </div>
-                      <span className="text-xs text-gray-400">
-                        {p.done}/{p.total} · {p.pct}%
-                      </span>
+                      <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${p.pct}%`, backgroundColor: projectColor }}
+                        />
+                      </div>
                     </div>
-                    <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${p.pct}%`, backgroundColor: p.color ?? "#3b82f6" }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="h-[180px] flex flex-col items-center justify-center gap-2">
@@ -295,35 +352,57 @@ const DashboardPage = () => {
             </div>
             {upcomingTasks.length > 0 ? (
               <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                {upcomingTasks.map(t => (
-                  <div key={t.id}
-                       className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-gray-300 text-sm flex-shrink-0">⏱</span>
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-gray-700 truncate">
-                          {t.taskCode && <span className="text-slate-400 mr-1">{t.taskCode}</span>}
-                          {t.title}
-                        </p>
-                        <p className={`text-[10px] ${
-                          t.dueDate && new Date(t.dueDate) < now
-                            ? "text-red-500"
-                            : "text-gray-400"
-                        }`}>
-                          {t.dueDate ? fmtDate(t.dueDate) : "No due date"}
-                        </p>
-                      </div>
-                    </div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium
-                                      flex-shrink-0 ${
-                      t.priority === "High"   ? "bg-red-100 text-red-600"
-                      : t.priority === "Medium" ? "bg-amber-100 text-amber-600"
-                      :                           "bg-gray-100 text-gray-500"
-                    }`}>
-                      {t.priority ?? "Low"}
-                    </span>
-                  </div>
-                ))}
+                {upcomingTasks.map(t => {
+  const taskTitle = toDisplayText((t as any).title, "Untitled task");
+  const taskCode = toDisplayText((t as any).taskCode);
+  const taskPriority = toDisplayText((t as any).priority, "Low");
+  const taskDueDate = (t as any).dueDate;
+
+  return (
+    <div
+      key={(t as any).id}
+      className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-gray-300 text-sm flex-shrink-0">⏱</span>
+
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-gray-700 truncate">
+            {taskCode && (
+              <span className="text-slate-400 mr-1">
+                {taskCode}
+              </span>
+            )}
+            {taskTitle}
+          </p>
+
+          <p
+            className={`text-[10px] ${
+              taskDueDate && isPastDate(taskDueDate, now)
+                ? "text-red-500"
+                : "text-gray-400"
+            }`}
+          >
+            {taskDueDate ? fmtDate(taskDueDate) : "No due date"}
+          </p>
+        </div>
+      </div>
+
+      <span
+        className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
+          taskPriority === "High"
+            ? "bg-red-100 text-red-600"
+            : taskPriority === "Medium"
+            ? "bg-amber-100 text-amber-600"
+            : "bg-gray-100 text-gray-500"
+        }`}
+      >
+        {taskPriority}
+      </span>
+    </div>
+  );
+})}
+
               </div>
             ) : (
               <div className="h-[180px] flex items-center justify-center">
@@ -441,11 +520,12 @@ const DashboardPage = () => {
                       {t.status === "Done" ? "✓" : "+"}
                     </div>
                     <p className="text-xs text-gray-600 truncate flex-1">
-                      {t.status === "Done" ? "Completed" : "Created"}{" "}
-                      <span className="font-medium text-gray-800">
-                        "{t.title}"
-                      </span>
-                    </p>
+  {toDisplayText((t as any).status) === "Done" ? "Completed" : "Created"}{" "}
+  <span className="font-medium text-gray-800">
+    "{toDisplayText((t as any).title, "Untitled task")}"
+  </span>
+</p>
+
                   </div>
                 ))}
               </div>
@@ -516,27 +596,36 @@ const DashboardPage = () => {
                   >
                     <div className="flex items-center gap-2 mb-3">
                       <div
-                        className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
-                        style={{ backgroundColor: p.color ?? "#3b82f6" }}
-                      >
-                        {p.name[0].toUpperCase()}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-blue-600 transition-colors">
-                          {p.name}
-                        </p>
-                        {p.code && <p className="text-xs text-slate-400 truncate">{p.code}</p>}
-                        <p className="text-[10px] text-gray-400 capitalize mt-0.5">
-                          {p.status ?? "active"}
-                        </p>
-                      </div>
+  className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+  style={{ backgroundColor: toDisplayText((p as any).color, "#3b82f6") }}
+>
+  {toDisplayText((p as any).name, "Untitled project").charAt(0).toUpperCase()}
+</div>
+
+<div className="min-w-0 flex-1">
+  <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-blue-600 transition-colors">
+    {toDisplayText((p as any).name, "Untitled project")}
+  </p>
+
+  {(p as any).code && (
+    <p className="text-xs text-slate-400 truncate">
+      {toDisplayText((p as any).code)}
+    </p>
+  )}
+
+  <p className="text-[10px] text-gray-400 capitalize mt-0.5">
+    {toDisplayText((p as any).status, "active")}
+  </p>
+</div>
+
                     </div>
 
-                    {p.description && (
-                      <p className="text-xs text-gray-400 mb-3 truncate">
-                        {p.description}
-                      </p>
-                    )}
+                    {(p as any).description && (
+  <p className="text-xs text-gray-400 mb-3 truncate">
+    {toDisplayText((p as any).description)}
+  </p>
+)}
+
 
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-[10px] text-gray-400">Progress</span>
@@ -547,7 +636,7 @@ const DashboardPage = () => {
                     <div className="w-full h-1.5 bg-gray-100 rounded-full mb-3">
                       <div
                         className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${pct}%`, backgroundColor: p.color ?? "#3b82f6" }}
+                        style={{ width: `${pct}%`, backgroundColor: toDisplayText((p as any).color, "#3b82f6") }}
                       />
                     </div>
 
@@ -562,23 +651,28 @@ const DashboardPage = () => {
                           </span>
                         )}
                       </div>
-                      {p.priority && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full
-                                          font-medium ${
-                          p.priority === "High"   ? "bg-red-100 text-red-500"
-                          : p.priority === "Medium" ? "bg-amber-100 text-amber-600"
-                          :                           "bg-gray-100 text-gray-500"
-                        }`}>
-                          {p.priority}
-                        </span>
-                      )}
+                      {(p as any).priority && (
+  <span
+    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+      toDisplayText((p as any).priority) === "High"
+        ? "bg-red-100 text-red-500"
+        : toDisplayText((p as any).priority) === "Medium"
+        ? "bg-amber-100 text-amber-600"
+        : "bg-gray-100 text-gray-500"
+    }`}
+  >
+    {toDisplayText((p as any).priority)}
+  </span>
+)}
+
                     </div>
 
-                    {p.dueDate && (
-                      <p className="text-[10px] text-gray-400 mt-2">
-                        📅 Due {fmtDate(p.dueDate)}
-                      </p>
-                    )}
+                    {(p as any).dueDate && (
+  <p className="text-[10px] text-gray-400 mt-2">
+    📅 Due {fmtDate((p as any).dueDate)}
+  </p>
+)}
+
                   </div>
                 );
               })}
@@ -658,11 +752,12 @@ const DashboardPage = () => {
                   <div key={n.id}
                        className="py-1.5 border-b border-gray-50 last:border-0">
                     <p className="text-xs font-medium text-gray-700 truncate">
-                      {n.title ?? "Untitled"}
-                    </p>
-                    <p className="text-[10px] text-gray-400 truncate mt-0.5">
-                      {n.content ?? n.body ?? ""}
-                    </p>
+  {String(n.title ?? "Untitled")}
+</p>
+<p className="text-[10px] text-gray-400 truncate mt-0.5">
+  {String(n.content ?? n.body ?? "")}
+</p>
+
                   </div>
                 ))}
               </div>
@@ -734,8 +829,11 @@ const DashboardPage = () => {
                 >
                   <option value="">No project</option>
                   {projects.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
+  <option key={(p as any).id} value={(p as any).id}>
+    {toDisplayText((p as any).name, "Untitled project")}
+  </option>
+))}
+
                 </select>
               </div>
             </div>
