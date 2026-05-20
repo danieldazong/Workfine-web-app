@@ -47,8 +47,12 @@ import {
   AtSign,
   Star,
   Paperclip,
+  FileText,
+  FileAudio,
+  FileImage,
   Sparkles,
   Bold,
+
   Italic,
   Underline,
   Strikethrough,
@@ -586,6 +590,80 @@ function formatAttachmentSize(size?: number): string {
   return `${(size / 1024).toFixed(1)} KB`;
 }
 
+const ACCEPTED_COMMENT_ATTACHMENT_TYPES = [
+  "image/*",
+  "audio/*",
+  "text/*",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/rtf",
+  "application/json",
+  ".pdf",
+  ".txt",
+  ".md",
+  ".csv",
+  ".json",
+  ".doc",
+  ".docx",
+  ".rtf",
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".aac",
+  ".ogg",
+  ".oga",
+  ".webm",
+  ".flac",
+].join(",");
+
+const ALLOWED_COMMENT_ATTACHMENT_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".svg",
+  ".pdf",
+  ".txt",
+  ".md",
+  ".csv",
+  ".json",
+  ".doc",
+  ".docx",
+  ".rtf",
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".aac",
+  ".ogg",
+  ".oga",
+  ".webm",
+  ".flac",
+]);
+
+const ALLOWED_COMMENT_ATTACHMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/rtf",
+  "application/json",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "text/rtf",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/mp4",
+  "audio/aac",
+  "audio/ogg",
+  "audio/webm",
+  "audio/flac",
+]);
+
 function getAttachmentExtension(name?: string): string {
   const clean = String(name || "").trim();
   const ext = clean.includes(".") ? clean.split(".").pop() : "";
@@ -593,9 +671,82 @@ function getAttachmentExtension(name?: string): string {
   return ext ? ext.toUpperCase() : "FILE";
 }
 
-function isImageAttachment(file: UploadedAttachment): boolean {
-  return String(file.type || "").startsWith("image/");
+function getAttachmentExtensionLower(name?: string): string {
+  const clean = String(name || "").trim();
+  const ext = clean.includes(".") ? clean.split(".").pop() : "";
+
+  return ext ? `.${ext.toLowerCase()}` : "";
 }
+
+function getAttachmentMimeType(file: { type?: string }): string {
+  return String(file.type || "").trim().toLowerCase();
+}
+function removeUndefinedFields<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => removeUndefinedFields(item)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const cleaned: Record<string, any> = {};
+
+    Object.entries(value as Record<string, any>).forEach(([key, item]) => {
+      if (item !== undefined) {
+        cleaned[key] = removeUndefinedFields(item);
+      }
+    });
+
+    return cleaned as T;
+  }
+
+  return value;
+}
+
+function isAllowedCommentAttachment(file: File): boolean {
+  const type = getAttachmentMimeType(file);
+  const ext = getAttachmentExtensionLower(file.name);
+
+  return (
+    type.startsWith("image/") ||
+    type.startsWith("audio/") ||
+    type.startsWith("text/") ||
+    ALLOWED_COMMENT_ATTACHMENT_MIME_TYPES.has(type) ||
+    ALLOWED_COMMENT_ATTACHMENT_EXTENSIONS.has(ext)
+  );
+}
+
+function isImageAttachment(file: UploadedAttachment): boolean {
+  return getAttachmentMimeType(file).startsWith("image/");
+}
+
+function isAudioAttachment(file: UploadedAttachment): boolean {
+  return getAttachmentMimeType(file).startsWith("audio/");
+}
+
+function isPdfAttachment(file: UploadedAttachment): boolean {
+  const type = getAttachmentMimeType(file);
+  const ext = getAttachmentExtensionLower(file.name);
+
+  return type === "application/pdf" || ext === ".pdf";
+}
+
+function isTextAttachment(file: UploadedAttachment): boolean {
+  const type = getAttachmentMimeType(file);
+  const ext = getAttachmentExtensionLower(file.name);
+
+  return (
+    type.startsWith("text/") ||
+    type === "application/json" ||
+    [".txt", ".md", ".csv", ".json"].includes(ext)
+  );
+}
+
+function getAttachmentIcon(file: UploadedAttachment) {
+  if (isImageAttachment(file)) return FileImage;
+  if (isAudioAttachment(file)) return FileAudio;
+
+  return FileText;
+}
+
 
 function OptimizedAttachmentCard({
   file,
@@ -608,8 +759,13 @@ function OptimizedAttachmentCard({
   const [failed, setFailed] = useState(false);
 
   const isImage = isImageAttachment(file);
+  const isAudio = isAudioAttachment(file);
+  const isPdf = isPdfAttachment(file);
+  const isText = isTextAttachment(file);
+
   const sizeLabel = formatAttachmentSize(file.size);
   const extension = getAttachmentExtension(file.name);
+  const AttachmentIcon = getAttachmentIcon(file);
 
   /**
    * Use the lightweight preview in the chat bubble.
@@ -618,135 +774,162 @@ function OptimizedAttachmentCard({
   const previewSrc = file.previewUrl || file.url;
   const originalSrc = file.url;
 
-  const imageWidth = file.previewWidth || file.width || 640;
-  const imageHeight = file.previewHeight || file.height || 420;
-
-  const aspectRatio =
-    imageWidth > 0 && imageHeight > 0
-      ? `${imageWidth} / ${imageHeight}`
-      : "16 / 10";
-
   return (
-    <a
-      href={originalSrc}
-      target="_blank"
-      rel="noreferrer"
-      download={file.name}
-      onClick={(e) => e.stopPropagation()}
-      className={`block w-[340px] max-w-[calc(100vw-96px)] rounded-2xl overflow-hidden border shadow-sm transition-all ${
+    <div
+      className={`group/attachment w-fit overflow-hidden rounded-[22px] border shadow-sm transition-all duration-200 ${
         isMine
-          ? "border-white/20 bg-white/10 hover:bg-white/15 text-white"
-          : "border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+          ? "border-white/35 bg-white/95 text-slate-800"
+          : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:shadow-md"
       }`}
-      title="Open original file"
+      style={{
+        maxWidth: "min(340px, calc(100vw - 112px))",
+      }}
+      onClick={(e) => e.stopPropagation()}
     >
       {isImage ? (
-        <div
-          className={`relative w-full overflow-hidden ${
-            isMine ? "bg-white/10" : "bg-slate-100"
-          }`}
-          style={{
-            aspectRatio,
-            maxHeight: 280,
-          }}
+        <a
+          href={originalSrc}
+          target="_blank"
+          rel="noreferrer"
+          download={file.name}
+          title="Open original image"
+          className="block"
         >
-          {!loaded && !failed && (
-            <div
-              className="absolute inset-0 animate-pulse"
-              style={{
-                backgroundImage: file.blurDataUrl
-                  ? `url(${file.blurDataUrl})`
-                  : undefined,
-                backgroundSize: "cover",
-                backgroundPosition: "center",
-                backgroundColor: isMine
-                  ? "rgba(255,255,255,0.12)"
-                  : "rgb(241 245 249)",
-                filter: file.blurDataUrl ? "blur(10px)" : undefined,
-                transform: file.blurDataUrl ? "scale(1.08)" : undefined,
-              }}
-            />
-          )}
+          <div className="p-2">
+            <div className="relative flex w-fit max-w-full items-center justify-center overflow-hidden rounded-[18px] bg-white ring-1 ring-slate-200/80">
+              {!loaded && !failed && (
+                <div
+                  className="absolute inset-0 animate-pulse"
+                  style={{
+                    backgroundImage: file.blurDataUrl
+                      ? `url(${file.blurDataUrl})`
+                      : undefined,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    backgroundColor: "rgb(241 245 249)",
+                    filter: file.blurDataUrl ? "blur(12px)" : undefined,
+                    transform: file.blurDataUrl ? "scale(1.08)" : undefined,
+                  }}
+                />
+              )}
 
-          {!failed ? (
-            <img
-              src={previewSrc}
-              alt={file.name}
-              loading="lazy"
-              decoding="async"
-              fetchPriority="low"
-              onLoad={() => setLoaded(true)}
-              onError={() => {
-                setLoaded(true);
-                setFailed(true);
-              }}
-              className={`relative z-10 w-full h-full object-contain transition-opacity duration-300 ${
-                loaded ? "opacity-100" : "opacity-0"
-              }`}
-            />
-          ) : (
-            <div className="h-[150px] flex items-center justify-center">
-              <Paperclip
-                size={28}
-                className={isMine ? "text-white/80" : "text-slate-400"}
-              />
+              {!failed ? (
+                <img
+                  src={previewSrc}
+                  alt={file.name}
+                  loading="lazy"
+                  decoding="async"
+                  fetchPriority="low"
+                  onLoad={() => setLoaded(true)}
+                  onError={() => {
+                    setLoaded(true);
+                    setFailed(true);
+                  }}
+                  className={`relative z-10 block h-auto w-auto rounded-[16px] object-contain transition-opacity duration-300 ${
+                    loaded ? "opacity-100" : "opacity-0"
+                  }`}
+                  style={{
+                    maxWidth: "min(320px, calc(100vw - 132px))",
+                    maxHeight: 320,
+                  }}
+                />
+              ) : (
+                <div className="flex h-[180px] w-[260px] items-center justify-center bg-slate-50">
+                  <FileImage size={28} className="text-slate-400" />
+                </div>
+              )}
+
+              {file.previewUrl && (
+                <span className="absolute right-2 top-2 z-20 rounded-full border border-white/70 bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-500 shadow-sm backdrop-blur">
+                  Preview
+                </span>
+              )}
             </div>
-          )}
+          </div>
+        </a>
+      ) : isAudio ? (
+        <div className="p-2">
+          <div className="w-[300px] max-w-[calc(100vw-132px)] rounded-[18px] bg-slate-50 p-3 ring-1 ring-slate-200/80">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-violet-600">
+                <FileAudio size={22} />
+              </div>
 
-          {file.previewUrl && (
-            <span
-              className={`absolute right-2 top-2 z-20 rounded-full px-2 py-0.5 text-[10px] font-semibold backdrop-blur ${
-                isMine
-                  ? "bg-black/25 text-white"
-                  : "bg-white/85 text-slate-500 border border-white"
-              }`}
-            >
-              Fast preview
-            </span>
-          )}
-        </div>
-      ) : (
-        <div
-          className={`h-[104px] flex items-center justify-center ${
-            isMine ? "bg-white/10" : "bg-slate-50"
-          }`}
-        >
-          <div
-            className={`w-14 h-14 rounded-2xl flex flex-col items-center justify-center border ${
-              isMine
-                ? "bg-white/10 border-white/15 text-white"
-                : "bg-white border-slate-200 text-slate-500"
-            }`}
-          >
-            <Paperclip size={20} />
-            <span className="text-[9px] font-bold mt-1 max-w-[42px] truncate">
-              {extension}
-            </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold text-slate-700">
+                  {file.name}
+                </p>
+
+                <p className="mt-0.5 text-[10px] text-slate-400">
+                  {extension} · {sizeLabel}
+                </p>
+              </div>
+            </div>
+
+            <audio
+              controls
+              preload="metadata"
+              src={originalSrc}
+              className="w-full"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
+      ) : (
+        <a
+          href={originalSrc}
+          target="_blank"
+          rel="noreferrer"
+          download={file.name}
+          title="Open or download file"
+          className="block"
+        >
+          <div className="p-2">
+            <div className="flex h-[112px] w-[260px] max-w-[calc(100vw-132px)] items-center justify-center rounded-[18px] bg-slate-50 ring-1 ring-slate-200/80">
+              <div
+                className={`flex h-14 w-14 flex-col items-center justify-center rounded-2xl border shadow-sm ${
+                  isPdf
+                    ? "border-red-100 bg-red-50 text-red-500"
+                    : isText
+                      ? "border-blue-100 bg-blue-50 text-blue-500"
+                      : "border-slate-200 bg-white text-slate-500"
+                }`}
+              >
+                <AttachmentIcon size={21} />
+
+                <span className="mt-1 max-w-[42px] truncate text-[9px] font-bold">
+                  {extension}
+                </span>
+              </div>
+            </div>
+          </div>
+        </a>
       )}
 
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        <Paperclip size={13} className="flex-shrink-0 opacity-80" />
+      <div className="flex items-center gap-2 border-t border-slate-100 px-3 py-2">
+        <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+          <AttachmentIcon size={12} />
+        </div>
 
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium truncate leading-tight">
+          <p className="truncate text-[11px] font-semibold leading-tight text-slate-700">
             {file.name}
           </p>
 
-          <p
-            className={`text-[10px] mt-0.5 ${
-              isMine ? "text-white/65" : "text-slate-400"
-            }`}
-          >
+          <p className="mt-0.5 text-[10px] text-slate-400">
             {sizeLabel}
-            {isImage && file.previewUrl ? " · opens original quality" : ""}
+            {isImage ? " · opens full quality" : ""}
+            {isAudio ? " · audio file" : ""}
+            {isPdf ? " · PDF document" : ""}
+            {isText ? " · text document" : ""}
           </p>
         </div>
       </div>
-    </a>
+    </div>
   );
 }
+
+
 
   function timeAgo(timestamp: any): string {
     const ms = toMs(timestamp);
@@ -1556,6 +1739,7 @@ const migrateMyLegacyCommentsToCanonical = useCallback(async () => {
 
       return () => unsub();
     }, [user?.uid, taskWorkspaceId, sourceTaskId]);
+
     // One-time legacy migration:
     // Older comments were stored under users/{uid}/tasks/{taskId}/comments.
     // New shared comments must live under workspaces/{workspaceId}/tasks/{taskId}/comments.
@@ -1618,10 +1802,11 @@ const migrateMyLegacyCommentsToCanonical = useCallback(async () => {
     legacyDoc.data().authorEmail ||
     user.email ||
     "",
-  authorPhotoURL:
-    legacyDoc.data().authorPhotoURL ||
-    user.photoURL ||
-    "",
+   authorPhotoURL: getFirstRealPhotoURL(
+    legacyDoc.data().authorPhotoURL,
+    currentUserRealPhotoURL
+  ),
+
   workspaceId: taskWorkspaceId,
   taskId: sourceTaskId,
   migratedFromLegacyUserTask: user.uid,
@@ -1664,57 +1849,61 @@ const migrateMyLegacyCommentsToCanonical = useCallback(async () => {
       setTimeout(() => onClose(), 280);
     }, [onClose]);
 
-    const handleSend = useCallback(async () => {
-    if (!user?.uid || !commentText.trim() || sending) return;
+       const handleSend = useCallback(async () => {
+      if (!user?.uid || !commentText.trim() || sending) return;
 
-    setSending(true);
+      setSending(true);
 
-    try {
-      const text = commentText.trim();
-      const authorName = user.displayName ?? user.email ?? "User";
+      try {
+        const text = commentText.trim();
+        const authorName = user.displayName ?? user.email ?? "User";
 
-            const commentsRef = getCanonicalCommentsCollection();
+        const commentsRef = getCanonicalCommentsCollection();
 
-      if (!commentsRef) {
-        setToast("Task comments are not available yet");
+        if (!commentsRef) {
+          setToast("Task comments are not available yet");
+          setTimeout(() => setToast(null), 2500);
+          return;
+        }
+
+        await addDoc(commentsRef, {
+          text,
+          authorId: user.uid,
+          authorName,
+          authorEmail: user.email ?? "",
+          authorPhotoURL: currentUserRealPhotoURL,
+          workspaceId: taskWorkspaceId,
+          taskId: sourceTaskId,
+          createdAt: serverTimestamp(),
+          mentions: extractMentions(text),
+          attachments: [],
+        });
+
+        setCommentText("");
+        setShowSuggestions(false);
+        setMentionFilter("");
+        setMentionStart(-1);
+        setShowUserSuggestions(false);
+        setUserMentionFilter("");
+        setUserMentionStart(-1);
+        setComposerExpanded(false);
+        setShowComposerEmojiPicker(false);
+        setShowFormattingToolbar(false);
+      } catch (e) {
+        console.error("[TaskDetailPanel] add comment:", e);
+        setToast("Failed to send comment");
         setTimeout(() => setToast(null), 2500);
-        return;
+      } finally {
+        setSending(false);
       }
-
-      await addDoc(commentsRef, {
-        text,
-        authorId: user.uid,
-        authorName,
-        authorEmail: user.email ?? "",
-        authorPhotoURL: currentUserRealPhotoURL,
-        workspaceId: taskWorkspaceId,
-        taskId: sourceTaskId,
-        createdAt: serverTimestamp(),
-        mentions: extractMentions(text),
-        attachments: [],
-      });
-
-
-      setCommentText("");
-      setShowSuggestions(false);
-      setMentionFilter("");
-      setMentionStart(-1);
-      setShowUserSuggestions(false);
-      setUserMentionFilter("");
-      setUserMentionStart(-1);
-      setComposerExpanded(false);
-setShowComposerEmojiPicker(false);
-setShowFormattingToolbar(false);
-
-    } catch (e) {
-      console.error("[TaskDetailPanel] add comment:", e);
-      setToast("Failed to send comment");
-      setTimeout(() => setToast(null), 2500);
-    } finally {
-      setSending(false);
-    }
-   }, [user, commentText, sending, taskWorkspaceId, sourceTaskId, currentUserRealPhotoURL]);
-
+    }, [
+      user,
+      commentText,
+      sending,
+      taskWorkspaceId,
+      sourceTaskId,
+      currentUserRealPhotoURL,
+    ]);
 
   const handleAttachFile = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1737,11 +1926,19 @@ setShowFormattingToolbar(false);
         return;
       }
 
-      const uploadProjectId = taskView.projectId || task.projectId || "shared";
-const uploadTaskId = sourceTaskId || task.id;
+      if (!isAllowedCommentAttachment(file)) {
+        setToast(
+          "Unsupported file type. Use image, PDF, text document, Word document, or audio."
+        );
+        setTimeout(() => setToast(null), 3200);
+        return;
+      }
 
+      const uploadProjectId = taskView.projectId || task.projectId || "shared";
+      const uploadTaskId = sourceTaskId || task.id;
 
       const maxSizeMb = 25;
+
       if (file.size > maxSizeMb * 1024 * 1024) {
         setToast(`File is too large. Max ${maxSizeMb}MB allowed.`);
         setTimeout(() => setToast(null), 2500);
@@ -1752,37 +1949,37 @@ const uploadTaskId = sourceTaskId || task.id;
 
       try {
         const attachment = await storageService.uploadFile(
-  user.uid,
-  uploadProjectId,
-  uploadTaskId,
-  file
-);
+          user.uid,
+          uploadProjectId,
+          uploadTaskId,
+          file
+        );
 
+        const cleanAttachment =
+          removeUndefinedFields<UploadedAttachment>(attachment);
 
         const authorName = user.displayName ?? user.email ?? "User";
 
-  const commentsRef = getCanonicalCommentsCollection();
+        const commentsRef = getCanonicalCommentsCollection();
 
-  if (!commentsRef) {
-    setToast("Task comments are not available yet");
-    setTimeout(() => setToast(null), 2500);
-    return;
-  }
+        if (!commentsRef) {
+          setToast("Task comments are not available yet");
+          setTimeout(() => setToast(null), 2500);
+          return;
+        }
 
-  await addDoc(commentsRef, {
-    text: "",
-    authorId: user.uid,
-    authorName,
-    authorEmail: user.email ?? "",
-    authorPhotoURL: currentUserRealPhotoURL,
-    workspaceId: taskWorkspaceId,
-    taskId: sourceTaskId,
-    createdAt: serverTimestamp(),
-    mentions: [],
-    attachments: [attachment],
-  });
-
-
+        await addDoc(commentsRef, {
+          text: "",
+          authorId: user.uid,
+          authorName,
+          authorEmail: user.email ?? "",
+          authorPhotoURL: currentUserRealPhotoURL,
+          workspaceId: taskWorkspaceId,
+          taskId: sourceTaskId,
+          createdAt: serverTimestamp(),
+          mentions: [],
+          attachments: [cleanAttachment],
+        });
 
         setCommentText("");
         setShowSuggestions(false);
@@ -1792,11 +1989,34 @@ const uploadTaskId = sourceTaskId || task.id;
         setUserMentionFilter("");
         setUserMentionStart(-1);
         setComposerExpanded(false);
-setShowComposerEmojiPicker(false);
-setShowFormattingToolbar(false);
+        setShowComposerEmojiPicker(false);
+        setShowFormattingToolbar(false);
 
+        const fileName = file.name.toLowerCase();
+        const fileType = file.type.toLowerCase();
 
-        setToast("File uploaded");
+        if (fileType.startsWith("audio/")) {
+          setToast("Audio file uploaded");
+        } else if (fileType === "application/pdf" || fileName.endsWith(".pdf")) {
+          setToast("PDF uploaded");
+        } else if (
+          fileType.startsWith("text/") ||
+          fileName.endsWith(".txt") ||
+          fileName.endsWith(".md") ||
+          fileName.endsWith(".csv") ||
+          fileName.endsWith(".json")
+        ) {
+          setToast("Text document uploaded");
+        } else if (
+          fileName.endsWith(".doc") ||
+          fileName.endsWith(".docx") ||
+          fileName.endsWith(".rtf")
+        ) {
+          setToast("Document uploaded");
+        } else {
+          setToast("File uploaded");
+        }
+
         setTimeout(() => setToast(null), 1800);
       } catch (err) {
         console.error("[TaskDetailPanel] upload attachment:", err);
@@ -1806,17 +2026,18 @@ setShowFormattingToolbar(false);
         setUploadingAttachment(false);
       }
     },
-       [
-  user,
-  task.id,
-  task.projectId,
-  taskView.projectId,
-  taskWorkspaceId,
-  sourceTaskId,
-  currentUserRealPhotoURL,
-]
-
+    [
+      user,
+      task.id,
+      task.projectId,
+      taskView.projectId,
+      taskWorkspaceId,
+      sourceTaskId,
+      currentUserRealPhotoURL,
+    ]
   );
+
+
 
 
 
@@ -2499,23 +2720,34 @@ setShowFormattingToolbar(false);
 
        
 
-    const taskLink = useMemo(() => {
-      const baseUrl = window.location.origin;
+   const taskLink = useMemo(() => {
+  const baseUrl = window.location.origin;
 
-      const params = new URLSearchParams();
+  const params = new URLSearchParams();
 
-      params.set("taskId", taskView.id);
+  const canonicalTaskId = sourceTaskId || taskView.id || task.id;
 
-      if (taskWorkspaceId) {
-        params.set("workspaceId", taskWorkspaceId);
-      }
+  params.set("taskId", canonicalTaskId);
 
-      if (taskView.projectId) {
-        params.set("projectId", taskView.projectId);
-      }
+  if (taskWorkspaceId) {
+    params.set("workspaceId", taskWorkspaceId);
+  }
 
-      return `${baseUrl}/my-tasks?${params.toString()}`;
-    }, [taskView.id, taskWorkspaceId, taskView.projectId]);
+  if (taskView.projectId || task.projectId) {
+    params.set("projectId", taskView.projectId || task.projectId || "");
+  }
+
+  return `${baseUrl}/my-tasks?${params.toString()}`;
+}, [
+  sourceTaskId,
+  taskView.id,
+  task.id,
+  taskWorkspaceId,
+  taskView.projectId,
+  task.projectId,
+]);
+
+
 
 
       async function handleCopyTaskLink() {
@@ -2594,22 +2826,70 @@ setTaskShares(shares);
 
   return () => unsub();
 }, [user?.uid, taskWorkspaceId, sourceTaskId]);
+/**
+ * Real-time task likes listener.
+ *
+ * Canonical path:
+ * workspaces/{workspaceId}/tasks/{sourceTaskId}/likes/{userUid}
+ *
+ * This makes "Like this Task" fully real-time for:
+ * - task owner
+ * - invited users
+ * - shared task viewers
+ */
+useEffect(() => {
+  if (!user?.uid || !taskWorkspaceId || !sourceTaskId) {
+    setLikedByMe(false);
+    setTaskLikeCount(0);
+    return;
+  }
+
+  const likesRef = collection(
+    db,
+    "workspaces",
+    taskWorkspaceId,
+    "tasks",
+    sourceTaskId,
+    "likes"
+  );
+
+  const unsubscribe = onSnapshot(
+    likesRef,
+    (snapshot) => {
+      setTaskLikeCount(snapshot.size);
+
+      const currentUserLiked = snapshot.docs.some((likeDoc) => {
+        const likeData = likeDoc.data() as any;
+
+        return likeDoc.id === user.uid || likeData.uid === user.uid;
+      });
+
+      setLikedByMe(currentUserLiked);
+    },
+    (error) => {
+      console.error("[TaskDetailPanel] likes listener:", error.message);
+      setLikedByMe(false);
+      setTaskLikeCount(0);
+    }
+  );
+
+  return () => unsubscribe();
+}, [user?.uid, taskWorkspaceId, sourceTaskId]);
 
 
 
-    async function handleToggleTaskLike() {
+        async function handleToggleTaskLike() {
       if (!user?.uid) {
         setToast("You must be signed in to like a task");
         window.setTimeout(() => setToast(null), 2500);
         return;
       }
 
-            if (!taskWorkspaceId || !sourceTaskId) {
+      if (!taskWorkspaceId || !sourceTaskId) {
         setToast("Task workspace is missing");
         window.setTimeout(() => setToast(null), 2500);
         return;
       }
-
 
       if (likingTask) return;
 
@@ -2620,7 +2900,7 @@ setTaskShares(shares);
           db,
           "workspaces",
           taskWorkspaceId,
-                   "tasks",
+          "tasks",
           sourceTaskId,
           "likes",
           user.uid
@@ -2629,16 +2909,26 @@ setTaskShares(shares);
         if (likedByMe) {
           await deleteDoc(likeRef);
         } else {
+          const displayName = user.displayName || user.email || "User";
+
           await setDoc(
             likeRef,
             {
               uid: user.uid,
-              displayName: user.displayName ?? user.email ?? "User",
-              email: user.email ?? "",
+              userId: user.uid,
+
+              displayName,
+              name: displayName,
+              email: user.email || "",
+
               photoURL: currentUserRealPhotoURL,
-                            taskId: sourceTaskId,
+              authorPhotoURL: currentUserRealPhotoURL,
+
+              taskId: sourceTaskId,
               workspaceId: taskWorkspaceId,
+
               createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
             },
             { merge: true }
           );
@@ -2651,6 +2941,9 @@ setTaskShares(shares);
         setLikingTask(false);
       }
     }
+
+
+
     function resetShareModal() {
   setShowShareModal(false);
   setShareEmail("");
@@ -3071,11 +3364,10 @@ try {
                   />
                 )}
 
-                              {taskLikeCount > 0 && (
-                  <span className="text-[11px] font-semibold">
-                    {taskLikeCount}
-                  </span>
-                )}
+                              <span className="text-[11px] font-semibold min-w-[10px]">
+  {taskLikeCount > 0 ? taskLikeCount : ""}
+</span>
+
 
 
               </button>
@@ -3485,7 +3777,15 @@ try {
   const hasAttachments =
     Array.isArray(c.attachments) && c.attachments.length > 0;
 
-  const displayText = String(c.text || "").trim();
+  const rawDisplayText = String(c.text || "").trim();
+
+  const displayText =
+    hasAttachments && /^attached\s+/i.test(rawDisplayText)
+      ? ""
+      : rawDisplayText;
+
+  const attachmentOnly = hasAttachments && !displayText;
+
 
   const messageActions = (
     <div
@@ -3780,27 +4080,27 @@ try {
     >
       {isMine && messageActions}
 
-      {/* The bubble */}
+           {/* The bubble */}
       <div
-        className={`relative w-fit max-w-full px-2 py-2 text-sm leading-snug shadow-sm break-words ${
+        className={`relative w-fit max-w-full text-sm leading-snug break-words ${
+          attachmentOnly
+            ? "bg-transparent p-0 shadow-none"
+            : `${hasAttachments ? "px-1.5 py-1.5" : "px-2 py-2"} shadow-sm ${
+                isMine
+                  ? "bg-violet-600 text-white"
+                  : "bg-slate-100 text-slate-800"
+              } ${
+                isMine
+                  ? `rounded-2xl ${
+                      sameAuthorAsNext ? "rounded-br-md" : "rounded-br-sm"
+                    }`
+                  : `rounded-2xl ${
+                      sameAuthorAsNext ? "rounded-bl-md" : "rounded-bl-sm"
+                    }`
+              }`
+        }`}
+      >
 
-      isMine
-        ? "bg-violet-600 text-white"
-        : "bg-slate-100 text-slate-800"
-    } ${
-      isMine
-        ? `rounded-2xl ${
-            sameAuthorAsNext
-              ? "rounded-br-md"
-              : "rounded-br-sm"
-          }`
-        : `rounded-2xl ${
-            sameAuthorAsNext
-              ? "rounded-bl-md"
-              : "rounded-bl-sm"
-          }`
-    }`}
-  >
 
   {displayText && (
     <div className={`break-words ${hasAttachments ? "mb-2" : ""}`}>
@@ -3809,18 +4109,20 @@ try {
   )}
 
 
-  {hasAttachments && (
-  <div className="space-y-2">
-    {c.attachments!.map((file) => (
-      <React.Fragment key={file.id || file.url}>
-        <OptimizedAttachmentCard
-          file={file}
-          isMine={isMine}
-        />
-      </React.Fragment>
-    ))}
-  </div>
-)}
+      {hasAttachments && (
+    <div className="space-y-2">
+      {c.attachments!.map((file) => (
+        <React.Fragment key={file.id || file.url}>
+          <OptimizedAttachmentCard
+            file={file}
+            isMine={isMine}
+          />
+        </React.Fragment>
+      ))}
+    </div>
+  )}
+
+
 
 
 
@@ -4141,12 +4443,14 @@ try {
                     </button>
 
                     {/* 6. Attachment — upload file */}
-  <input
+    <input
     ref={fileInputRef}
     type="file"
     className="hidden"
+    accept={ACCEPTED_COMMENT_ATTACHMENT_TYPES}
     onChange={handleAttachFile}
   />
+
 
   <button
     type="button"

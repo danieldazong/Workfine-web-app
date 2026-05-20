@@ -526,12 +526,31 @@ match /comments/{commentId} {
     );
 }
 
-        match /likes/{likeId} {
-  allow read: if canReadCurrentTask();
+                match /likes/{likeId} {
+          allow read: if canReadCurrentTask();
 
-  allow create, update, delete: if canReadCurrentTask()
-    && request.auth.uid == likeId;
-}
+          allow create: if canReadCurrentTask()
+            && request.auth.uid == likeId
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.workspaceId == workspaceId
+            && request.resource.data.taskId == taskId;
+
+          allow update: if canReadCurrentTask()
+            && request.auth.uid == likeId
+            && resource.data.uid == request.auth.uid
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.workspaceId == workspaceId
+            && request.resource.data.taskId == taskId;
+
+          allow delete: if canReadCurrentTask()
+            && request.auth.uid == likeId
+            && resource.data.uid == request.auth.uid
+            && resource.data.workspaceId == workspaceId
+            && resource.data.taskId == taskId;
+        }
+
 
 
         match /{document=**} {

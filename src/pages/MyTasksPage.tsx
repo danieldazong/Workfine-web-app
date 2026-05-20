@@ -128,6 +128,14 @@ export default function MyTasksPage() {
 
   const [detailTask, setDetailTask] = useState<DetailTask | null>(null);
   const [editTask, setEditTask] = useState<DetailTask | null>(null);
+  const [autoOpenedTaskId, setAutoOpenedTaskId] = useState<string | null>(null);
+
+  const requestedTaskId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get("taskId") || params.get("highlight") || null;
+  }, [location.search]);
+
+
 
   const [editForm, setEditForm] = useState({
     title: "",
@@ -410,27 +418,28 @@ export default function MyTasksPage() {
 
     return () => unsubscribe();
   }, [user?.uid, user?.email]);
-
   /**
-   * 3. Sync active tab/highlight with URL.
+   * 3. Sync filter/highlight/deep-link state from URL.
    *
    * Supports:
-   * /my-tasks?view=shared&highlight=TASK_ID
+   * /my-tasks?view=shared
    * /my-tasks?filter=shared
+   * /my-tasks?highlight=TASK_ID
+   * /my-tasks?taskId=TASK_ID
    */
   useEffect(() => {
     const params = new URLSearchParams(location.search);
 
-    const next = filterFromQuery(params.get("filter"), params.get("view"));
+    const nextFilter = filterFromQuery(params.get("filter"), params.get("view"));
 
-    if (next) {
-      setFilter(next);
+    if (nextFilter) {
+      setFilter(nextFilter);
     }
 
-    const highlightId = params.get("highlight") || params.get("taskId");
+    const requestedId = params.get("taskId") || params.get("highlight");
 
-    if (highlightId) {
-      setHighlightedTaskId(highlightId);
+    if (requestedId) {
+      setHighlightedTaskId(requestedId);
 
       const timeout = window.setTimeout(() => {
         setHighlightedTaskId(null);
@@ -438,7 +447,75 @@ export default function MyTasksPage() {
 
       return () => window.clearTimeout(timeout);
     }
+
+    setHighlightedTaskId(null);
+    setAutoOpenedTaskId(null);
   }, [location.search]);
+  /**
+   * 3. Sync filter/highlight/deep-link state from URL.
+   *
+   * Supports:
+   * /my-tasks?view=shared
+   * /my-tasks?filter=shared
+   * /my-tasks?highlight=TASK_ID
+   * /my-tasks?taskId=TASK_ID
+   */
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+
+    const nextFilter = filterFromQuery(params.get("filter"), params.get("view"));
+
+    if (nextFilter) {
+      setFilter(nextFilter);
+    }
+
+    const requestedId = params.get("taskId") || params.get("highlight");
+
+    if (requestedId) {
+      setHighlightedTaskId(requestedId);
+
+      const timeout = window.setTimeout(() => {
+        setHighlightedTaskId(null);
+      }, 4500);
+
+      return () => window.clearTimeout(timeout);
+    }
+
+    setHighlightedTaskId(null);
+    setAutoOpenedTaskId(null);
+  }, [location.search]);
+
+
+  /**
+ * 4. Deep-link task drawer opening.
+ *
+ * When user opens:
+ * /my-tasks?taskId=abc123
+ *
+ * This automatically opens TaskDetailPanel for the matching task.
+ */
+useEffect(() => {
+  if (!requestedTaskId) return;
+
+  if (autoOpenedTaskId === requestedTaskId) return;
+
+  if (!tasks.length) return;
+
+  const foundTask = tasks.find((task: any) => {
+    return (
+      task.id === requestedTaskId ||
+      task.originalTaskId === requestedTaskId ||
+      task.sharedTaskId === requestedTaskId ||
+      task.taskCode === requestedTaskId
+    );
+  });
+
+  if (!foundTask) return;
+
+  setDetailTask(foundTask as unknown as DetailTask);
+  setAutoOpenedTaskId(requestedTaskId);
+}, [requestedTaskId, autoOpenedTaskId, tasks]);
+
 
   function openEdit(t: DetailTask) {
     setEditTask(t);
@@ -665,7 +742,13 @@ export default function MyTasksPage() {
           {filteredTasks.length > 0 ? (
             filteredTasks.map((task, idx) => {
               const shared = isSharedTask(task);
-              const highlighted = highlightedTaskId === task.id;
+              const highlighted =
+  highlightedTaskId === task.id ||
+  highlightedTaskId === task.originalTaskId ||
+  highlightedTaskId === task.sharedTaskId ||
+  highlightedTaskId === task.taskCode;
+
+
 
               return (
                 <div

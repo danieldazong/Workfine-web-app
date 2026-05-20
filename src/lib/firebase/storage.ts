@@ -26,6 +26,11 @@ export type UploadedAttachment = {
   path: string;
 
   /**
+   * File category used by the UI.
+   */
+  kind?: "image" | "audio" | "pdf" | "text" | "document" | "file";
+
+  /**
    * Fast lightweight image preview.
    * Use this only inside the UI preview.
    * The original quality is preserved in `url`.
@@ -54,9 +59,92 @@ export type UploadedAttachment = {
   uploadedBy: string;
 };
 
+type AttachmentKind = "image" | "audio" | "pdf" | "text" | "document" | "file";
+
 const safeFileName = (name: string) => {
-  return name.replace(/[^\w.\-() ]+/g, "_");
+  return String(name || "file").replace(/[^\w.\-() ]+/g, "_");
 };
+
+function getFileExtensionLower(name?: string): string {
+  const clean = String(name || "").trim().toLowerCase();
+  const ext = clean.includes(".") ? clean.split(".").pop() : "";
+
+  return ext ? `.${ext}` : "";
+}
+
+function getAttachmentKind(file: File): AttachmentKind {
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+  const ext = getFileExtensionLower(name);
+
+  if (type.startsWith("image/")) return "image";
+
+  if (type.startsWith("audio/")) return "audio";
+
+  if (type === "application/pdf" || ext === ".pdf") {
+    return "pdf";
+  }
+
+  if (
+    type.startsWith("text/") ||
+    type === "application/json" ||
+    ext === ".txt" ||
+    ext === ".md" ||
+    ext === ".csv" ||
+    ext === ".json"
+  ) {
+    return "text";
+  }
+
+  if (
+    type === "application/msword" ||
+    type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    type === "application/rtf" ||
+    ext === ".doc" ||
+    ext === ".docx" ||
+    ext === ".rtf"
+  ) {
+    return "document";
+  }
+
+  return "file";
+}
+
+function getContentType(file: File): string {
+  const type = String(file.type || "").trim();
+  const ext = getFileExtensionLower(file.name);
+
+  if (type) return type;
+
+  if (ext === ".pdf") return "application/pdf";
+  if (ext === ".txt") return "text/plain";
+  if (ext === ".md") return "text/markdown";
+  if (ext === ".csv") return "text/csv";
+  if (ext === ".json") return "application/json";
+  if (ext === ".rtf") return "application/rtf";
+  if (ext === ".doc") return "application/msword";
+  if (ext === ".docx") {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+
+  if (ext === ".mp3") return "audio/mpeg";
+  if (ext === ".wav") return "audio/wav";
+  if (ext === ".m4a") return "audio/mp4";
+  if (ext === ".aac") return "audio/aac";
+  if (ext === ".ogg" || ext === ".oga") return "audio/ogg";
+  if (ext === ".webm") return "audio/webm";
+  if (ext === ".flac") return "audio/flac";
+
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".gif") return "image/gif";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".bmp") return "image/bmp";
+  if (ext === ".svg") return "image/svg+xml";
+
+  return "application/octet-stream";
+}
+
 const ORIGINAL_CACHE_CONTROL = "public,max-age=31536000,immutable";
 const PREVIEW_CACHE_CONTROL = "public,max-age=31536000,immutable";
 
@@ -74,15 +162,17 @@ type ImagePreviewResult = {
 };
 
 function canCreateImagePreview(file: File): boolean {
-  if (!file.type.startsWith("image/")) return false;
+  const contentType = getContentType(file);
+
+  if (!contentType.startsWith("image/")) return false;
 
   /**
    * SVG can contain scripts/foreign objects.
    * GIF previews would lose animation if drawn to canvas.
    * Keep them original-only.
    */
-  if (file.type === "image/svg+xml") return false;
-  if (file.type === "image/gif") return false;
+  if (contentType === "image/svg+xml") return false;
+  if (contentType === "image/gif") return false;
 
   return true;
 }
@@ -230,109 +320,130 @@ async function createImagePreview(file: File): Promise<ImagePreviewResult | null
   }
 }
 
-
 export const storageService = {
   async uploadFile(
-  userId: string,
-  projectId: string,
-  taskId: string,
-  file: File
-): Promise<UploadedAttachment> {
-  if (!userId) {
-    throw new Error("userId is required");
-  }
+    userId: string,
+    projectId: string,
+    taskId: string,
+    file: File
+  ): Promise<UploadedAttachment> {
+    if (!userId) {
+      throw new Error("userId is required");
+    }
 
-  if (!projectId) {
-    throw new Error("projectId is required");
-  }
+    if (!projectId) {
+      throw new Error("projectId is required");
+    }
 
-  if (!taskId) {
-    throw new Error("taskId is required");
-  }
+    if (!taskId) {
+      throw new Error("taskId is required");
+    }
 
-  const attachmentId = crypto.randomUUID();
-  const fileName = safeFileName(file.name);
-  const contentType = file.type || "application/octet-stream";
+    const attachmentId = crypto.randomUUID();
+    const fileName = safeFileName(file.name);
+    const contentType = getContentType(file);
+    const attachmentKind = getAttachmentKind(file);
 
-  /**
-   * Create a lightweight preview before uploading.
-   * The original file is still uploaded untouched and full-quality.
-   */
-  const preview = await createImagePreview(file);
+    /**
+     * Create a lightweight preview before uploading.
+     * The original file is still uploaded untouched and full-quality.
+     * Non-image files return null here and still upload normally.
+     */
+    const preview = await createImagePreview(file);
 
-  const path = `${userId}/projects/${projectId}/tasks/${taskId}/originals/${attachmentId}-${fileName}`;
-  const fileRef = ref(storage, path);
+    const path = `${userId}/projects/${projectId}/tasks/${taskId}/originals/${attachmentId}-${fileName}`;
+    const fileRef = ref(storage, path);
 
-  await uploadBytes(fileRef, file, {
-    contentType,
-    cacheControl: ORIGINAL_CACHE_CONTROL,
-    contentDisposition: `inline; filename="${fileName}"`,
-    customMetadata: {
-      userId,
-      projectId,
-      taskId,
-      attachmentId,
-      originalName: file.name,
-      hasPreview: preview ? "true" : "false",
-    },
-  });
-
-  const url = await getDownloadURL(fileRef);
-
-  let previewUrl: string | undefined;
-  let previewPath: string | undefined;
-
-  if (preview) {
-    previewPath = `${userId}/projects/${projectId}/tasks/${taskId}/previews/${attachmentId}-preview.webp`;
-
-    const previewRef = ref(storage, previewPath);
-
-    await uploadBytes(previewRef, preview.blob, {
-      contentType: preview.type,
-      cacheControl: PREVIEW_CACHE_CONTROL,
-      contentDisposition: `inline; filename="${attachmentId}-preview.webp"`,
+    await uploadBytes(fileRef, file, {
+      contentType,
+      cacheControl: ORIGINAL_CACHE_CONTROL,
+      contentDisposition: `inline; filename="${fileName}"`,
       customMetadata: {
         userId,
         projectId,
         taskId,
         attachmentId,
-        originalName: file.name,
-        previewFor: path,
+        originalName: file.name || fileName,
+        attachmentKind,
+        hasPreview: preview ? "true" : "false",
       },
     });
 
-    previewUrl = await getDownloadURL(previewRef);
-  }
+    const url = await getDownloadURL(fileRef);
 
-  return {
-    id: attachmentId,
-    name: file.name,
+    let previewUrl: string | undefined;
+    let previewPath: string | undefined;
+
+    if (preview) {
+      previewPath = `${userId}/projects/${projectId}/tasks/${taskId}/previews/${attachmentId}-preview.webp`;
+
+      const previewRef = ref(storage, previewPath);
+
+      await uploadBytes(previewRef, preview.blob, {
+        contentType: preview.type,
+        cacheControl: PREVIEW_CACHE_CONTROL,
+        contentDisposition: `inline; filename="${attachmentId}-preview.webp"`,
+        customMetadata: {
+          userId,
+          projectId,
+          taskId,
+          attachmentId,
+          originalName: file.name || fileName,
+          attachmentKind: "image",
+          previewFor: path,
+        },
+      });
+
+      previewUrl = await getDownloadURL(previewRef);
+    }
 
     /**
-     * Original full-quality file.
+     * IMPORTANT:
+     * Do not return undefined fields.
+     * Firestore rejects undefined values inside attachments[].
      */
-    url,
+    const uploadedAttachment: UploadedAttachment = {
+      id: attachmentId,
+      name: file.name || fileName,
+      url,
+      type: contentType,
+      size: file.size,
+      path,
+      kind: attachmentKind,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: userId,
+    };
 
-    type: contentType,
-    size: file.size,
-    path,
+    if (previewUrl) {
+      uploadedAttachment.previewUrl = previewUrl;
+    }
 
-    /**
-     * Fast preview fields.
-     */
-    previewUrl,
-    previewPath,
-    width: preview?.width,
-    height: preview?.height,
-    previewWidth: preview?.previewWidth,
-    previewHeight: preview?.previewHeight,
-    blurDataUrl: preview?.blurDataUrl,
+    if (previewPath) {
+      uploadedAttachment.previewPath = previewPath;
+    }
 
-    uploadedAt: new Date().toISOString(),
-    uploadedBy: userId,
-  };
-},
+    if (typeof preview?.width === "number") {
+      uploadedAttachment.width = preview.width;
+    }
 
+    if (typeof preview?.height === "number") {
+      uploadedAttachment.height = preview.height;
+    }
+
+    if (typeof preview?.previewWidth === "number") {
+      uploadedAttachment.previewWidth = preview.previewWidth;
+    }
+
+    if (typeof preview?.previewHeight === "number") {
+      uploadedAttachment.previewHeight = preview.previewHeight;
+    }
+
+    if (preview?.blurDataUrl) {
+      uploadedAttachment.blurDataUrl = preview.blurDataUrl;
+    }
+
+    return uploadedAttachment;
+  },
 
   async deleteFile(path: string) {
     if (!path) return;
