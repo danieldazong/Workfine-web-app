@@ -18,17 +18,31 @@ import { useAppData }  from "../context/AppDataContext";
 import TaskDetailPanel from "../components/TaskDetailPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────
+type TaskStatus = "To Do" | "In Progress" | "In Review" | "Done";
+type TaskPriority = "Low" | "Medium" | "High";
+
 interface Task {
-  id:          string;
-  title:       string;
-  status:      "To Do" | "In Progress" | "In Review" | "Done";
-  priority:    "Low" | "Medium" | "High";
-  assignee:    string;
-  dueDate:     string;
+  id: string;
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee: string;
+  dueDate: string;
   description: string;
-  createdAt:   any;
-  taskCode?:   string;
+  createdAt: any;
+  taskCode?: string;
 }
+
+interface TaskForm {
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee: string;
+  dueDate: string;
+  description: string;
+}
+
 
 const STATUS_COLUMNS = ["To Do", "In Progress", "In Review", "Done"] as const;
 
@@ -52,10 +66,15 @@ const PRIORITY_DOT: Record<string, string> = {
 };
 
 // ─── Empty Task Form ──────────────────────────────────────────────────────
-const emptyTask = () => ({
-  title: "", status: "To Do" as const, priority: "Medium" as const,
-  assignee: "", dueDate: "", description: "",
+const emptyTask = (): TaskForm => ({
+  title: "",
+  status: "To Do",
+  priority: "Medium",
+  assignee: "",
+  dueDate: "",
+  description: "",
 });
+
 
 // ─── Main Component ───────────────────────────────────────────────────────
 const ProjectPage = () => {
@@ -70,7 +89,7 @@ const ProjectPage = () => {
   const [search,      setSearch]      = useState("");
   const [showModal,   setShowModal]   = useState(false);
   const [editTask,    setEditTask]    = useState<Task | null>(null);
-  const [form,        setForm]        = useState(emptyTask());
+    const [form,        setForm]        = useState<TaskForm>(() => emptyTask());
   const [saving,      setSaving]      = useState(false);
   const [drawerTask,  setDrawerTask]  = useState<Task | null>(null);
 
@@ -239,7 +258,7 @@ await deleteDoc(doc(db, "workspaces", workspaceId, "tasks", taskId));
 
   // ── Toggle task status ─────────────────────────────────────────────────
   const cycleStatus = async (task: Task) => {
-    const order: Task["status"][] = ["To Do","In Progress","In Review","Done"];
+      const order: TaskStatus[] = ["To Do", "In Progress", "In Review", "Done"];
     const next = order[(order.indexOf(task.status) + 1) % order.length];
    if (!workspaceId) return;
 
@@ -726,7 +745,8 @@ if (!project) {
                   </label>
                   <select
                     value={form.status}
-                    onChange={e => setForm(f => ({ ...f, status: e.target.value as any }))}
+                                        onChange={e => setForm(f => ({ ...f, status: e.target.value as TaskStatus }))}
+
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                   >
                     {STATUS_COLUMNS.map(s => (
@@ -740,7 +760,8 @@ if (!project) {
                   </label>
                   <select
                     value={form.priority}
-                    onChange={e => setForm(f => ({ ...f, priority: e.target.value as any }))}
+                                        onChange={e => setForm(f => ({ ...f, priority: e.target.value as TaskPriority }))}
+
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                   >
                     <option value="Low">🟢 Low</option>
