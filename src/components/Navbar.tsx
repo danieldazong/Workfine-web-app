@@ -4,10 +4,21 @@
  */
 
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { Search, Bell, HelpCircle } from "lucide-react";
+import {
+  Search,
+  Bell,
+  HelpCircle,
+  MessageCircle,
+  AtSign,
+  CheckCheck,
+} from "lucide-react";
+import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
-import { useNavigate, useLocation, matchPath } from "react-router-dom";
+import { useNotifications } from "../hooks/useNotifications";
+
+
+
 
 interface NavbarProps {
   title?: string;
@@ -27,8 +38,25 @@ function toTitleCase(value: string) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function looksLikeId(value: string) {
-  return value.length >= 10 || /^[A-Za-z0-9_-]{8,}$/.test(value);
+function notificationTime(createdAtMs?: number) {
+  const ms = Number(createdAtMs || 0);
+
+  if (!ms) return "";
+
+  const diff = Date.now() - ms;
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  if (days < 7) return `${days}d`;
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(ms));
 }
 
 function getWorkspaceTabTitle(pathname: string) {
@@ -47,6 +75,17 @@ function getWorkspaceTabTitle(pathname: string) {
   const lastSegment = pathname.split("/").filter(Boolean).pop();
 
   return lastSegment ? toTitleCase(lastSegment) : "Overview";
+}
+function looksLikeId(value?: string | null) {
+  const clean = String(value || "").trim();
+
+  if (!clean) return false;
+
+  return (
+    clean.length >= 12 ||
+    /^[A-Za-z0-9_-]{10,}$/.test(clean) ||
+    /^[0-9a-f]{20,}$/i.test(clean)
+  );
 }
 
 function getPageMeta(pathname: string, projects: any[]) {
@@ -109,11 +148,20 @@ function getPageMeta(pathname: string, projects: any[]) {
   if (projectMatch?.params?.projectId) {
     const projectId = projectMatch.params.projectId;
 
-    const project = projects.find((x: any) => x.id === projectId);
+      const project = projects.find(
+      (x: any) => String(x?.id || "") === String(projectId || "")
+    );
+
+    const projectName = String(
+      project?.name || project?.title || "Project"
+    );
+
+    const projectCode = String(project?.code || "");
 
     const projectTitle = project
-      ? `${project.code ? project.code + " - " : ""}${project.name}`
+      ? `${projectCode ? projectCode + " - " : ""}${projectName}`
       : "Project";
+
 
     return {
       title: projectTitle,
@@ -175,13 +223,27 @@ function getPageMeta(pathname: string, projects: any[]) {
 
 export default function Navbar({ title }: NavbarProps) {
   const { user, workspaceId } = useAuth();
-  const { tasks = [], projects = [] } = useAppData() as any;
+    const appData = useAppData() as any;
+  const tasks = Array.isArray(appData?.tasks) ? appData.tasks : [];
+  const projects = Array.isArray(appData?.projects) ? appData.projects : [];
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [query, setQuery] = useState("");
+    const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+
   const containerRef = useRef<HTMLDivElement>(null);
+  const notificationRef = useRef<HTMLDivElement>(null);
+
+  const {
+    notifications,
+    unreadCount,
+    loading: notificationsLoading,
+    markAsRead,
+    markAllAsRead,
+  } = useNotifications(user?.uid);
+
 
   const pageMeta = useMemo(() => {
     return getPageMeta(location.pathname, projects);
@@ -189,18 +251,27 @@ export default function Navbar({ title }: NavbarProps) {
 
   const navbarTitle = title || pageMeta.title;
 
-  // Close dropdown on click outside or Escape
+    // Close dropdowns on click outside or Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setIsOpen(false);
+      if (e.key === "Escape") {
+        setIsOpen(false);
+        setNotificationsOpen(false);
+      }
     }
 
     function handleClickOutside(e: MouseEvent) {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
-      ) {
+      const target = e.target as Node;
+
+      if (containerRef.current && !containerRef.current.contains(target)) {
         setIsOpen(false);
+      }
+
+      if (
+        notificationRef.current &&
+        !notificationRef.current.contains(target)
+      ) {
+        setNotificationsOpen(false);
       }
     }
 
@@ -212,6 +283,7 @@ export default function Navbar({ title }: NavbarProps) {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
 
   useEffect(() => {
     document.title = `${navbarTitle} | Wurkfine`;
@@ -246,6 +318,40 @@ export default function Navbar({ title }: NavbarProps) {
     const val = e.target.value;
     setQuery(val);
     setIsOpen(val.length >= 2);
+  };
+  const handleNotificationClick = async (notification: any) => {
+    if (!user?.uid) return;
+
+    try {
+      if (!notification.read) {
+        await markAsRead(notification.id);
+      }
+    } catch (error) {
+      console.warn("[Navbar] mark notification read failed:", error);
+    }
+
+    setNotificationsOpen(false);
+
+    const params = new URLSearchParams();
+
+    if (notification.taskId || notification.sourceTaskId) {
+      params.set("taskId", notification.sourceTaskId || notification.taskId);
+    }
+
+    if (notification.commentId) {
+      params.set("commentId", notification.commentId);
+    }
+
+    if (notification.workspaceId) {
+      params.set("workspaceId", notification.workspaceId);
+    }
+
+    if (notification.projectId) {
+      navigate(`/projects/${notification.projectId}?${params.toString()}`);
+      return;
+    }
+
+    navigate(`/my-tasks?${params.toString()}`);
   };
 
   return (
@@ -369,12 +475,15 @@ export default function Navbar({ title }: NavbarProps) {
 
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-slate-700 truncate">
-                              {project.name}
+                                                            {String(project.name || project.title || "Untitled Project")}
                             </p>
                             <p className="text-xs text-slate-400 truncate mt-0.5">
-                              {project.description ||
-                                project.status ||
-                                "Active"}
+                                                            {String(
+                                project.description ||
+                                  project.status ||
+                                  "Active"
+                              )}
+
                             </p>
                           </div>
                         </div>
@@ -388,10 +497,145 @@ export default function Navbar({ title }: NavbarProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors relative">
-            <Bell size={20} />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
-          </button>
+                    <div ref={notificationRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setNotificationsOpen((open) => !open)}
+              className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors relative"
+              title="Notifications"
+              aria-label="Notifications"
+            >
+              <Bell size={20} />
+
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white px-1">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {notificationsOpen && (
+              <div className="absolute right-0 top-[calc(100%+10px)] w-[360px] max-w-[calc(100vw-24px)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl z-[80]">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-800">
+                      Notifications
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Real-time task activity
+                    </p>
+                  </div>
+
+                  {unreadCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => markAllAsRead()}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-violet-600 hover:bg-violet-50"
+                    >
+                      <CheckCheck size={13} />
+                      Mark all read
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-[420px] overflow-y-auto py-1">
+                  {notificationsLoading ? (
+                    <div className="px-4 py-8 text-center text-sm text-slate-400">
+                      Loading notifications...
+                    </div>
+                  ) : notifications.length === 0 ? (
+                    <div className="px-4 py-10 text-center">
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                        <Bell size={18} />
+                      </div>
+                      <p className="text-sm font-medium text-slate-600">
+                        No notifications yet
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Mentions and task comments will appear here.
+                      </p>
+                    </div>
+                  ) : (
+                    notifications.map((notification: any) => {
+                      const isMention = notification.type === "mention";
+
+                      return (
+                        <button
+                          key={notification.id}
+                          type="button"
+                          onClick={() => handleNotificationClick(notification)}
+                          className={`w-full px-4 py-3 text-left transition-colors hover:bg-slate-50 ${
+                            notification.read ? "bg-white" : "bg-violet-50/60"
+                          }`}
+                        >
+                          <div className="flex gap-3">
+                            <div
+                              className={`mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full ${
+                                isMention
+                                  ? "bg-violet-100 text-violet-600"
+                                  : "bg-blue-100 text-blue-600"
+                              }`}
+                            >
+                              {isMention ? (
+                                <AtSign size={17} />
+                              ) : (
+                                <MessageCircle size={17} />
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start gap-2">
+                                <p className="min-w-0 flex-1 text-sm font-semibold text-slate-800 line-clamp-2">
+                                  {notification.title}
+                                </p>
+
+                                <span className="flex-shrink-0 text-[10px] text-slate-400">
+                                  {notificationTime(notification.createdAtMs)}
+                                </span>
+                              </div>
+
+                              {notification.message && (
+                                <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">
+                                  {notification.message}
+                                </p>
+                              )}
+
+                              {notification.commentPreview && (
+                                <p className="mt-1 line-clamp-2 rounded-lg bg-white/80 px-2 py-1 text-xs text-slate-500">
+                                  {notification.commentPreview}
+                                </p>
+                              )}
+
+                              <div className="mt-1.5 flex items-center gap-2 text-[10px] text-slate-400">
+                                {notification.projectName && (
+                                  <span className="truncate">
+                                    {notification.projectName}
+                                  </span>
+                                )}
+
+                                {notification.taskTitle && (
+                                  <>
+                                    <span>·</span>
+                                    <span className="truncate">
+                                      {notification.taskTitle}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {!notification.read && (
+                              <span className="mt-2 h-2 w-2 flex-shrink-0 rounded-full bg-violet-500" />
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
             <HelpCircle size={20} />

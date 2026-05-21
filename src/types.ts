@@ -84,3 +84,33 @@ export interface Task {
 
   [key: string]: any;
 }
+export type AppNotificationType = "mention" | "task_comment";
+
+export interface AppNotification {
+  id: string;
+  type: AppNotificationType;
+
+  workspaceId: string;
+  projectId?: string;
+  taskId: string;
+  sourceTaskId?: string;
+  commentId?: string;
+
+  title: string;
+  message?: string;
+
+  taskTitle?: string;
+  projectName?: string;
+
+  actorId: string;
+  actorName: string;
+  actorPhotoURL?: string;
+
+  read: boolean;
+  readAt?: any;
+
+  createdAt?: any;
+  createdAtMs: number;
+
+  [key: string]: any;
+}

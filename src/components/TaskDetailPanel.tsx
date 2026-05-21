@@ -78,6 +78,7 @@
   import Picker from "@emoji-mart/react";
   import { useMentionableUsers } from "../hooks/useMentionableUsers";
   import { storageService, UploadedAttachment } from "../lib/firebase/storage";
+  import { createCommentNotifications } from "../lib/firebase/notifications";
 
   export interface Task {
     id: string;
@@ -94,11 +95,13 @@
     [key: string]: any;
   }
 
-  interface TaskDetailPanelProps {
+    interface TaskDetailPanelProps {
     task: Task;
     onClose: () => void;
     onEdit: (task: Task) => void;
+    highlightCommentId?: string | null;
   }
+
 
   interface CommentReplyReference {
     commentId: string;
@@ -1844,16 +1847,19 @@ function formatFullLocalDateTime(timestamp: any): string {
     task,
     onClose,
     onEdit,
+    highlightCommentId,
   }: TaskDetailPanelProps) {
-    const navigate = useNavigate();
+      const navigate = useNavigate();
     const { user, workspaceId } = useAuth();
-    const {
-      projects = [],
-      tasks: allTasks = [],
-      members = [],
-    } = useAppData() as any;
+
+    const appData = useAppData() as any;
+
+    const projects = Array.isArray(appData?.projects) ? appData.projects : [];
+    const allTasks = Array.isArray(appData?.tasks) ? appData.tasks : [];
+    const members = Array.isArray(appData?.members) ? appData.members : [];
 
     const [taskView, setTaskView] = useState<Task>(task);
+
 
     const taskWorkspaceId = useMemo(() => {
       return (
@@ -2015,6 +2021,9 @@ function formatFullLocalDateTime(timestamp: any): string {
       members: workspaceMembers,
     },
   );
+  const safeHookMentionableUsers = Array.isArray(hookMentionableUsers)
+    ? hookMentionableUsers
+    : [];
 
   const mentionableUsers = useMemo(() => {
     const uniqueUsers = new Map<
@@ -2107,7 +2116,7 @@ function formatFullLocalDateTime(timestamp: any): string {
     };
 
     // 1. Users returned by the hook.
-    hookMentionableUsers.forEach((member: any) => {
+       safeHookMentionableUsers.forEach((member: any) => {
       addMentionUser(member);
     });
 
@@ -2236,7 +2245,7 @@ function formatFullLocalDateTime(timestamp: any): string {
 
     return resolvedMentionUsers;
   }, [
-    hookMentionableUsers,
+        safeHookMentionableUsers,
     workspaceMembers,
     members,
     taskShares,
@@ -2730,9 +2739,20 @@ function formatFullLocalDateTime(timestamp: any): string {
       };
     }, [showComposerEmojiPicker]);
 
-    const project = task.projectId
-      ? projects.find((p: any) => p.id === task.projectId)
-      : null;
+        const project = useMemo(() => {
+      const currentProjectId = String(
+        taskView.projectId || task.projectId || ""
+      ).trim();
+
+      if (!currentProjectId) return null;
+
+      return (
+        projects.find(
+          (p: any) => String(p?.id || "").trim() === currentProjectId
+        ) || null
+      );
+    }, [projects, taskView.projectId, task.projectId]);
+
 
     const taskParticipantCount = useMemo(() => {
       const ids = new Set<string>();
@@ -2790,7 +2810,97 @@ function formatFullLocalDateTime(timestamp: any): string {
       project,
     ]);
 
-    const canReplyToComments = taskParticipantCount > 1;
+       const canReplyToComments = taskParticipantCount > 1;
+
+    const taskNotificationMemberUids = useMemo(() => {
+      const ids = new Set<string>();
+
+      const addUid = (value?: unknown) => {
+        const clean = String(value || "").trim();
+
+        if (!clean || clean.includes("/")) return;
+
+        ids.add(clean);
+      };
+
+      const addUidArray = (value?: unknown) => {
+        if (!Array.isArray(value)) return;
+
+        value.forEach(addUid);
+      };
+
+      [taskView, task].forEach((source: any) => {
+        addUid(source?.ownerId);
+        addUid(source?.createdBy);
+        addUid(source?.uid);
+        addUid(source?.userId);
+
+        addUid(source?.assigneeId);
+        addUid(source?.assigneeUid);
+        addUid(source?.assignedToId);
+        addUid(source?.assignedToUid);
+
+        addUidArray(source?.assigneeIds);
+        addUidArray(source?.memberIds);
+        addUidArray(source?.participantIds);
+        addUidArray(source?.collaboratorUids);
+        addUidArray(source?.sharedWithUids);
+      });
+
+      if (project) {
+        addUid((project as any).ownerId);
+        addUid((project as any).createdBy);
+        addUid((project as any).uid);
+
+        addUidArray((project as any).memberIds);
+        addUidArray((project as any).collaboratorUids);
+      }
+
+      taskShares.forEach((share: any) => {
+        const status = String(share?.status || "").toLowerCase();
+
+        if (status && !["active", "accepted"].includes(status)) return;
+
+        addUid(share?.acceptedByUid);
+        addUid(share?.acceptedBy);
+      });
+
+      const assigneeNameOrEmail = normalizeEmail(taskView.assignee || task.assignee);
+
+      if (assigneeNameOrEmail) {
+        workspaceMembers.forEach((member: any) => {
+          const memberUid = String(
+            member?.uid || member?.userId || member?.id || "",
+          ).trim();
+
+          const memberEmail = normalizeEmail(member?.email || member?.emailLower);
+          const memberName = normalizeEmail(
+            member?.displayName || member?.name || member?.fullName,
+          );
+
+          if (
+            memberUid &&
+            (memberEmail === assigneeNameOrEmail ||
+              memberName === assigneeNameOrEmail)
+          ) {
+            addUid(memberUid);
+          }
+        });
+      }
+
+      if (safeCurrentUserUid) {
+        ids.delete(safeCurrentUserUid);
+      }
+
+      return Array.from(ids);
+    }, [
+      taskView,
+      task,
+      project,
+      taskShares,
+      workspaceMembers,
+      safeCurrentUserUid,
+    ]);
 
     const overdue = isOverdue(task);
 
@@ -3230,7 +3340,7 @@ useEffect(() => {
       setTimeout(() => onClose(), 280);
     }, [onClose]);
 
-    const handleSend = useCallback(async () => {
+     const handleSend = useCallback(async () => {
   if (!user?.uid || !commentText.trim() || sending) return;
 
   setSending(true);
@@ -3263,6 +3373,8 @@ useEffect(() => {
         })
       : undefined;
 
+    const mentionedUids = extractUserMentionIds(text, mentionableUsers);
+
     const commentPayload = removeUndefinedFields({
       text,
       authorId: user.uid,
@@ -3280,7 +3392,7 @@ useEffect(() => {
       editedAt: null,
       editedBy: "",
       mentions: extractMentions(text),
-      mentionedUids: extractUserMentionIds(text, mentionableUsers),
+      mentionedUids,
       attachments: [],
 
       // Metadata only, not ordering
@@ -3291,7 +3403,23 @@ useEffect(() => {
       pinnedBy: "",
     });
 
-    await addDoc(commentsRef, commentPayload);
+    const commentDocRef = await addDoc(commentsRef, commentPayload);
+
+    await createCommentNotifications({
+      workspaceId: taskWorkspaceId,
+      projectId: taskView.projectId || task.projectId || "",
+      taskId: sourceTaskId,
+      sourceTaskId,
+      commentId: commentDocRef.id,
+      taskTitle: taskView.title || task.title || "Untitled task",
+      projectName: project?.name || "",
+      commentText: text,
+      authorId: user.uid,
+      authorName,
+      authorPhotoURL: currentUserRealPhotoURL,
+      mentionedUids,
+      taskMemberUids: taskNotificationMemberUids,
+    });
 
     setCommentText("");
     setReplyingTo(null);
@@ -3305,7 +3433,7 @@ useEffect(() => {
     setShowComposerEmojiPicker(false);
     setShowFormattingToolbar(false);
 
-        window.setTimeout(() => {
+    window.setTimeout(() => {
       scrollToLatestComment("smooth");
     }, 100);
 
@@ -3326,6 +3454,12 @@ useEffect(() => {
   replyingTo,
   mentionableUsers,
   scrollToLatestComment,
+  taskView.projectId,
+  taskView.title,
+  task.projectId,
+  task.title,
+  project?.name,
+  taskNotificationMemberUids,
 ]);
 
 
@@ -3407,7 +3541,9 @@ useEffect(() => {
     })
   : undefined;
 
-await addDoc(
+const mentionedUids = extractUserMentionIds(text, mentionableUsers);
+
+const commentDocRef = await addDoc(
   commentsRef,
   removeUndefinedFields({
     text,
@@ -3426,7 +3562,7 @@ await addDoc(
     editedAt: null,
     editedBy: "",
     mentions: extractMentions(text),
-    mentionedUids: extractUserMentionIds(text, mentionableUsers),
+    mentionedUids,
     attachments: [cleanAttachment],
 
     // Metadata only, not ordering
@@ -3437,6 +3573,23 @@ await addDoc(
     pinnedBy: "",
   }),
 );
+
+await createCommentNotifications({
+  workspaceId: taskWorkspaceId,
+  projectId: taskView.projectId || task.projectId || "",
+  taskId: sourceTaskId,
+  sourceTaskId,
+  commentId: commentDocRef.id,
+  taskTitle: taskView.title || task.title || "Untitled task",
+  projectName: project?.name || "",
+  commentText: text || `Attachment: ${cleanAttachment.name}`,
+  authorId: user.uid,
+  authorName,
+  authorPhotoURL: currentUserRealPhotoURL,
+  mentionedUids,
+  taskMemberUids: taskNotificationMemberUids,
+});
+
 
 
                              setCommentText("");
@@ -3492,11 +3645,13 @@ await addDoc(
           setUploadingAttachment(false);
         }
       },
-            [
+                  [
         user,
         task.id,
         task.projectId,
+        task.title,
         taskView.projectId,
+        taskView.title,
         sourceTaskId,
         commentText,
         currentUserRealPhotoURL,
@@ -3504,6 +3659,8 @@ await addDoc(
         replyingTo,
         mentionableUsers,
         scrollToLatestComment,
+        project?.name,
+        taskNotificationMemberUids,
       ],
     );
 
@@ -4019,29 +4176,31 @@ await addDoc(
     }
 
     // Mention autocomplete suggestions, split into groups
-    const taskItems = useMemo(
+       const taskItems = useMemo(
       () =>
-        allTasks
-          .filter((t: any) => t.taskCode)
+        (Array.isArray(allTasks) ? allTasks : [])
+          .filter((t: any) => t?.taskCode)
           .map((t: any) => ({
-            code: t.taskCode as string,
-            label: t.title as string,
-            priority: (t.priority as string) ?? "Low",
+            code: String(t?.taskCode || ""),
+            label: String(t?.title || "Untitled task"),
+            priority: String(t?.priority || "Low"),
           })),
       [allTasks],
     );
 
-    const projectItems = useMemo(
+
+       const projectItems = useMemo(
       () =>
-        projects
-          .filter((p: any) => p.code)
+        (Array.isArray(projects) ? projects : [])
+          .filter((p: any) => p?.code)
           .map((p: any) => ({
-            code: p.code as string,
-            label: p.name as string,
-            color: (p.color as string) ?? "#8b5cf6",
+            code: String(p?.code || ""),
+            label: String(p?.name || p?.title || "Untitled project"),
+            color: String(p?.color || "#8b5cf6"),
           })),
       [projects],
     );
+
 
     const filteredTasks = useMemo(() => {
       if (!showSuggestions) return [];
@@ -4069,23 +4228,34 @@ await addDoc(
         .slice(0, 5);
     }, [showSuggestions, mentionFilter, projectItems]);
 
-    const hasSuggestions =
+       const hasSuggestions =
       showSuggestions &&
-      (filteredTasks.length > 0 || filteredProjects.length > 0);
+      ((Array.isArray(filteredTasks) ? filteredTasks.length : 0) > 0 ||
+        (Array.isArray(filteredProjects) ? filteredProjects.length : 0) > 0);
+
 
     // Filtered users for @ mention autocomplete
     const filteredUsers = useMemo(() => {
+      const safeMentionableUsers = Array.isArray(mentionableUsers)
+        ? mentionableUsers
+        : [];
+
       if (!showUserSuggestions) return [];
-      const q = userMentionFilter.toLowerCase();
-      if (!q) return mentionableUsers.slice(0, 6);
-      return mentionableUsers
-        .filter(
-          (u) =>
-            u.name.toLowerCase().includes(q) ||
-            (u.email ?? "").toLowerCase().includes(q),
-        )
+
+      const q = String(userMentionFilter || "").toLowerCase();
+
+      if (!q) return safeMentionableUsers.slice(0, 6);
+
+      return safeMentionableUsers
+        .filter((u: any) => {
+          const name = String(u?.name || "").toLowerCase();
+          const email = String(u?.email || "").toLowerCase();
+
+          return name.includes(q) || email.includes(q);
+        })
         .slice(0, 6);
     }, [showUserSuggestions, userMentionFilter, mentionableUsers]);
+
 
     // Visible emojis based on search/category
     const visibleEmojiGroups = useMemo(() => {
@@ -4330,7 +4500,6 @@ await addDoc(
         }
       }
     }
-
     useEffect(() => {
       if (!user?.uid || !taskWorkspaceId || !sourceTaskId) {
         setTaskShares([]);
@@ -4880,7 +5049,7 @@ await addDoc(
       });
     }
 
-    function handleStartEditComment(comment: TaskComment) {
+       function handleStartEditComment(comment: TaskComment) {
       if (!isCommentEditableNow(comment, safeCurrentUserUid)) {
         setToast("You can only edit your comment within 15 minutes");
         setTimeout(() => setToast(null), 2500);
@@ -4897,40 +5066,65 @@ await addDoc(
       setEditCommentText(comment.text || "");
       setActionMenuCommentId(null);
     }
+
     const visibleComments = useMemo(() => {
-  return [...comments].sort((a, b) => {
-    const aMs = getCommentSortMs(a);
-    const bMs = getCommentSortMs(b);
+      const safeComments = Array.isArray(comments) ? comments : [];
 
-    /**
-     * Unknown/legacy timestamps should not jump between modern comments.
-     * If both comments have valid timestamps, sort oldest -> newest.
-     */
-    if (aMs > 0 && bMs > 0 && aMs !== bMs) {
-      return aMs - bMs;
-    }
+      return [...safeComments].sort((a, b) => {
+        const aMs = getCommentSortMs(a);
+        const bMs = getCommentSortMs(b);
 
-    /**
-     * If only one comment has a valid timestamp, prefer the valid timestamp.
-     */
-    if (aMs > 0 && bMs <= 0) {
-      return 1;
-    }
+        /**
+         * Unknown/legacy timestamps should not jump between modern comments.
+         * If both comments have valid timestamps, sort oldest -> newest.
+         */
+        if (aMs > 0 && bMs > 0 && aMs !== bMs) {
+          return aMs - bMs;
+        }
 
-    if (aMs <= 0 && bMs > 0) {
-      return -1;
-    }
+        /**
+         * If only one comment has a valid timestamp, prefer the valid timestamp.
+         */
+        if (aMs > 0 && bMs <= 0) {
+          return 1;
+        }
 
-    /**
-     * Final deterministic fallback.
-     * Do NOT use replyTo/commentId for sorting.
-     */
-    return String(a.id || "").localeCompare(String(b.id || ""));
-  });
-}, [comments]);
+        if (aMs <= 0 && bMs > 0) {
+          return -1;
+        }
 
-   const latestVisibleCommentId =
-  visibleComments[visibleComments.length - 1]?.id || "";
+        /**
+         * Final deterministic fallback.
+         * Do NOT use replyTo/commentId for sorting.
+         */
+        return String(a?.id || "").localeCompare(String(b?.id || ""));
+      });
+    }, [comments]);
+
+    useEffect(() => {
+      const cleanHighlightCommentId = String(highlightCommentId || "").trim();
+
+      if (!cleanHighlightCommentId || visibleComments.length === 0) return;
+
+      const exists = visibleComments.some(
+        (comment) => String(comment?.id || "") === cleanHighlightCommentId
+      );
+
+      if (!exists) return;
+
+      const timeoutId = window.setTimeout(() => {
+        scrollToComment(cleanHighlightCommentId);
+      }, 250);
+
+      return () => window.clearTimeout(timeoutId);
+    }, [highlightCommentId, visibleComments, scrollToComment]);
+
+    const latestVisibleCommentId =
+      visibleComments.length > 0
+        ? String(visibleComments[visibleComments.length - 1]?.id || "")
+        : "";
+
+
 
 useEffect(() => {
   const container = scrollContainerRef.current;
