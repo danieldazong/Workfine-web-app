@@ -389,6 +389,20 @@ const ProjectPage = () => {
       navigate(location.pathname, { replace: true });
     }
   };
+  useEffect(() => {
+    if (activeProject) return;
+
+    const params = new URLSearchParams(location.search);
+    const taskId = String(params.get("taskId") || "").trim();
+
+    if (!taskId) return;
+
+    /**
+     * If a notification accidentally lands on an inaccessible project page,
+     * redirect to My Tasks because shared task comments are accessible there.
+     */
+    navigate(`/my-tasks?${params.toString()}`, { replace: true });
+  }, [activeProject, location.search, navigate]);
 
   if (loading) {
     return (

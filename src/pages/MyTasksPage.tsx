@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
   collection,
@@ -117,8 +117,10 @@ const filterFromQuery = (
 };
 
 export default function MyTasksPage() {
-  const { user, workspaceId } = useAuth();
+    const { user, workspaceId } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+
 
   const [tasks, setTasks] = useState<any[]>([]);
   const [filter, setFilter] = useState<FilterType>("All");
@@ -130,10 +132,31 @@ export default function MyTasksPage() {
   const [editTask, setEditTask] = useState<DetailTask | null>(null);
   const [autoOpenedTaskId, setAutoOpenedTaskId] = useState<string | null>(null);
 
-  const requestedTaskId = useMemo(() => {
+    const requestedTaskId = useMemo(() => {
     const params = new URLSearchParams(location.search);
-    return params.get("taskId") || params.get("highlight") || null;
+
+    return String(params.get("taskId") || params.get("highlight") || "")
+      .trim() || null;
   }, [location.search]);
+
+  const requestedCommentId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+
+    return String(params.get("commentId") || "").trim() || null;
+  }, [location.search]);
+
+  const requestedWorkspaceId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+
+    return String(params.get("workspaceId") || workspaceId || "").trim() || null;
+  }, [location.search, workspaceId]);
+
+  const requestedProjectId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+
+    return String(params.get("projectId") || "").trim() || null;
+  }, [location.search]);
+
 
 
 
@@ -418,7 +441,7 @@ export default function MyTasksPage() {
 
     return () => unsubscribe();
   }, [user?.uid, user?.email]);
-  /**
+   /**
    * 3. Sync filter/highlight/deep-link state from URL.
    *
    * Supports:
@@ -426,6 +449,7 @@ export default function MyTasksPage() {
    * /my-tasks?filter=shared
    * /my-tasks?highlight=TASK_ID
    * /my-tasks?taskId=TASK_ID
+   * /my-tasks?taskId=TASK_ID&commentId=COMMENT_ID&workspaceId=WORKSPACE_ID
    */
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -436,40 +460,9 @@ export default function MyTasksPage() {
       setFilter(nextFilter);
     }
 
-    const requestedId = params.get("taskId") || params.get("highlight");
-
-    if (requestedId) {
-      setHighlightedTaskId(requestedId);
-
-      const timeout = window.setTimeout(() => {
-        setHighlightedTaskId(null);
-      }, 4500);
-
-      return () => window.clearTimeout(timeout);
-    }
-
-    setHighlightedTaskId(null);
-    setAutoOpenedTaskId(null);
-  }, [location.search]);
-  /**
-   * 3. Sync filter/highlight/deep-link state from URL.
-   *
-   * Supports:
-   * /my-tasks?view=shared
-   * /my-tasks?filter=shared
-   * /my-tasks?highlight=TASK_ID
-   * /my-tasks?taskId=TASK_ID
-   */
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-
-    const nextFilter = filterFromQuery(params.get("filter"), params.get("view"));
-
-    if (nextFilter) {
-      setFilter(nextFilter);
-    }
-
-    const requestedId = params.get("taskId") || params.get("highlight");
+    const requestedId = String(
+      params.get("taskId") || params.get("highlight") || ""
+    ).trim();
 
     if (requestedId) {
       setHighlightedTaskId(requestedId);
@@ -486,36 +479,127 @@ export default function MyTasksPage() {
   }, [location.search]);
 
 
-  /**
- * 4. Deep-link task drawer opening.
- *
- * When user opens:
- * /my-tasks?taskId=abc123
- *
- * This automatically opens TaskDetailPanel for the matching task.
- */
-useEffect(() => {
-  if (!requestedTaskId) return;
 
-  if (autoOpenedTaskId === requestedTaskId) return;
 
-  if (!tasks.length) return;
+   /**
+   * 4. Deep-link task drawer opening.
+   *
+   * When user opens:
+   * /my-tasks?taskId=abc123
+   * /my-tasks?taskId=abc123&commentId=comment123&workspaceId=workspace123
+   *
+   * This automatically opens TaskDetailPanel and passes commentId
+   * so TaskDetailPanel scrolls/highlights the exact comment.
+   */
+  useEffect(() => {
+    if (!requestedTaskId) return;
+    if (!user?.uid) return;
 
-  const foundTask = tasks.find((task: any) => {
-    return (
-      task.id === requestedTaskId ||
-      task.originalTaskId === requestedTaskId ||
-      task.sharedTaskId === requestedTaskId ||
-      task.taskCode === requestedTaskId
-    );
-  });
+    const openKey = `${requestedWorkspaceId || ""}:${requestedTaskId}:${
+      requestedCommentId || ""
+    }`;
 
-  if (!foundTask) return;
+    if (autoOpenedTaskId === openKey) return;
 
-  setDetailTask(foundTask as unknown as DetailTask);
-  setAutoOpenedTaskId(requestedTaskId);
-}, [requestedTaskId, autoOpenedTaskId, tasks]);
+    let cancelled = false;
 
+    async function openRequestedTask() {
+      const foundTask = tasks.find((task: any) => {
+        return (
+          String(task.id || "") === requestedTaskId ||
+          String(task.originalTaskId || "") === requestedTaskId ||
+          String(task.sharedTaskId || "") === requestedTaskId ||
+          String(task.taskCode || "") === requestedTaskId
+        );
+      });
+
+      if (foundTask) {
+        if (cancelled) return;
+
+        setDetailTask(foundTask as unknown as DetailTask);
+        setAutoOpenedTaskId(openKey);
+        return;
+      }
+
+      /**
+       * Fallback:
+       * If the task is not yet in users/{uid}/tasks, open it directly from
+       * workspaces/{workspaceId}/tasks/{taskId}. This is needed for notification
+       * deep-links and freshly accepted/shared tasks.
+       */
+      if (!requestedWorkspaceId) return;
+
+      try {
+        const sourceTaskSnap = await getDoc(
+          doc(db, "workspaces", requestedWorkspaceId, "tasks", requestedTaskId)
+        );
+
+        if (!sourceTaskSnap.exists() || cancelled) return;
+
+        const sourceTask = {
+          id: sourceTaskSnap.id,
+          ...sourceTaskSnap.data(),
+          originalTaskId: sourceTaskSnap.id,
+          sharedTaskId: sourceTaskSnap.id,
+          workspaceId: requestedWorkspaceId,
+          projectId:
+            requestedProjectId ||
+            String((sourceTaskSnap.data() as any)?.projectId || ""),
+        } as DetailTask;
+
+        setDetailTask(sourceTask);
+        setAutoOpenedTaskId(openKey);
+      } catch (error) {
+        console.error("[MyTasksPage] open notification task failed:", error);
+      }
+    }
+
+    openRequestedTask();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    requestedTaskId,
+    requestedCommentId,
+    requestedWorkspaceId,
+    requestedProjectId,
+    autoOpenedTaskId,
+    tasks,
+    user?.uid,
+  ]);
+
+
+
+  function closeDetailTask() {
+    setDetailTask(null);
+
+    const params = new URLSearchParams(location.search);
+
+    if (
+      params.has("taskId") ||
+      params.has("highlight") ||
+      params.has("commentId") ||
+      params.has("workspaceId") ||
+      params.has("projectId")
+    ) {
+      params.delete("taskId");
+      params.delete("highlight");
+      params.delete("commentId");
+      params.delete("workspaceId");
+      params.delete("projectId");
+
+      const nextSearch = params.toString();
+
+      navigate(
+        {
+          pathname: location.pathname,
+          search: nextSearch ? `?${nextSearch}` : "",
+        },
+        { replace: true }
+      );
+    }
+  }
 
   function openEdit(t: DetailTask) {
     setEditTask(t);
@@ -917,16 +1001,18 @@ useEffect(() => {
         </div>
       </div>
 
-      {detailTask && (
+           {detailTask && (
         <TaskDetailPanel
           task={detailTask}
-          onClose={() => setDetailTask(null)}
+          onClose={closeDetailTask}
           onEdit={(t) => {
             setDetailTask(null);
             openEdit(t);
           }}
+          highlightCommentId={requestedCommentId}
         />
       )}
+
 
       {editTask && (
         <div className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4">

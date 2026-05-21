@@ -332,27 +332,42 @@ export default function Navbar({ title }: NavbarProps) {
 
     setNotificationsOpen(false);
 
+    const taskId = String(
+      notification.sourceTaskId || notification.taskId || ""
+    ).trim();
+
+    const commentId = String(notification.commentId || "").trim();
+    const notificationWorkspaceId = String(notification.workspaceId || "").trim();
+    const notificationProjectId = String(notification.projectId || "").trim();
+
     const params = new URLSearchParams();
 
-    if (notification.taskId || notification.sourceTaskId) {
-      params.set("taskId", notification.sourceTaskId || notification.taskId);
+    if (taskId) {
+      params.set("taskId", taskId);
+      params.set("highlight", taskId);
     }
 
-    if (notification.commentId) {
-      params.set("commentId", notification.commentId);
+    if (commentId) {
+      params.set("commentId", commentId);
     }
 
-    if (notification.workspaceId) {
-      params.set("workspaceId", notification.workspaceId);
+    if (notificationWorkspaceId) {
+      params.set("workspaceId", notificationWorkspaceId);
     }
 
-    if (notification.projectId) {
-      navigate(`/projects/${notification.projectId}?${params.toString()}`);
-      return;
+    if (notificationProjectId) {
+      params.set("projectId", notificationProjectId);
     }
 
+    /**
+     * IMPORTANT:
+     * Always open notification task comments through /my-tasks.
+     * Do NOT navigate to /projects/:projectId because shared/invited users
+     * may not have access to the project page, even though they can access the task.
+     */
     navigate(`/my-tasks?${params.toString()}`);
   };
+
 
   return (
     <header className="h-16 flex items-center justify-between px-8 bg-white border-b border-slate-200 sticky top-0 z-40">
