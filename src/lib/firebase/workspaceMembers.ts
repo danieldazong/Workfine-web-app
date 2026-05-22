@@ -21,15 +21,25 @@ export async function updateMemberRole(
 ): Promise<void> {
   const memberRef = doc(db, "workspaces", workspaceId, "members", userId);
 
-  const canEdit   = newRole === "owner" || newRole === "admin" || newRole === "member";
+    const canEdit = true;
   const canDelete = newRole === "owner" || newRole === "admin";
   const canInvite = newRole === "owner" || newRole === "admin";
 
   await updateDoc(memberRef, {
     role: newRole,
-    permissions: { canEdit, canDelete, canInvite },
+    permissions: {
+      canEdit,
+      canDelete,
+      canInvite,
+      canCreateProjects: true,
+      canDeleteProjects: canDelete,
+      canInviteMembers: canInvite,
+      canManageTasks: true,
+    },
     lastActive: serverTimestamp(),
   });
+
+
 }
 
 /**
@@ -97,17 +107,33 @@ export async function transferOwnership(
 
   const batch = writeBatch(db);
 
-  // Promote new owner
-  batch.update(newOwnerRef, {
-    role: "owner",
-    permissions: { canEdit: true, canDelete: true, canInvite: true },
+    // Demote previous owner to admin
+  batch.update(currentOwnerRef, {
+    role: "admin",
+    permissions: {
+      canEdit: true,
+      canDelete: true,
+      canInvite: true,
+      canCreateProjects: true,
+      canDeleteProjects: true,
+      canInviteMembers: true,
+      canManageTasks: true,
+    },
     lastActive: serverTimestamp(),
   });
 
-  // Demote previous owner to admin
-  batch.update(currentOwnerRef, {
-    role: "admin",
-    permissions: { canEdit: true, canDelete: true, canInvite: true },
+  // Promote new owner
+  batch.update(newOwnerRef, {
+    role: "owner",
+    permissions: {
+      canEdit: true,
+      canDelete: true,
+      canInvite: true,
+      canCreateProjects: true,
+      canDeleteProjects: true,
+      canInviteMembers: true,
+      canManageTasks: true,
+    },
     lastActive: serverTimestamp(),
   });
 

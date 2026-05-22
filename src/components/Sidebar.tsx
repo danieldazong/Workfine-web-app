@@ -26,36 +26,34 @@ import CreateProjectModal from "./CreateProjectModal";
 
 export default function Sidebar() {
   const { user, signOutUser, workspaceId } = useAuth();
- const { projects, members, workspaceData } = useAppData();
-
+  const { projects, members, workspaceData } = useAppData();
 
   const navigate = useNavigate();
   const location = useLocation();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
-const myMembership = Array.isArray(members)
-  ? members.find((m: any) => m.userId === user?.uid)
-  : undefined;
 
-const isWorkspaceOwner =
-  !!user?.uid && workspaceData?.ownerId === user.uid;
+  const safeMembers = Array.isArray(members) ? members : [];
 
-const myRole = isWorkspaceOwner
-  ? "owner"
-  : myMembership?.role ?? "member";
+  const myMembership = safeMembers.find((m: any) => m.userId === user?.uid);
 
-const canCreateProjects =
-  myRole === "owner" ||
-  myRole === "admin" ||
-  myMembership?.permissions?.canCreateProjects === true;
+  const isWorkspaceOwner = !!user?.uid && workspaceData?.ownerId === user.uid;
 
-const canDeleteProjects =
-  myRole === "owner" ||
-  myRole === "admin" ||
-  myMembership?.permissions?.canDeleteProjects === true;
+  const isActiveWorkspaceMember =
+    isWorkspaceOwner ||
+    myMembership?.status === "active" ||
+    (!!user?.uid && !!workspaceId);
 
- 
+  const myRole = isWorkspaceOwner ? "owner" : myMembership?.role ?? "member";
+
+  const canCreateProjects =
+    !!user?.uid && !!workspaceId && isActiveWorkspaceMember;
+
+  const canDeleteProjects =
+    myRole === "owner" ||
+    myRole === "admin" ||
+    myMembership?.permissions?.canDeleteProjects === true;
 
   const handleDelete = async (e: React.MouseEvent, projectId: string) => {
     e.stopPropagation();
@@ -89,8 +87,8 @@ const canDeleteProjects =
 
   return (
     <>
-      <div className="relative flex-shrink-0 w-64 h-screen hidden lg:block">
-        <aside className="absolute inset-0 flex flex-col bg-[#0F172A] border-r border-slate-800">
+      <div className="relative hidden h-screen w-64 flex-shrink-0 lg:block">
+        <aside className="absolute inset-0 flex flex-col border-r border-slate-800 bg-[#0F172A]">
           <SidebarContent
             user={user}
             signOutUser={signOutUser}
@@ -108,8 +106,9 @@ const canDeleteProjects =
       </div>
 
       <button
+        type="button"
         onClick={() => setIsMobileMenuOpen(true)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-slate-900 text-white rounded-lg"
+        className="fixed left-4 top-4 z-50 rounded-lg bg-slate-900 p-2 text-white lg:hidden"
       >
         <Menu size={20} />
       </button>
@@ -121,7 +120,7 @@ const canDeleteProjects =
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsMobileMenuOpen(false)}
-            className="fixed inset-0 bg-black/60 z-[60] lg:hidden backdrop-blur-sm"
+            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm lg:hidden"
           />
         )}
       </AnimatePresence>
@@ -133,7 +132,7 @@ const canDeleteProjects =
             animate={{ x: 0 }}
             exit={{ x: -256 }}
             transition={{ type: "tween", duration: 0.25 }}
-            className="lg:hidden fixed inset-y-0 left-0 z-[70] w-64 flex flex-col bg-[#0F172A] border-r border-slate-800"
+            className="fixed inset-y-0 left-0 z-[70] flex w-64 flex-col border-r border-slate-800 bg-[#0F172A] lg:hidden"
           >
             <SidebarContent
               user={user}
@@ -154,10 +153,9 @@ const canDeleteProjects =
       </AnimatePresence>
 
       <CreateProjectModal
-  isOpen={showCreateProject}
-  onClose={() => setShowCreateProject(false)}
-/>
-
+        isOpen={showCreateProject}
+        onClose={() => setShowCreateProject(false)}
+      />
     </>
   );
 }
@@ -193,12 +191,12 @@ function SidebarContent({
 }: SidebarContentProps) {
   return (
     <>
-      <div className="p-6 flex items-center justify-between flex-shrink-0">
-        <Link to="/" className="flex items-center gap-3">
+      <div className="flex flex-shrink-0 items-center justify-between p-6">
+        <Link to="/" onClick={onClose} className="flex items-center gap-3">
           <img
             src="/logo.png?v=2"
             alt="Workfine Logo"
-            className="w-8 h-8 object-contain rounded-lg shadow-lg shadow-indigo-500/20"
+            className="h-8 w-8 rounded-lg object-contain shadow-lg shadow-indigo-500/20"
           />
           <span className="text-2xl tracking-tight">
             <span className="font-extrabold text-white">Wurk</span>
@@ -207,14 +205,18 @@ function SidebarContent({
         </Link>
 
         {showCloseButton && (
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-white"
+          >
             <X size={20} />
           </button>
         )}
       </div>
 
-      <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest px-2 mb-2 mt-4">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-4">
+        <div className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
           Workspace
         </div>
 
@@ -225,7 +227,7 @@ function SidebarContent({
             onClick={onClose}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 px-3 py-2 rounded-xl transition-all group",
+                "group flex items-center gap-3 rounded-xl px-3 py-2 transition-all",
                 isActive
                   ? "bg-blue-600/20 text-blue-300"
                   : "text-slate-400 hover:text-white"
@@ -239,12 +241,12 @@ function SidebarContent({
                 location.pathname === item.path ? "text-blue-300" : ""
               )}
             />
-            <span className="font-medium text-sm">{item.name}</span>
+            <span className="text-sm font-medium">{item.name}</span>
           </NavLink>
         ))}
 
-        <div className="px-3 mt-6">
-          <div className="flex items-center justify-between mb-2 px-2">
+        <div className="mt-6 px-3">
+          <div className="mb-2 flex items-center justify-between px-2">
             <NavLink
               to="/projects"
               onClick={onClose}
@@ -258,43 +260,52 @@ function SidebarContent({
               PROJECTS
             </NavLink>
 
-            {canCreateProjects && (
-              <button
-                type="button"
-                onClick={() => setShowCreateProject(true)}
-                className="w-5 h-5 rounded flex items-center justify-center text-gray-400 hover:text-white hover:bg-blue-600 transition-colors text-lg leading-none"
-                title="New Project"
-              >
-                +
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (!canCreateProjects) {
+                  alert("Workspace is still loading. Please refresh and try again.");
+                  return;
+                }
+
+                setShowCreateProject(true);
+                onClose();
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded text-lg leading-none text-gray-400 transition-colors hover:bg-blue-600 hover:text-white"
+              title="New Project"
+            >
+              +
+            </button>
           </div>
 
           {projects.length === 0 ? (
-            <p className="text-xs text-gray-500 px-2 py-2 italic">
+            <p className="px-2 py-2 text-xs italic text-gray-500">
               No projects yet
             </p>
           ) : (
             projects.map((p) => (
               <div
                 key={p.id}
-                className="group flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm text-gray-300 hover:bg-white/10 transition-colors cursor-pointer"
+                className="group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-300 transition-colors hover:bg-white/10"
                 onClick={() => {
                   navigate(`/projects/${p.id}`);
                   onClose();
                 }}
               >
                 <span
-                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  className="h-2 w-2 flex-shrink-0 rounded-full"
                   style={{ backgroundColor: p.color ?? "#3b82f6" }}
                 />
 
-                <span className="truncate flex-1">{p.name}</span>
+                <span className="flex-1 truncate">
+                  {p.name || "Untitled Project"}
+                </span>
 
                 {canDeleteProjects && (
                   <button
+                    type="button"
                     onClick={(e) => handleDelete(e, p.id)}
-                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-all text-xs px-1"
+                    className="px-1 text-xs text-gray-500 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
                     title="Delete project"
                   >
                     ✕
@@ -306,15 +317,15 @@ function SidebarContent({
         </div>
       </nav>
 
-      <div className="p-4 border-t border-slate-800 flex-shrink-0">
-        <div className="flex items-center gap-3 p-2 bg-slate-800/30 rounded-xl">
+      <div className="flex-shrink-0 border-t border-slate-800 p-4">
+        <div className="flex items-center gap-3 rounded-xl bg-slate-800/30 p-2">
           <div className="relative flex-shrink-0">
             {user?.photoURL ? (
               <img
                 src={user.photoURL}
                 alt={user.displayName ?? user.email ?? "User"}
                 referrerPolicy="no-referrer"
-                className="w-10 h-10 rounded-full object-cover border border-indigo-400/30"
+                className="h-10 w-10 rounded-full border border-indigo-400/30 object-cover"
                 onError={(e) => {
                   e.currentTarget.style.display = "none";
                   const fallback = e.currentTarget
@@ -326,8 +337,8 @@ function SidebarContent({
 
             <div
               className={cn(
-                "w-10 h-10 rounded-full items-center justify-center",
-                "text-white text-xs font-bold border border-indigo-400/30 flex-shrink-0",
+                "h-10 w-10 flex-shrink-0 items-center justify-center rounded-full",
+                "border border-indigo-400/30 text-xs font-bold text-white",
                 getAvatarColor(user?.email ?? user?.displayName ?? "user"),
                 user?.photoURL ? "hidden" : "flex"
               )}
@@ -336,21 +347,22 @@ function SidebarContent({
             </div>
           </div>
 
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-white">
               {user?.displayName ??
                 (user?.email
                   ? user.email.split("@")[0].replace(/[._-]/g, " ")
                   : "User")}
             </p>
-            <p className="text-[10px] text-slate-500 truncate font-medium">
+            <p className="truncate text-[10px] font-medium text-slate-500">
               {user?.email ?? ""}
             </p>
           </div>
 
           <button
+            type="button"
             onClick={signOutUser}
-            className="text-slate-500 hover:text-white transition-colors flex-shrink-0"
+            className="flex-shrink-0 text-slate-500 transition-colors hover:text-white"
             title="Sign out"
           >
             <LogOut size={16} />

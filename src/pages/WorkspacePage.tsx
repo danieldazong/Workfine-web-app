@@ -124,6 +124,14 @@ const canManage =
   myMembership?.role === "owner" ||
   myMembership?.role === "admin";
 
+const canCreateWorkspaceProjects =
+  !!user?.uid &&
+  !!wsId &&
+  (isOwnerFromWorkspaceDoc ||
+    myMembership?.status === "active" ||
+    (!!authWorkspaceId && authWorkspaceId === wsId));
+
+
 const availableProjectsToAdd = useMemo(() => {
   return projects.filter((project: any) => {
     return project && project.id && project.pinnedToWorkspace !== true;
@@ -256,7 +264,8 @@ return (
   members={activeMembers}
   projects={projects}
   tasks={tasks}
-  canManage={canManage}
+    canManage={canManage}
+  canCreateWorkspaceProjects={canCreateWorkspaceProjects}
   onInvite={() => setShowInvite(true)}
   onCreateProject={() => setShowCreateProject(true)}
   onAddExistingProject={() => {
@@ -342,7 +351,8 @@ function OverviewTab({
   members,
   projects,
   tasks,
-  canManage,
+    canManage,
+  canCreateWorkspaceProjects,
   onInvite,
   onCreateProject,
   onAddExistingProject,
@@ -393,7 +403,15 @@ function OverviewTab({
       ? "Create another project"
       : "Create your first project",
     done: hasProjects,
-    onClick: onCreateProject,
+       onClick: () => {
+      if (!canCreateWorkspaceProjects) {
+        alert("Workspace is still loading. Please refresh and try again.");
+        return;
+      }
+
+      onCreateProject();
+    },
+
   },
   {
     id: "team",
@@ -519,7 +537,7 @@ function OverviewTab({
             <div className="text-center py-8">
               <FolderKanban className="mx-auto text-gray-300 mb-3" size={32} />
               <p className="text-sm text-gray-500 mb-3">No projects yet</p>
-                            {canManage ? (
+                                                        {canCreateWorkspaceProjects ? (
                 <button
                   onClick={onCreateProject}
                   className="inline-flex items-center gap-2 px-3 py-2 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
@@ -528,9 +546,10 @@ function OverviewTab({
                 </button>
               ) : (
                 <p className="text-xs text-gray-400">
-                  No shared projects have been added to this workspace yet.
+                  Workspace is still loading. Refresh and try again.
                 </p>
               )}
+
 
             </div>
           ) : (
@@ -577,15 +596,16 @@ function OverviewTab({
             </div>
           )}
 
-                    {curatedProjects.length > 0 && canManage && (
-  <button
-    type="button"
-    onClick={onAddExistingProject}
-    className="mt-3 w-full py-2 border border-dashed border-gray-300 text-gray-500 hover:text-violet-600 hover:border-violet-300 rounded-xl text-xs font-medium transition-colors flex items-center justify-center gap-1"
-  >
-    <Plus size={13} /> Add another project
-  </button>
-)}
+                                                           {curatedProjects.length > 0 && canCreateWorkspaceProjects && (
+                      <button
+                        type="button"
+                        onClick={onCreateProject}
+                        className="mt-3 w-full py-2 border border-dashed border-gray-300 text-gray-500 hover:text-violet-600 hover:border-violet-300 rounded-xl text-xs font-medium transition-colors flex items-center justify-center gap-1"
+                      >
+                        <Plus size={13} /> Create another project
+                      </button>
+                    )}
+
 
         </div>
       </div>

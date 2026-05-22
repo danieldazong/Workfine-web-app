@@ -120,166 +120,380 @@ function buildUserProfilePayload(firebaseUser: User) {
 async function ensureWorkspaceAndMembership(
   firebaseUser: User,
   workspaceId: string
-): Promise<void> {
-  if (!firebaseUser?.uid || !workspaceId) return;
+): Promise<boolean> {
+  if (!firebaseUser?.uid || !workspaceId) return false;
 
   const profilePayload = buildUserProfilePayload(firebaseUser);
   const displayName = profilePayload.displayName;
   const email = profilePayload.email;
+  const uid = firebaseUser.uid;
 
   const wsRef = doc(db, "workspaces", workspaceId);
-  const memberRef = doc(
-    db,
-    "workspaces",
-    workspaceId,
-    "members",
-    firebaseUser.uid
-  );
+  const memberRef = doc(db, "workspaces", workspaceId, "members", uid);
 
-  try {
-    const wsSnap = await getDoc(wsRef);
+  const isPersonalWorkspace = workspaceId === `personal_${uid}`;
 
-    /**
-     * CASE 1:
-     * Workspace does not exist.
-     * This is a brand-new personal workspace.
-     */
-    if (!wsSnap.exists()) {
-      await setDoc(wsRef, {
-        id: workspaceId,
-        workspaceId,
-        name: `${displayName}'s Workspace`,
+  function isTrustedMemberData(memberData: any): boolean {
+    if (!memberData) return false;
 
-        ownerId: firebaseUser.uid,
-        ownerEmail: email,
-        ownerEmailLower: normalizeEmail(email),
-        ownerPhotoURL: profilePayload.photoURL,
-        ownerAvatarUrl: profilePayload.avatarUrl,
+    if (memberData.status !== "active") return false;
 
-        plan: "free",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+    const memberUid = memberData.uid || memberData.userId;
 
-        memberCount: 1,
-        taskLimit: 50,
-        projectLimit: 3,
-        seatLimit: 1,
-        usedSeats: 1,
+    if (memberUid && memberUid !== uid) return false;
 
-        billingMode: "manual",
-        subscriptionSource: "manual",
-        subscriptionStatus: "free",
-        externalGuestLimit: 0,
-      });
-
-      await setDoc(
-        memberRef,
-        {
-          ...profilePayload,
-          role: "owner",
-          status: "active",
-          workspaceId,
-          joinedAt: serverTimestamp(),
-          lastActive: serverTimestamp(),
-          permissions: {
-            canEdit: true,
-            canDelete: true,
-            canInvite: true,
-            canCreateProjects: true,
-            canDeleteProjects: true,
-            canInviteMembers: true,
-            canManageTasks: true,
-          },
-        },
-        { merge: true }
-      );
-
-      console.log("[Auth] 🆕 Created new workspace + owner member:", workspaceId);
-      return;
+    if (memberData.workspaceId && memberData.workspaceId !== workspaceId) {
+      return false;
     }
 
-    const wsData = wsSnap.data();
-    const isWorkspaceOwner = wsData?.ownerId === firebaseUser.uid;
+    /**
+     * Owner member docs are always trusted.
+     */
+    if (memberData.role === "owner") return true;
 
     /**
-     * CASE 2:
-     * Workspace exists and this signed-in user is the real owner.
+     * Invited workspace members are trusted if they have any invite proof.
      */
-    if (isWorkspaceOwner) {
-      await setDoc(
-        memberRef,
-        {
-          ...profilePayload,
-          role: "owner",
-          status: "active",
-          workspaceId,
-          lastActive: serverTimestamp(),
-          permissions: {
-            canEdit: true,
-            canDelete: true,
-            canInvite: true,
-            canCreateProjects: true,
-            canDeleteProjects: true,
-            canInviteMembers: true,
-            canManageTasks: true,
-          },
-        },
-        { merge: true }
-      );
+    return (
+      typeof memberData.invitedBy === "string" ||
+      typeof memberData.invitedByUid === "string" ||
+      typeof memberData.inviteCode === "string" ||
+      typeof memberData.acceptedInviteCode === "string" ||
+      typeof memberData.code === "string" ||
+      typeof memberData.createdBy === "string" ||
+      typeof memberData.addedBy === "string"
+    );
+  }
 
+  /**
+   * IMPORTANT:
+   * First check the current user's member document.
+   * Firestore rules allow a user to read their own member doc even before
+   * they can read the full workspace. This prevents the app from wrongly
+   * resetting invited users back to their personal workspace after refresh.
+   */
+  try {
+    const memberSnap = await getDoc(memberRef);
+
+    if (memberSnap.exists()) {
+      const memberData = memberSnap.data();
+
+      if (isTrustedMemberData(memberData)) {
+        await setDoc(
+          memberRef,
+          {
+            ...profilePayload,
+            uid,
+            userId: uid,
+            workspaceId,
+            status: "active",
+            lastActive: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        console.log("[Auth] ✅ Verified workspace membership from member doc:", {
+          workspaceId,
+          uid,
+        });
+
+        return true;
+      }
+
+      console.warn("[Auth] ⛔ Member doc exists but is not trusted:", {
+        workspaceId,
+        uid,
+        status: memberData?.status,
+        role: memberData?.role,
+      });
+
+      return false;
+    }
+  } catch (memberErr: any) {
+    console.warn("[Auth] ⚠️ Could not read own member doc:", {
+      workspaceId,
+      uid,
+      code: memberErr?.code,
+      message: memberErr?.message,
+    });
+
+    /**
+     * Do not immediately reset the user here.
+     * We still try the workspace owner path below.
+     */
+  }
+
+  /**
+   * If this is the user's personal workspace, create/repair it.
+   */
+  if (isPersonalWorkspace) {
+    try {
       await setDoc(
         wsRef,
         {
+          id: workspaceId,
+          workspaceId,
+          name: `${displayName}'s Workspace`,
+
+          ownerId: uid,
           ownerEmail: email,
           ownerEmailLower: normalizeEmail(email),
           ownerPhotoURL: profilePayload.photoURL,
           ownerAvatarUrl: profilePayload.avatarUrl,
+
+          plan: "free",
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+
+          memberCount: 1,
+          taskLimit: 50,
+          projectLimit: 3,
+          seatLimit: 1,
+          usedSeats: 1,
+
+          billingMode: "manual",
+          subscriptionSource: "manual",
+          subscriptionStatus: "free",
+          externalGuestLimit: 0,
         },
         { merge: true }
       );
 
-      console.log("[Auth] ✅ Verified owner membership:", workspaceId);
-      return;
-    }
-
-    /**
-     * CASE 3:
-     * Workspace exists but this signed-in user is NOT the owner.
-     * Do not auto-create member docs here.
-     * JoinWorkspacePage must create invited member docs.
-     */
-    const memberSnap = await getDoc(memberRef);
-
-    if (memberSnap.exists()) {
       await setDoc(
         memberRef,
         {
           ...profilePayload,
+          uid,
+          userId: uid,
+          role: "owner",
+          status: "active",
           workspaceId,
+
+          invitedBy: uid,
+          invitedByUid: uid,
+          createdBy: uid,
+
+          joinedAt: serverTimestamp(),
           lastActive: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+
+          permissions: {
+            canEdit: true,
+            canDelete: true,
+            canInvite: true,
+            canCreateProjects: true,
+            canDeleteProjects: true,
+            canInviteMembers: true,
+            canManageTasks: true,
+          },
         },
         { merge: true }
       );
 
-      console.log("[Auth] ✅ Verified existing non-owner membership:", workspaceId);
-    } else {
-      console.warn(
-        "[Auth] ⚠️ Non-owner has no member doc. Invite acceptance must create it.",
-        {
-          workspaceId,
-          ownerId: wsData?.ownerId,
-          currentUid: firebaseUser.uid,
-        }
-      );
+      console.log("[Auth] ✅ Created/repaired personal workspace:", workspaceId);
+
+      return true;
+    } catch (personalErr: any) {
+      console.warn("[Auth] ❌ Failed to create/repair personal workspace:", {
+        workspaceId,
+        uid,
+        code: personalErr?.code,
+        message: personalErr?.message,
+      });
+
+      return false;
     }
-  } catch (err: any) {
-    console.warn(
-      "[Auth] ⚠️ ensureWorkspaceAndMembership skipped/failed:",
-      err?.code || err
+  }
+
+  /**
+   * For non-personal/team workspaces, only the owner can repair missing
+   * owner membership. Normal invited members must already have a member doc.
+   */
+  try {
+    const wsSnap = await getDoc(wsRef);
+
+    if (!wsSnap.exists()) {
+      console.warn("[Auth] ⛔ Workspace does not exist:", workspaceId);
+      return false;
+    }
+
+    const wsData = wsSnap.data();
+    const isWorkspaceOwner = wsData?.ownerId === uid;
+
+    if (!isWorkspaceOwner) {
+      console.warn("[Auth] ⛔ No valid member doc for non-owner workspace user:", {
+        workspaceId,
+        uid,
+      });
+
+      return false;
+    }
+
+    await setDoc(
+      memberRef,
+      {
+        ...profilePayload,
+        uid,
+        userId: uid,
+        role: "owner",
+        status: "active",
+        workspaceId,
+
+        invitedBy: uid,
+        invitedByUid: uid,
+        createdBy: uid,
+
+        joinedAt: serverTimestamp(),
+        lastActive: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+
+        permissions: {
+          canEdit: true,
+          canDelete: true,
+          canInvite: true,
+          canCreateProjects: true,
+          canDeleteProjects: true,
+          canInviteMembers: true,
+          canManageTasks: true,
+        },
+      },
+      { merge: true }
     );
+
+    await setDoc(
+      wsRef,
+      {
+        ownerEmail: email,
+        ownerEmailLower: normalizeEmail(email),
+        ownerPhotoURL: profilePayload.photoURL,
+        ownerAvatarUrl: profilePayload.avatarUrl,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    console.log("[Auth] ✅ Verified owner workspace membership:", workspaceId);
+
+    return true;
+  } catch (workspaceErr: any) {
+    console.warn("[Auth] ⚠️ Workspace verification failed:", {
+      workspaceId,
+      uid,
+      code: workspaceErr?.code,
+      message: workspaceErr?.message,
+    });
+
+    return false;
   }
 }
+
+async function ensurePersonalWorkspace(firebaseUser: User): Promise<string> {
+  const profilePayload = buildUserProfilePayload(firebaseUser);
+
+  /**
+   * IMPORTANT:
+   * This must be globally unique per user.
+   * Do NOT use random WF-123 IDs because they collide and cause permission bugs.
+   */
+  const personalWorkspaceId = `personal_${firebaseUser.uid}`;
+
+  const wsRef = doc(db, "workspaces", personalWorkspaceId);
+  const memberRef = doc(
+    db,
+    "workspaces",
+    personalWorkspaceId,
+    "members",
+    firebaseUser.uid
+  );
+  const userRef = doc(db, "users", firebaseUser.uid);
+
+  await setDoc(
+    wsRef,
+    {
+      id: personalWorkspaceId,
+      workspaceId: personalWorkspaceId,
+      name: `${profilePayload.displayName}'s Workspace`,
+
+      ownerId: firebaseUser.uid,
+      ownerEmail: profilePayload.email,
+      ownerEmailLower: profilePayload.emailLower,
+      ownerPhotoURL: profilePayload.photoURL,
+      ownerAvatarUrl: profilePayload.avatarUrl,
+
+      plan: "free",
+      billingMode: "manual",
+      subscriptionSource: "manual",
+      subscriptionStatus: "free",
+
+      memberCount: 1,
+      taskLimit: 50,
+      projectLimit: 3,
+      seatLimit: 1,
+      usedSeats: 1,
+      externalGuestLimit: 0,
+
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  await setDoc(
+    memberRef,
+    {
+      ...profilePayload,
+
+      uid: firebaseUser.uid,
+      userId: firebaseUser.uid,
+      workspaceId: personalWorkspaceId,
+
+      role: "owner",
+      status: "active",
+
+      /**
+       * This keeps the member doc trusted by the Firestore rules.
+       */
+      invitedBy: firebaseUser.uid,
+      invitedByUid: firebaseUser.uid,
+      createdBy: firebaseUser.uid,
+
+      joinedAt: serverTimestamp(),
+      lastActive: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+
+      permissions: {
+        canEdit: true,
+        canDelete: true,
+        canInvite: true,
+        canCreateProjects: true,
+        canDeleteProjects: true,
+        canInviteMembers: true,
+        canManageTasks: true,
+      },
+    },
+    { merge: true }
+  );
+
+  await setDoc(
+    userRef,
+    {
+      ...profilePayload,
+      plan: "free",
+      workspaceId: personalWorkspaceId,
+      personalWorkspaceId,
+      updatedAt: serverTimestamp(),
+      lastActive: serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  console.log("[Auth] ✅ Ensured personal workspace:", personalWorkspaceId);
+
+  return personalWorkspaceId;
+}
+
+
 
 async function ensureUserProfile(firebaseUser: User): Promise<string> {
   try {
@@ -292,8 +506,49 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
      * RULE 1:
      * Existing user with a workspaceId: keep it.
      */
-    if (snap.exists() && snap.data().workspaceId) {
+        if (snap.exists() && snap.data().workspaceId) {
       const existingWid = snap.data().workspaceId as string;
+      const personalWid = snap.data().personalWorkspaceId as string | undefined;
+
+      const hasValidWorkspaceAccess = await ensureWorkspaceAndMembership(
+        firebaseUser,
+        existingWid
+      );
+
+      if (hasValidWorkspaceAccess) {
+        await setDoc(
+          userRef,
+          {
+            ...profilePayload,
+            plan: snap.data().plan ?? "free",
+            workspaceId: existingWid,
+            personalWorkspaceId: personalWid ?? existingWid,
+            updatedAt: serverTimestamp(),
+            lastActive: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+              console.log("[Auth] ✅ Existing user — keeping workspaceId:", existingWid);
+
+        return existingWid;
+      }
+
+      /**
+       * IMPORTANT:
+       * Do NOT reset invited/team users back to personal workspace here.
+       *
+       * On refresh, Firestore can briefly deny reads while auth/rules/listeners
+       * are warming up. Resetting here destroys the user's selected workspace
+       * and makes shared workspace projects disappear from the sidebar.
+       *
+       * Keep the existing workspaceId. If access is truly invalid, AppDataContext
+       * will fail safely without exposing data.
+       */
+      console.warn(
+        "[Auth] ⚠️ Workspace verification failed, but keeping existing workspaceId to avoid destructive reset:",
+        existingWid
+      );
 
       await setDoc(
         userRef,
@@ -301,19 +556,17 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
           ...profilePayload,
           plan: snap.data().plan ?? "free",
           workspaceId: existingWid,
-          personalWorkspaceId: snap.data().personalWorkspaceId ?? existingWid,
+          personalWorkspaceId: personalWid ?? `personal_${firebaseUser.uid}`,
           updatedAt: serverTimestamp(),
           lastActive: serverTimestamp(),
         },
         { merge: true }
       );
 
-      await ensureWorkspaceAndMembership(firebaseUser, existingWid);
-
-      console.log("[Auth] ✅ Existing user — keeping workspaceId:", existingWid);
-
       return existingWid;
     }
+
+
 
     /**
      * RULE 2:
@@ -339,20 +592,19 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
       return "";
     }
 
-    /**
+      /**
      * RULE 3:
-     * Brand new user: generate personal workspace.
+     * Brand new user: create a guaranteed unique personal workspace.
      */
-    const workspaceId =
-      "WF-" + String(Math.floor(Math.random() * 900) + 100);
+    const personalWorkspaceId = await ensurePersonalWorkspace(firebaseUser);
 
     await setDoc(
       userRef,
       {
         ...profilePayload,
         plan: "free",
-        workspaceId,
-        personalWorkspaceId: workspaceId,
+        workspaceId: personalWorkspaceId,
+        personalWorkspaceId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         lastActive: serverTimestamp(),
@@ -360,11 +612,10 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
       { merge: true }
     );
 
-    await ensureWorkspaceAndMembership(firebaseUser, workspaceId);
+    console.log("[Auth] ✅ New user — created personal workspace:", personalWorkspaceId);
 
-    console.log("[Auth] ✅ New user — generated workspaceId:", workspaceId);
+    return personalWorkspaceId;
 
-    return workspaceId;
   } catch (err) {
     console.error("[Auth] ❌ ensureUserProfile failed:", err);
     return "";

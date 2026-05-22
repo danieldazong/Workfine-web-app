@@ -17,7 +17,6 @@ import { db } from "../lib/firebase/config";
 import { useAuth } from "./AuthContext";
 import { subscribeToProjects } from "../lib/firebase/projects";
 import { Project } from "../types";
-import { canUserAccessProject } from "../lib/projectAccess";
 
 interface Task {
   id: string;
@@ -298,22 +297,75 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let projectsReady = false;
     let tasksReady = false;
 
-    let latestMembers: WorkspaceMember[] = [];
+        let latestMembers: WorkspaceMember[] = [];
     let latestProjects: Project[] = [];
     let latestTasks: Task[] = [];
+    let latestWorkspaceData: WorkspaceData | null = null;
+    function isTrustedActiveMember(member: WorkspaceMember | undefined) {
+      if (!member) return false;
 
-    function getMyWorkspaceRole() {
-      const mine = latestMembers.find((m) => m.userId === uid);
-      return mine?.role ?? null;
+      const memberUid = (member as any).userId || (member as any).uid || (member as any).id;
+
+      if (latestWorkspaceData?.ownerId === memberUid) {
+        return member.status === "active";
+      }
+
+      return member.status === "active";
+    }
+
+
+           function getMyWorkspaceRole() {
+      const mine = latestMembers.find((m: any) => {
+        const memberUid = m.userId || m.uid || m.id;
+        return memberUid === uid;
+      });
+
+      if (latestWorkspaceData?.ownerId === uid) {
+        return "owner";
+      }
+
+      return isTrustedActiveMember(mine) ? mine?.role ?? "member" : null;
+    }
+
+
+       function isActiveMemberOrOwner() {
+      const mine = latestMembers.find((m: any) => {
+        const memberUid = m.userId || m.uid || m.id;
+        return memberUid === uid;
+      });
+
+      return latestWorkspaceData?.ownerId === uid || isTrustedActiveMember(mine);
+    }
+
+
+
+    function canAccessProject(project: Project) {
+      if (!uid) return false;
+
+      const myRole = getMyWorkspaceRole();
+
+      if (myRole === "owner" || myRole === "admin") {
+        return true;
+      }
+
+      if (project.visibility === "private") {
+        return (
+          project.createdBy === uid ||
+          project.ownerId === uid ||
+          project.uid === uid ||
+          (Array.isArray(project.memberIds) && project.memberIds.includes(uid)) ||
+          (Array.isArray(project.collaboratorUids) &&
+            project.collaboratorUids.includes(uid))
+        );
+      }
+
+      return isActiveMemberOrOwner();
     }
 
     function getAccessibleProjects() {
-      const myRole = getMyWorkspaceRole();
-
-      return latestProjects.filter((project) =>
-        canUserAccessProject(project, uid, myRole)
-      );
+      return latestProjects.filter((project) => canAccessProject(project));
     }
+
 
     function publishAccessibleData() {
       const accessibleProjects = getAccessibleProjects();
@@ -428,17 +480,26 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     fixLegacyInvites(workspaceId);
 
     const unsubWorkspace = onSnapshot(
-      doc(db, "workspaces", workspaceId),
+           doc(db, "workspaces", workspaceId),
       (snap) => {
         if (snap.exists()) {
-          setWorkspaceData({ id: snap.id, ...snap.data() } as WorkspaceData);
+          latestWorkspaceData = {
+            id: snap.id,
+            ...snap.data(),
+          } as WorkspaceData;
+
+          setWorkspaceData(latestWorkspaceData);
         } else {
+          latestWorkspaceData = null;
           setWorkspaceData(null);
         }
+
+        publishAccessibleData();
 
         wsReady = true;
         tryResolve();
       },
+
       (err) => {
         console.warn("[AppData] workspace doc error:", err.code);
         wsReady = true;
@@ -465,7 +526,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         console.log("[AppData] workspace members:", data.length);
 
 
-        const iStillMember = snap.docs.some((d) => d.id === uid);
+              const iStillMember =
+          latestWorkspaceData?.ownerId === uid || snap.docs.some((d) => d.id === uid);
 
         if (snap.docs.length > 0 && !iStillMember) {
           console.warn(
@@ -558,7 +620,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       unsubProjects();
       unsubTasks();
     };
-  }, [uid, workspaceId]);
+    }, [uid, workspaceId, user?.email]);
 
   return (
     <AppDataContext.Provider

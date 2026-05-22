@@ -88,7 +88,7 @@ const emptyTask = () => ({
 
 const DashboardPage = () => {
   const { user, workspaceId }                         = useAuth();
-  const { projects, tasks, teamMembers, notes, files, members } = useAppData();
+    const { projects, tasks, teamMembers, notes, members } = useAppData();
   const navigate                                       = useNavigate();
 
   // ── Modals ──────────────────────────────────────────────────────────────
@@ -247,7 +247,7 @@ const DashboardPage = () => {
         )}
 
         {/* ── ROW 1: Stat Cards ────────────────────────────────────────── */}
-        <div className="grid grid-cols-4 gap-3 mb-4">
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           {STAT_CARDS.map(s => (
             <div key={s.label}
                  onClick={s.onClick}
@@ -265,7 +265,7 @@ const DashboardPage = () => {
         </div>
 
         {/* ── ROW 2: Project Progress + Upcoming Tasks ─────────────────── */}
-        <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
 
           {/* Project Progress */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
@@ -335,7 +335,7 @@ const DashboardPage = () => {
                   Sorted by due date
                 </p>
               </div>
-              <button onClick={() => navigate("/tasks")}
+                            <button onClick={() => navigate("/my-tasks")}
                       className="text-xs text-blue-600 hover:underline font-medium">
                 VIEW ALL →
               </button>
@@ -403,7 +403,7 @@ const DashboardPage = () => {
         </div>
 
         {/* ── ROW 3: Workflow Health + Task Priority ───────────────────── */}
-        <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
 
           {/* Workflow Health */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
@@ -486,7 +486,7 @@ const DashboardPage = () => {
         </div>
 
         {/* ── ROW 4: Recent Activity + Weekly Productivity ─────────────── */}
-        <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
 
           {/* Recent Activity */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
@@ -570,7 +570,7 @@ const DashboardPage = () => {
                 + New Project
               </button>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {projects.slice(0, 6).map(p => {
                 const pt   = tasks.filter(t => t.projectId === p.id);
                 const done = pt.filter(t => t.status === "Done").length;

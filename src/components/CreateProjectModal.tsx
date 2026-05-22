@@ -23,7 +23,7 @@ const COLORS = [
 
 export default function CreateProjectModal({ isOpen, onClose }: Props) {
   const navigate = useNavigate();
-  const { user, workspaceId } = useAuth();
+    const { user, workspaceId, personalWorkspaceId } = useAuth();
   const { members, workspaceData } = useAppData();
 
   const safeMembers = Array.isArray(members) ? members : [];
@@ -31,10 +31,11 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState(COLORS[0]);
-  const [visibility, setVisibility] = useState<"workspace" | "private">(
-    "workspace"
+    const [visibility, setVisibility] = useState<"workspace" | "private">(
+    "private"
   );
-  const [pinnedToWorkspace, setPinnedToWorkspace] = useState(true);
+  const [pinnedToWorkspace, setPinnedToWorkspace] = useState(false);
+
   const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
   const [dueDate, setDueDate] = useState("");
   const [saving, setSaving] = useState(false);
@@ -43,16 +44,34 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
   const trimmedName = name.trim();
   const trimmedDescription = description.trim();
 
-  const myMembership = safeMembers.find((m: any) => m.userId === user?.uid);
+  const myMembership = safeMembers.find((m: any) => {
+    const memberUid = m.userId || m.uid || m.id;
+    return !!user?.uid && memberUid === user.uid;
+  });
 
   const isWorkspaceOwner = !!user?.uid && workspaceData?.ownerId === user.uid;
 
-  const myRole = isWorkspaceOwner ? "owner" : myMembership?.role ?? "member";
+  const isActiveWorkspaceMember =
+    isWorkspaceOwner || myMembership?.status === "active";
+
+    const effectivePersonalWorkspaceId =
+    personalWorkspaceId || (user?.uid ? `personal_${user.uid}` : "");
+
+  const targetWorkspaceId =
+    visibility === "private" ? effectivePersonalWorkspaceId : workspaceId || "";
+
+  const canCreatePrivateProject = !!user?.uid && !!effectivePersonalWorkspaceId;
+
+  const canCreateWorkspaceProject =
+    !!user?.uid && !!workspaceId && isActiveWorkspaceMember;
 
   const canCreateProjects =
-    myRole === "owner" ||
-    myRole === "admin" ||
-    myMembership?.permissions?.canCreateProjects === true;
+    visibility === "private"
+      ? canCreatePrivateProject
+      : canCreateWorkspaceProject;
+
+
+
 
   const projectCode = useMemo(() => {
     const base = trimmedName
@@ -73,8 +92,8 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
     setName("");
     setDescription("");
     setColor(COLORS[0]);
-    setVisibility("workspace");
-    setPinnedToWorkspace(true);
+        setVisibility("private");
+    setPinnedToWorkspace(false);
     setPriority("medium");
     setDueDate("");
     setError("");
@@ -99,15 +118,21 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
       return;
     }
 
-    if (!workspaceId) {
-      setError("No active workspace was found.");
+            if (!targetWorkspaceId) {
+      setError("No workspace was found. Please sign out and sign back in.");
       return;
     }
 
     if (!canCreateProjects) {
-      setError("You do not have permission to create projects.");
+      setError(
+        visibility === "private"
+          ? "Your personal workspace is still loading. Please refresh and try again."
+          : "Your workspace is still loading or your account is not an active member of this workspace."
+      );
       return;
     }
+
+
 
     if (!trimmedName) {
       setError("Project name is required.");
@@ -199,11 +224,14 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
             </div>
           )}
 
-          {!canCreateProjects && (
+                              {!canCreateProjects && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              Your current role does not allow creating workspace projects.
+              Your workspace is still loading or your account is not an active member of this workspace.
+              If this is a new account, sign out and sign back in once.
             </div>
           )}
+
+
 
           <div>
             <label
