@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useAppData } from "../context/AppDataContext";
 import {
   collection,
   collectionGroup,
@@ -117,12 +118,13 @@ const filterFromQuery = (
 };
 
 export default function MyTasksPage() {
-    const { user, workspaceId } = useAuth();
+  const { user, workspaceId } = useAuth();
+  const { tasks: workspaceTasks } = useAppData();
   const location = useLocation();
   const navigate = useNavigate();
 
+  const [userTaskIndex, setUserTaskIndex] = useState<any[]>([]);
 
-  const [tasks, setTasks] = useState<any[]>([]);
   const [filter, setFilter] = useState<FilterType>("All");
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(
     null
@@ -169,7 +171,65 @@ export default function MyTasksPage() {
     dueDate: "",
   });
 
-  const [editSaving, setEditSaving] = useState(false);
+    const [editSaving, setEditSaving] = useState(false);
+
+  const tasks = useMemo(() => {
+    const merged = new Map<string, any>();
+
+    const putTask = (task: any, source: "workspace" | "user") => {
+      if (!task) return;
+
+      const id = String(
+        task.id ||
+          task.originalTaskId ||
+          task.sharedTaskId ||
+          task.taskId ||
+          ""
+      ).trim();
+
+      if (!id) return;
+
+      const existing = merged.get(id);
+
+      const normalizedTask = {
+        ...task,
+        id,
+        workspaceId: task.workspaceId || workspaceId || "",
+        source,
+      };
+
+      if (!existing) {
+        merged.set(id, normalizedTask);
+        return;
+      }
+
+      /**
+       * Keep canonical workspace task data fresh.
+       * Keep user-index metadata for accepted/shared tasks.
+       */
+      merged.set(id, {
+        ...existing,
+        ...normalizedTask,
+        isSharedTask:
+          existing.isSharedTask === true || normalizedTask.isSharedTask === true,
+        sharedWithMe:
+          existing.sharedWithMe === true || normalizedTask.sharedWithMe === true,
+        shareId: normalizedTask.shareId || existing.shareId || "",
+        accessType: normalizedTask.accessType || existing.accessType || "",
+      });
+    };
+
+    workspaceTasks.forEach((task: any) => putTask(task, "workspace"));
+    userTaskIndex.forEach((task: any) => putTask(task, "user"));
+
+    return Array.from(merged.values()).sort((a: any, b: any) => {
+      return (
+        getTime(b.updatedAt || b.acceptedAt || b.createdAt) -
+        getTime(a.updatedAt || a.acceptedAt || a.createdAt)
+      );
+    });
+  }, [workspaceTasks, userTaskIndex, workspaceId]);
+
 
   /**
    * 1. Main My Tasks listener.
@@ -180,10 +240,11 @@ export default function MyTasksPage() {
    * Accepted task invites must appear here as real documents.
    */
   useEffect(() => {
-    if (!user?.uid) {
-      setTasks([]);
+        if (!user?.uid) {
+      setUserTaskIndex([]);
       return;
     }
+
 
     console.log("[MyTasksPage] Listening to user tasks:", user.uid);
 
@@ -536,16 +597,28 @@ export default function MyTasksPage() {
 
         if (!sourceTaskSnap.exists() || cancelled) return;
 
+               const sourceTaskData = sourceTaskSnap.data() as any;
+
         const sourceTask = {
           id: sourceTaskSnap.id,
-          ...sourceTaskSnap.data(),
-          originalTaskId: sourceTaskSnap.id,
-          sharedTaskId: sourceTaskSnap.id,
-          workspaceId: requestedWorkspaceId,
+          title: String(sourceTaskData?.title || sourceTaskData?.name || "Untitled task"),
+          status: String(sourceTaskData?.status || "To Do"),
+          priority: String(sourceTaskData?.priority || "Low"),
+          assignee: String(sourceTaskData?.assignee || ""),
+          dueDate: sourceTaskData?.dueDate || "",
+          description: String(sourceTaskData?.description || ""),
+          taskCode: String(sourceTaskData?.taskCode || sourceTaskData?.code || ""),
           projectId:
             requestedProjectId ||
-            String((sourceTaskSnap.data() as any)?.projectId || ""),
-        } as DetailTask;
+            String(sourceTaskData?.projectId || ""),
+          workspaceId: requestedWorkspaceId,
+          originalTaskId: sourceTaskSnap.id,
+          sharedTaskId: sourceTaskSnap.id,
+          createdAt: sourceTaskData?.createdAt || null,
+          updatedAt: sourceTaskData?.updatedAt || null,
+          ...sourceTaskData,
+        } as unknown as DetailTask;
+
 
         setDetailTask(sourceTask);
         setAutoOpenedTaskId(openKey);

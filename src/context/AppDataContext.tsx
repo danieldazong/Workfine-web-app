@@ -91,10 +91,14 @@ interface WorkspaceData {
 
 interface Note {
   id: string;
-  content: string;
-  createdAt?: unknown;
-  [key: string]: unknown;
+  title?: string;
+  content?: string;
+  body?: string;
+  createdAt?: any;
+  updatedAt?: any;
+  [key: string]: any;
 }
+
 
 interface AppDataContextType {
   tasks: Task[];
@@ -318,25 +322,51 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const myEmail = user?.email?.toLowerCase().trim() ?? "";
 
       const accessibleTasks = latestTasks.filter((task: any) => {
-        /**
-         * Tasks attached to accessible projects are visible.
-         */
-        if (task.projectId && accessibleProjectIds.has(task.projectId)) {
-          return true;
-        }
+        const taskProjectId = String(task.projectId || "").trim();
 
         /**
-         * Personal/unprojected tasks created by or assigned to the user
-         * can still appear in My Tasks.
+         * Show every task attached to projects the current user can access.
          */
-        if (task.createdBy === uid || task.ownerId === uid) {
+        if (taskProjectId && accessibleProjectIds.has(taskProjectId)) {
           return true;
         }
 
-        if (task.assigneeId === uid) {
+        /**
+         * Show personal/unprojected tasks created or owned by the user.
+         */
+        if (task.createdBy === uid || task.ownerId === uid || task.uid === uid) {
           return true;
         }
 
+        /**
+         * Show tasks assigned to the user by uid.
+         */
+        if (task.assigneeId === uid || task.assignedToUid === uid) {
+          return true;
+        }
+
+        if (Array.isArray(task.assigneeIds) && task.assigneeIds.includes(uid)) {
+          return true;
+        }
+
+        if (Array.isArray(task.assignedTo) && task.assignedTo.includes(uid)) {
+          return true;
+        }
+
+        if (Array.isArray(task.memberIds) && task.memberIds.includes(uid)) {
+          return true;
+        }
+
+        if (
+          Array.isArray(task.collaboratorUids) &&
+          task.collaboratorUids.includes(uid)
+        ) {
+          return true;
+        }
+
+        /**
+         * Show tasks assigned to the user's email.
+         */
         if (
           myEmail &&
           typeof task.assignee === "string" &&
@@ -345,8 +375,27 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           return true;
         }
 
+        if (
+          myEmail &&
+          typeof task.assigneeEmail === "string" &&
+          task.assigneeEmail.toLowerCase().trim() === myEmail
+        ) {
+          return true;
+        }
+
+        if (
+          myEmail &&
+          Array.isArray(task.assigneeEmails) &&
+          task.assigneeEmails
+            .map((email: any) => String(email).toLowerCase().trim())
+            .includes(myEmail)
+        ) {
+          return true;
+        }
+
         return false;
       });
+
 
       setProjects(accessibleProjects);
       setTasks(accessibleTasks);

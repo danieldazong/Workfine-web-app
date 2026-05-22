@@ -89,17 +89,24 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
 }, workspaceId);
 
       } else {
-        await taskService.createTask({
+           await taskService.createTask({
           projectId,
           workspaceId,
-          title,
-          description,
+          title: title.trim(),
+          description: description.trim(),
+          createdBy: user.uid,
+          ownerId: user.uid,
+          assignee: user.email || user.displayName || "",
+          assigneeId: user.uid,
           assigneeIds: [user.uid],
+          assigneeEmail: user.email || "",
+          assigneeEmails: user.email ? [user.email] : [],
           dueDate: dueDate || null,
           priority,
           status,
-          sectionId: status
+          sectionId: status,
         });
+
       }
       onClose();
     } catch (error) {

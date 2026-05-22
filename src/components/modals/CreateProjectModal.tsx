@@ -226,8 +226,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
 
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[90vh] w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl focus:outline-none">
-          <div className="flex items-start justify-between border-b border-slate-200 px-6 py-5">
+                <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[92vh] w-[calc(100vw-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl focus:outline-none">
+
+                    <div className="flex shrink-0 items-start justify-between border-b border-slate-200 px-5 py-4">
             <div>
               <Dialog.Title className="text-xl font-semibold text-slate-900">
                 Create New Project

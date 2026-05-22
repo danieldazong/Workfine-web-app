@@ -20,7 +20,13 @@ interface ProjectListViewProps {
 }
 
 export default function ProjectListView({ tasks, onTaskClick }: ProjectListViewProps) {
-  const sections = ['To Do', 'In Progress', 'In Review', 'Done'];
+    const sections: Array<"To Do" | "In Progress" | "In Review" | "Done"> = [
+    "To Do",
+    "In Progress",
+    "In Review",
+    "Done",
+  ];
+
 
   return (
     <div className="space-y-8">

@@ -84,15 +84,19 @@ export const taskService = {
       throw new Error("workspaceId is required to create task");
     }
 
-    const ref = await addDoc(
+      const ref = await addDoc(
       collection(db, "workspaces", workspaceId, "tasks"),
       cleanUndefined({
         ...taskData,
         workspaceId,
+        title: String(taskData.title || "").trim(),
+        status: taskData.status || "To Do",
+        priority: taskData.priority || "Medium",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
     );
+
 
     return ref.id;
   },

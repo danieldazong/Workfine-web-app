@@ -505,10 +505,12 @@ function OverviewTab({
                 Important links and projects your team should know about
               </p>
             </div>
-            <button
-              onClick={() => navigate2("/projects")}
+                      
+                        <button
+              onClick={() => window.location.assign("/projects")}
               className="text-xs text-violet-600 hover:underline font-medium flex items-center gap-1"
             >
+
               View all <ArrowRight size={12} />
             </button>
           </div>
@@ -540,22 +542,24 @@ function OverviewTab({
                 return (
                   <div
                     key={p.id}
-                    onClick={() => navigate2(`/projects/${p.id}`)}
+                                        onClick={() => window.location.assign(`/projects/${p.id}`)}
                     className="border border-gray-200 rounded-xl p-3 cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all group"
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <div
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
-                        style={{ backgroundColor: p.color ?? "#3b82f6" }}
+                                               style={{ backgroundColor: p?.color ?? "#3b82f6" }}
                       >
-                        {p.name[0].toUpperCase()}
+                        {String(p?.name || "P").charAt(0).toUpperCase()}
                       </div>
                       <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-violet-700 transition-colors">
-                        {p.name}
+                        {String(p?.name || "Untitled Project")}
                       </p>
                     </div>
-                    {p.description && (
-                      <p className="text-xs text-gray-400 truncate mb-2">{p.description}</p>
+                    {p?.description && (
+                      <p className="text-xs text-gray-400 truncate mb-2">
+                        {String(p.description)}
+                      </p>
                     )}
                     <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1">
                       <span>{pt.length} task{pt.length === 1 ? "" : "s"}</span>
@@ -564,7 +568,7 @@ function OverviewTab({
                     <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all"
-                        style={{ width: `${pct}%`, backgroundColor: p.color ?? "#3b82f6" }}
+                                                style={{ width: `${pct}%`, backgroundColor: p?.color ?? "#3b82f6" }}
                       />
                     </div>
                   </div>
@@ -592,8 +596,8 @@ function OverviewTab({
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-gray-800">Members</h3>
-            <button
-              onClick={() => navigate2("/workspace/members")}
+                      <button
+              onClick={() => window.location.assign("/workspace/members")}
               className="text-xs text-violet-600 hover:underline font-medium"
             >
               View all {members.length}
@@ -702,10 +706,6 @@ function OverviewTab({
   );
 }
 
-function navigate2(path: string) {
-  window.history.pushState({}, "", path);
-  window.dispatchEvent(new PopStateEvent("popstate"));
-}
 
 function StatRow({ label, value }: { label: string; value: number }) {
   return (
@@ -1801,16 +1801,17 @@ function AddExistingProjectModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-6 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4 py-4 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">
+                        <h2 className="text-base font-semibold text-slate-900">
               Add project to workspace
             </h2>
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-0.5 text-xs text-slate-500">
               Choose an existing project to show in curated work.
             </p>
+
           </div>
 
           <button
@@ -1824,9 +1825,9 @@ function AddExistingProjectModal({
           </button>
         </div>
 
-        <div className="max-h-[60vh] overflow-y-auto px-6 py-5">
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {error && (
-            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
             </div>
           )}
@@ -1851,7 +1852,7 @@ function AddExistingProjectModal({
                   type="button"
                   onClick={() => onAdd(project.id)}
                   disabled={!!addingProjectId}
-                  className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-violet-300 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white p-3 text-left transition hover:border-violet-300 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <div className="flex min-w-0 items-center gap-3">
                     <div
@@ -1888,7 +1889,7 @@ function AddExistingProjectModal({
           )}
         </div>
 
-        <div className="flex justify-end border-t border-slate-200 px-6 py-4">
+                <div className="flex shrink-0 justify-end border-t border-slate-200 bg-slate-50 px-5 py-3">
           <button
             type="button"
             onClick={onClose}

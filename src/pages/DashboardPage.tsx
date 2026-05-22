@@ -1,11 +1,9 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import { useNavigate }    from "react-router-dom";
 import { useAppData }     from "../context/AppDataContext";
 import { useAuth }        from "../context/AuthContext";
-import { createProject }  from "../lib/firebase/projects";
 import {
   addDoc, collection, serverTimestamp,
-  doc, updateDoc,
 } from "firebase/firestore";
 import { db } from "../lib/firebase/config";
 import {
@@ -87,8 +85,6 @@ const emptyTask = () => ({
   dueDate: "", assignee: "", projectId: "",
 });
 
-// ─── Create Project Modal (inline, compact) ───────────────────────────────
-const COLORS_P = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#ec4899"];
 
 const DashboardPage = () => {
   const { user, workspaceId }                         = useAuth();
@@ -99,12 +95,6 @@ const DashboardPage = () => {
   const [showTask,    setShowTask]    = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [taskForm,    setTaskForm]    = useState(emptyTask());
-  const [pName,       setPName]       = useState("");
-  const [pColor,      setPColor]      = useState("#3b82f6");
-  const [pDesc,       setPDesc]       = useState("");
-  const [pPriority,   setPPriority]   = useState("Medium");
-  const [pDue,        setPDue]        = useState("");
-  const [pStatus,     setPStatus]     = useState("active");
   const [saving,      setSaving]      = useState(false);
   const [dismissed,   setDismissed]   = useState(false);
 
@@ -853,12 +843,10 @@ const DashboardPage = () => {
       )}
 
       {/* ══ CREATE PROJECT MODAL ══════════════════════════════════════════ */}
-      {showCreateProject && (
-  <CreateProjectModal
-    isOpen={showCreateProject}
-    onClose={() => setShowCreateProject(false)}
-  />
-)}
+                 <CreateProjectModal
+        isOpen={showCreateProject}
+        onClose={() => setShowCreateProject(false)}
+      />
 
     </div>
   );
