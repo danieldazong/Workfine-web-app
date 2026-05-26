@@ -25,6 +25,7 @@ import MyTasksPage from "./pages/MyTasksPage";
 import SettingsPage from "./pages/SettingsPage";
 import ProjectPage from "./pages/ProjectPage";
 import CalendarPage from "./pages/CalendarPage";
+import TeamPage from "./pages/TeamPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import JoinWorkspacePage from "./pages/JoinWorkspacePage";
 import AcceptTaskInvitePage from "./pages/AcceptTaskInvitePage";
@@ -110,10 +111,11 @@ export default function App() {
           {/* Protected app routes */}
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
-              <Route path="/" element={<DashboardPage />} />
+                            <Route path="/" element={<DashboardPage />} />
               <Route path="/my-tasks" element={<MyTasksPage />} />
               <Route path="/insights" element={<InsightsPage />} />
               <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/team" element={<TeamPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/projects/:id" element={<ProjectPage />} />
               <Route path="/workspace" element={<WorkspacePage />} />

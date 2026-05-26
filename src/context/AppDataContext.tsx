@@ -108,6 +108,20 @@ interface Note {
 }
 
 
+interface WorkspacePerson {
+  userId?: string;
+  uid?: string;
+  email?: string;
+  displayName?: string;
+  photoURL?: string;
+  avatarColor?: string;
+  type?: "guest" | "member";
+  status?: "active" | "inactive";
+  lastActive?: any;
+  projects?: Record<string, { projectName?: string; role?: string; status?: string }>;
+  [key: string]: any;
+}
+
 interface AppDataContextType {
   tasks: Task[];
   teamMembers: TeamMember[];
@@ -119,8 +133,10 @@ interface AppDataContextType {
   pendingInvites: PendingInvite[];
   memberCount: number;
   workspaceData: WorkspaceData | null;
+  workspacePeople: WorkspacePerson[];
   cancelInvite: (inviteCode: string) => Promise<void>;
 }
+
 
 const AppDataContext = createContext<AppDataContextType>({
   tasks: [],
@@ -133,8 +149,11 @@ const AppDataContext = createContext<AppDataContextType>({
   pendingInvites: [],
   memberCount: 0,
   workspaceData: null,
+  workspacePeople: [],
   cancelInvite: async () => {},
 });
+
+
 
 async function fixLegacyInvites(wsId: string): Promise<void> {
   try {
@@ -189,9 +208,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+    const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
+  const [workspacePeople, setWorkspacePeople] = useState<WorkspacePerson[]>([]);
+
 
     const resolvedRef = useRef(false);
   const hasEverResolvedRef = useRef(false);
@@ -284,7 +305,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
 
-  // Workspace shared listeners: workspace, members, invites, projects, tasks.
+    // Workspace shared listeners: workspace, members, invites, projects, tasks.
   useEffect(() => {
     if (!uid || !workspaceId) {
       setTasks([]);
@@ -292,9 +313,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setMembers([]);
       setPendingInvites([]);
       setWorkspaceData(null);
+      setWorkspacePeople([]);
       setLoading(false);
       return;
     }
+
 
         console.log("[AppData] 🔄 Attaching workspace listeners:", workspaceId);
 
@@ -759,6 +782,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           })();
 
 
+    // External guests / project collaborators listener
+    const unsubPeople = onSnapshot(
+      collection(db, "workspaces", workspaceId, "people"),
+      (snap) => {
+        const data: WorkspacePerson[] = snap.docs.map((d) => {
+          const raw = d.data() as any;
+          return {
+            id: d.id,
+            userId: raw.userId ?? raw.uid ?? d.id,
+            ...raw,
+          };
+        });
+        setWorkspacePeople(data);
+      },
+      (err) => {
+        // Silently ignore — collection may not exist yet for older workspaces.
+        if (err.code !== "permission-denied") {
+          console.warn("[AppData] people listener error:", err.code);
+        }
+        setWorkspacePeople([]);
+      }
+    );
+
 
     const unsubTasks = onSnapshot(
       collection(db, "workspaces", workspaceId, "tasks"),
@@ -790,20 +836,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
     );
 
-    return () => {
+        return () => {
       console.log("[AppData] 🧹 Cleaning workspace listeners:", workspaceId);
       clearTimeout(timeout);
       unsubWorkspace();
       unsubWsMembers();
       unsubInvites();
-          unsubWorkspaceProjects();
+      unsubWorkspaceProjects();
       unsubPersonalProjects();
       unsubTasks();
+      unsubPeople();
     };
+
         }, [uid, workspaceId, personalWorkspaceId, user?.email]);
 
 
-  return (
+      return (
     <AppDataContext.Provider
       value={{
         tasks,
@@ -816,6 +864,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         pendingInvites,
         memberCount: members.filter((m) => m.status === "active").length,
         workspaceData,
+        workspacePeople,
         cancelInvite,
       }}
     >
@@ -823,6 +872,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     </AppDataContext.Provider>
   );
 }
+
+
 
 export function useAppData(): AppDataContextType {
   return useContext(AppDataContext);

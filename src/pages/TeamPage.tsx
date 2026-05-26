@@ -3,6 +3,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
 } from "react";
 import {
   Users,
@@ -176,12 +177,8 @@ export default function TeamPage() {
     workspaceData,
     cancelInvite,
     projects,
+    workspacePeople,
   } = useAppData();
-
-  // External guests aren't yet wired into AppDataContext, so treat as empty.
-  // To enable, add `workspacePeople: WorkspacePerson[]` to AppDataContextType
-  // and surface it via a /workspaces/{id}/people listener.
-  const workspacePeople: any[] = [];
 
   /**
    * Workspace-scoped data lives outside the main AppDataContext loading flag.
@@ -209,6 +206,14 @@ export default function TeamPage() {
   // Inline replacement for useDelayedLoading hook.
   // Show skeleton while still loading (and not yet timed out) OR not mounted.
   const showSkeleton = (teamLoading && !loadTimedOut) || !mounted;
+  // Fix #10 — close role menu when clicking outside.
+  const roleMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Fix #14 — notify when my own role changes.
+  const prevMyRoleRef = useRef<string | null>(null);
+
+  // Fix #3 — control upgrade dialog.
+  const [showUpgrade, setShowUpgrade] = useState(false);
 
   const [search, setSearch] = useState("");
 
@@ -221,6 +226,22 @@ export default function TeamPage() {
   const [cancelError, setCancelError] = useState<string | null>(null);
 
   const showToast = useCallback((msg: string) => setToast(msg), []);
+
+  // Fix #10 — outside-click handler for role dropdown.
+  useEffect(() => {
+    if (!roleMenuFor) return;
+    function onDocClick(e: MouseEvent) {
+      if (
+        roleMenuRef.current &&
+        !roleMenuRef.current.contains(e.target as Node)
+      ) {
+        setRoleMenuFor(null);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [roleMenuFor]);
+
 
   /**
    * The real owner must come from workspaceData.ownerId.
@@ -254,6 +275,14 @@ export default function TeamPage() {
       : myMember?.role === "owner"
         ? "member"
         : myMember?.role ?? "member";
+
+  // Fix #14 — toast when my role changes (e.g. another admin promotes me).
+  useEffect(() => {
+    if (prevMyRoleRef.current && prevMyRoleRef.current !== myRole) {
+      showToast(`Your workspace role is now: ${myRole}`);
+    }
+    prevMyRoleRef.current = myRole;
+  }, [myRole, showToast]);
 
   const visibleMembers = activeMembersRaw.filter((m) => {
     if (!m.userId) return false;
@@ -315,80 +344,8 @@ export default function TeamPage() {
     );
   });
 
-  // ── Workspace initialization ───────────────────────────────────────────────
-  useEffect(() => {
-    if (!workspaceId || !user) return;
-
-    const init = async () => {
-      try {
-        const wsRef = doc(db, "workspaces", workspaceId);
-        const memberRef = doc(
-          db,
-          "workspaces",
-          workspaceId,
-          "members",
-          user.uid
-        );
-
-        const [wsSnap, memberSnap] = await Promise.all([
-          getDoc(wsRef),
-          getDoc(memberRef),
-        ]);
-
-        if (!wsSnap.exists()) {
-          await setDoc(wsRef, {
-            id: workspaceId,
-            workspaceId,
-            name: `${
-              user.displayName ?? user.email?.split("@")[0] ?? "My"
-            }'s Workspace`,
-            ownerId: user.uid,
-            ownerEmail: user.email ?? "",
-            createdAt: serverTimestamp(),
-            memberCount: 1,
-            plan: "free",
-          });
-        }
-
-        if (!memberSnap.exists()) {
-          const freshWs = wsSnap.exists() ? wsSnap : await getDoc(wsRef);
-          const wsOwnerId = freshWs.data()?.ownerId;
-
-          if (!wsOwnerId || wsOwnerId !== user.uid) {
-            console.log(
-              "[TeamPage] init: skipping member doc creation — not workspace owner.",
-              { wsOwnerId, currentUid: user.uid, workspaceId }
-            );
-            return;
-          }
-
-          await setDoc(memberRef, {
-            userId: user.uid,
-            email: user.email ?? "",
-            displayName:
-              user.displayName ?? user.email?.split("@")[0] ?? "Owner",
-            avatar: (user.displayName ?? user.email ?? "O")[0].toUpperCase(),
-            avatarColor: getAvatarColor(user.uid),
-            role: "owner",
-            status: "active",
-            joinedAt: serverTimestamp(),
-            invitedBy: "",
-            lastActive: serverTimestamp(),
-            permissions: {
-              canCreateProjects: true,
-              canDeleteProjects: true,
-              canInviteMembers: true,
-              canManageTasks: true,
-            },
-          });
-        }
-      } catch (err) {
-        console.error("[TeamPage] init error:", err);
-      }
-    };
-
-    init();
-  }, [workspaceId, user]);
+    // Workspace initialization is handled centrally in AuthContext
+  // (ensurePersonalWorkspace / ensureWorkspaceAndMembership). No init needed here.
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -561,6 +518,57 @@ export default function TeamPage() {
       setCancellingCode(null);
     }
   };
+  // Fix #7 — workspace ownership transfer.
+  async function transferOwnership(targetUid: string, targetName: string) {
+    if (!workspaceId || !user?.uid) return;
+    if (targetUid === user.uid) return;
+    if (myRole !== "owner") {
+      showToast("Only the current owner can transfer ownership.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Transfer ownership of this workspace to ${targetName}? You will be demoted to admin and lose owner privileges.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const wsRef = doc(db, "workspaces", workspaceId);
+      const newOwnerMemberRef = doc(
+        db,
+        "workspaces",
+        workspaceId,
+        "members",
+        targetUid
+      );
+      const oldOwnerMemberRef = doc(
+        db,
+        "workspaces",
+        workspaceId,
+        "members",
+        user.uid
+      );
+
+      await updateDoc(wsRef, {
+        ownerId: targetUid,
+        updatedAt: serverTimestamp(),
+      });
+      await updateDoc(newOwnerMemberRef, {
+        role: "owner",
+        updatedAt: serverTimestamp(),
+      });
+      await updateDoc(oldOwnerMemberRef, {
+        role: "admin",
+        updatedAt: serverTimestamp(),
+      });
+
+      setRoleMenuFor(null);
+      showToast(`Ownership transferred to ${targetName}`);
+    } catch (err) {
+      console.error("[TeamPage] transferOwnership error:", err);
+      showToast("Failed to transfer ownership.");
+    }
+  }
+
 
   async function resendInvite(invite: any) {
     if (!workspaceId) return;
@@ -576,7 +584,7 @@ export default function TeamPage() {
         }
       );
 
-      showToast(`Invitation resent to ${invite.email}`);
+            showToast(`Invite expiry extended for ${invite.email}`);
     } catch (err) {
       console.error("[TeamPage] resendInvite error:", err);
       showToast("Failed to resend invite.");
@@ -593,13 +601,26 @@ export default function TeamPage() {
 
   // ── Derived stats ─────────────────────────────────────────────────────────
 
-  const activeCount = visibleMembers.length;
+    const activeCount = visibleMembers.length;
   const workspaceUserCount = activeMembersRaw.length;
   const guestCount = externalGuests.length;
+  const activePendingCount = pendingInvites.filter(
+    (i) => !isExpired(i.expiresAt)
+  ).length;
+  const expiredInvitesCount = pendingInvites.filter((i) =>
+    isExpired(i.expiresAt)
+  ).length;
   const pendingCount = pendingInvites.length;
   const plan = workspaceData?.plan ?? "free";
+  const seatLimit =
+    typeof (workspaceData as any)?.seatLimit === "number"
+      ? (workspaceData as any).seatLimit
+      : plan === "pro"
+        ? Infinity
+        : 10;
 
-  const STATS = [
+
+   const STATS = [
     {
       label: "Workspace Users",
       value: workspaceUserCount,
@@ -615,8 +636,11 @@ export default function TeamPage() {
       color: "text-blue-600",
     },
     {
-      label: "Pending Invites",
-      value: pendingCount,
+      label:
+        expiredInvitesCount > 0
+          ? `Pending (${activePendingCount}) · Expired (${expiredInvitesCount})`
+          : "Pending Invites",
+      value: activePendingCount,
       icon: Clock,
       bg: "bg-orange-100",
       color: "text-orange-500",
@@ -629,6 +653,7 @@ export default function TeamPage() {
       color: "text-emerald-600",
     },
   ];
+
 
   const wsName =
     workspaceData?.name ??
@@ -855,8 +880,84 @@ export default function TeamPage() {
                 )}
               </div>
             ) : (
-              <div className="space-y-3">
+                            <div className="space-y-3">
+                {/* Fix #11 — render the owner at the top (read-only). */}
+                {ownerMember && !search.trim() && (
+                  <div className="bg-white rounded-2xl border border-violet-100 shadow-sm p-4">
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex-shrink-0">
+                        <div
+                          className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden"
+                          style={{
+                            backgroundColor: getAvatarColor(
+                              ownerMember.userId || "owner"
+                            ),
+                          }}
+                        >
+                          {(ownerMember as any).photoURL ? (
+                            <img
+                              src={(ownerMember as any).photoURL}
+                              alt={ownerMember.displayName || ownerMember.email}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 rounded-full object-cover"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display =
+                                  "none";
+                              }}
+                            />
+                          ) : (
+                            (
+                              ownerMember.displayName ||
+                              ownerMember.email ||
+                              "O"
+                            )[0].toUpperCase()
+                          )}
+                        </div>
+                        {isOnline((ownerMember as any).lastActive) && (
+                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
+                        )}
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">
+                          <span className="mr-1">👑</span>
+                          {ownerMember.displayName || ownerMember.email}
+                          {ownerMember.userId === user?.uid && (
+                            <span className="ml-1 text-xs text-slate-400 font-normal">
+                              (you)
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-slate-400 truncate">
+                          {ownerMember.email}
+                        </p>
+                      </div>
+
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize flex-shrink-0 ${ROLE_BADGE.owner}`}
+                      >
+                        owner
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
+                      <span>
+                        Joined{" "}
+                        {timeAgo(
+                          (ownerMember as any).joinedAt ||
+                            workspaceData?.createdAt
+                        )}
+                      </span>
+                      <span>
+                        Last active{" "}
+                        {timeAgo((ownerMember as any).lastActive)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
                 {filtered.map((member) => {
+
                   const isOwnerMember = member.userId === ownerUserId;
 
                   const displayRole =
@@ -891,18 +992,32 @@ export default function TeamPage() {
                       className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition-all"
                     >
                       <div className="flex items-center gap-3">
-                        <div className="relative flex-shrink-0">
+                                                <div className="relative flex-shrink-0">
                           <div
-                            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden"
                             style={{ backgroundColor: bgColor }}
                           >
-                            {initials}
+                            {(member as any).photoURL ? (
+                              <img
+                                src={(member as any).photoURL}
+                                alt={member.displayName || member.email || "User"}
+                                referrerPolicy="no-referrer"
+                                className="w-10 h-10 rounded-full object-cover"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display =
+                                    "none";
+                                }}
+                              />
+                            ) : (
+                              initials
+                            )}
                           </div>
 
                           {online && (
                             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
                           )}
                         </div>
+
 
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-slate-800 truncate">
@@ -937,7 +1052,14 @@ export default function TeamPage() {
 
                       {canAct && !confirmingRemove && (
                         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-50">
-                          <div className="relative">
+                                                    <div
+                            className="relative"
+                            ref={
+                              roleMenuFor === member.userId
+                                ? roleMenuRef
+                                : undefined
+                            }
+                          >
                             <button
                               onClick={() =>
                                 setRoleMenuFor(
@@ -952,7 +1074,7 @@ export default function TeamPage() {
                             </button>
 
                             {roleMenuFor === member.userId && (
-                              <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 w-36 overflow-hidden">
+                              <div className="absolute top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 w-44 overflow-hidden">
                                 {["admin", "member", "viewer"]
                                   .filter((r) => r !== displayRole)
                                   .map((r) => (
@@ -972,10 +1094,24 @@ export default function TeamPage() {
                                       {r}
                                     </button>
                                   ))}
+                                {myRole === "owner" && (
+                                  <button
+                                    onClick={() =>
+                                      transferOwnership(
+                                        member.userId,
+                                        member.displayName ||
+                                          member.email ||
+                                          "Member"
+                                      )
+                                    }
+                                    className="w-full px-4 py-2 text-xs text-left text-amber-700 hover:bg-amber-50 capitalize transition-colors border-t border-slate-100 font-semibold"
+                                  >
+                                    Transfer Ownership…
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
-
                           <button
                             onClick={() => setConfirmRemove(member.userId)}
                             className="text-xs text-red-500 hover:text-red-700 border border-red-100 hover:border-red-300 rounded-lg px-2.5 py-1.5 transition-colors"
@@ -1193,7 +1329,7 @@ export default function TeamPage() {
                 </div>
               )}
 
-              {showSkeleton ? (
+                            {showSkeleton ? (
                 <div className="space-y-3">
                   {Array.from({ length: 2 }).map((_, i) => (
                     <div
@@ -1219,102 +1355,122 @@ export default function TeamPage() {
                     </div>
                   ))}
                 </div>
-              ) : pendingInvites.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-8 gap-2">
-                  <div className="text-2xl">📭</div>
-                  <p className="text-xs text-slate-400">No pending invites</p>
-                </div>
               ) : (
-                <div className="space-y-3">
-                  {pendingInvites.map((inv) => {
-                    const expired = isExpired(inv.expiresAt);
-                    const isCancelling = cancellingCode === inv.code;
+                (() => {
+                  const q = search.toLowerCase().trim();
+                  const filteredInvites = q
+                    ? pendingInvites.filter((i) =>
+                        (i.email || "").toLowerCase().includes(q)
+                      )
+                    : pendingInvites;
 
+                  if (filteredInvites.length === 0) {
                     return (
-                      <div
-                        key={inv.code}
-                        className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-bold text-slate-700 truncate mr-2">
-                            {inv.email}
-                          </p>
-
-                          {expired ? (
-                            <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium flex-shrink-0">
-                              Expired
-                            </span>
-                          ) : (
-                            <span
-                              className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 capitalize ${
-                                ROLE_BADGE[inv.role] ?? ROLE_BADGE.member
-                              }`}
-                            >
-                              {inv.role}
-                            </span>
-                          )}
-                        </div>
-
-                        <p className="text-[10px] text-slate-400">
-                          Sent {timeAgo(inv.createdAt)} · Code:{" "}
-                          <span className="font-mono">
-                            {inv.inviteCode || inv.code}
-                          </span>
+                      <div className="flex flex-col items-center justify-center py-8 gap-2">
+                        <div className="text-2xl">📭</div>
+                        <p className="text-xs text-slate-400">
+                          {q ? "No invites match your search" : "No pending invites"}
                         </p>
-
-                        <div className="flex gap-2 mt-1">
-                          <button
-                            onClick={() => resendInvite(inv)}
-                            disabled={!!cancellingCode}
-                            className="flex-1 text-[10px] py-1.5 rounded-lg text-violet-600 hover:bg-violet-50 transition-colors font-medium disabled:opacity-50"
-                          >
-                            Resend
-                          </button>
-
-                          <button
-                            onClick={() => handleCancelInvite(inv.code)}
-                            disabled={!!cancellingCode}
-                            className={`flex-1 text-[10px] py-1.5 rounded-lg border font-medium transition-colors flex items-center justify-center gap-1 ${
-                              isCancelling
-                                ? "border-slate-200 text-slate-400 bg-slate-50 cursor-wait"
-                                : "border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
-                            }`}
-                          >
-                            {isCancelling ? (
-                              <>
-                                <svg
-                                  className="animate-spin h-3 w-3 text-slate-400"
-                                  xmlns="http://www.w3.org/2000/svg"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <circle
-                                    className="opacity-25"
-                                    cx="12"
-                                    cy="12"
-                                    r="10"
-                                    stroke="currentColor"
-                                    strokeWidth="4"
-                                  />
-                                  <path
-                                    className="opacity-75"
-                                    fill="currentColor"
-                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                                  />
-                                </svg>
-                                Cancelling...
-                              </>
-                            ) : (
-                              "Cancel"
-                            )}
-                          </button>
-                        </div>
                       </div>
                     );
-                  })}
-                </div>
+                  }
+
+                  return (
+                    <div className="space-y-3">
+                      {filteredInvites.map((inv) => {
+                        const expired = isExpired(inv.expiresAt);
+                        const isCancelling = cancellingCode === inv.code;
+
+                        return (
+                          <div
+                            key={inv.code}
+                            className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2"
+                          >
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-bold text-slate-700 truncate mr-2">
+                                {inv.email}
+                              </p>
+
+                              {expired ? (
+                                <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium flex-shrink-0">
+                                  Expired
+                                </span>
+                              ) : (
+                                <span
+                                  className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 capitalize ${
+                                    ROLE_BADGE[inv.role] ?? ROLE_BADGE.member
+                                  }`}
+                                >
+                                  {inv.role}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-[10px] text-slate-400">
+                              Sent {timeAgo(inv.createdAt)} · Code:{" "}
+                              <span className="font-mono">
+                                {inv.inviteCode || inv.code}
+                              </span>
+                            </p>
+
+                            <div className="flex gap-2 mt-1">
+                              <button
+                                onClick={() => resendInvite(inv)}
+                                disabled={!!cancellingCode}
+                                className="flex-1 text-[10px] py-1.5 rounded-lg text-violet-600 hover:bg-violet-50 transition-colors font-medium disabled:opacity-50"
+                                title="Extends the invite expiry by 7 days. No new email is sent."
+                              >
+                                Extend Expiry
+                              </button>
+
+                              <button
+                                onClick={() => handleCancelInvite(inv.code)}
+                                disabled={!!cancellingCode}
+                                className={`flex-1 text-[10px] py-1.5 rounded-lg border font-medium transition-colors flex items-center justify-center gap-1 ${
+                                  isCancelling
+                                    ? "border-slate-200 text-slate-400 bg-slate-50 cursor-wait"
+                                    : "border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
+                                }`}
+                              >
+                                {isCancelling ? (
+                                  <>
+                                    <svg
+                                      className="animate-spin h-3 w-3 text-slate-400"
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      fill="none"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <circle
+                                        className="opacity-25"
+                                        cx="12"
+                                        cy="12"
+                                        r="10"
+                                        stroke="currentColor"
+                                        strokeWidth="4"
+                                      />
+                                      <path
+                                        className="opacity-75"
+                                        fill="currentColor"
+                                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                      />
+                                    </svg>
+                                    Cancelling...
+                                  </>
+                                ) : (
+                                  "Cancel"
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()
               )}
             </div>
+
+
 
             {/* Workspace Info */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
@@ -1381,22 +1537,24 @@ export default function TeamPage() {
                 <div>
                   <p className="text-xs text-slate-400">Workspace Users</p>
 
-                  {showSkeleton ? (
+                                    {showSkeleton ? (
                     <SkeletonBox height={14} width={140} className="mt-1" />
                   ) : (
                     <p className="text-sm font-medium text-slate-700">
                       {workspaceUserCount} /{" "}
-                      {plan === "pro" ? "∞" : "10"} users{" "}
+                      {seatLimit === Infinity ? "∞" : seatLimit} users{" "}
                       <span className="text-slate-400 font-normal">
                         ({plan === "pro" ? "Pro" : "Free"} plan)
                       </span>
                     </p>
                   )}
+
                 </div>
 
-                {!showSkeleton && plan !== "pro" && (
+                                {!showSkeleton && plan !== "pro" && (
                   <button
-                    className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-colors"
+                    onClick={() => setShowUpgrade(true)}
+                    className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-colors hover:opacity-90 active:scale-[0.98]"
                     style={{
                       background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
                     }}
@@ -1404,11 +1562,50 @@ export default function TeamPage() {
                     ✨ Upgrade to Pro
                   </button>
                 )}
+
               </div>
             </div>
           </div>
         </div>
       </div>
+      {/* Fix #3 — Upgrade dialog */}
+      {showUpgrade && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowUpgrade(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+            <h2 className="text-lg font-bold text-slate-800 mb-2">
+              Upgrade to Pro
+            </h2>
+            <p className="text-sm text-slate-500 mb-4">
+              Unlock unlimited workspace members, unlimited projects, and
+              priority support. Billing is currently set to manual — please
+              contact your administrator to enable the Pro plan.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowUpgrade(false)}
+                className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
+              >
+                Close
+              </button>
+              <a
+                href="mailto:billing@wurkfine.app?subject=Upgrade%20to%20Pro"
+                className="px-4 py-2 text-sm rounded-lg text-white font-semibold"
+                style={{
+                  background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                }}
+              >
+                Contact Billing
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* Invite Modal */}
       {showInvite && workspaceId && (

@@ -23,6 +23,7 @@ src\features\project\views\ProjectTimelineView.tsx
 src\hooks\useMentionableUsers.ts
 src\hooks\useNotifications.ts
 src\hooks\usePageTitle.ts
+src\hooks\usePresenceHeartbeat.ts
 src\lib\projectAccess.ts
 src\lib\utils.ts
 src\lib\firebase\auth.ts
