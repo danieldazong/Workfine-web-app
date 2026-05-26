@@ -171,14 +171,19 @@ function Toast({ msg, onDone }: { msg: string; onDone: () => void }) {
 
 export default function TeamPage() {
   const { user, workspaceId, setWorkspaceId } = useAuth();
-  const {
-    members,
-    pendingInvites,
-    workspaceData,
-    cancelInvite,
-    projects,
-    workspacePeople,
-  } = useAppData();
+  const appData = useAppData();
+
+  const members = Array.isArray(appData.members) ? appData.members : [];
+  const pendingInvites = Array.isArray(appData.pendingInvites)
+    ? appData.pendingInvites
+    : [];
+  const projects = Array.isArray(appData.projects) ? appData.projects : [];
+  const workspacePeople = Array.isArray(appData.workspacePeople)
+    ? appData.workspacePeople
+    : [];
+  const workspaceData = appData.workspaceData;
+  const cancelInvite = appData.cancelInvite;
+
 
   /**
    * Workspace-scoped data lives outside the main AppDataContext loading flag.
@@ -292,17 +297,17 @@ export default function TeamPage() {
 
   const activeMemberIds = new Set(activeMembersRaw.map((m) => m.userId));
 
-  const livePidSet = new Set(
-    projects.map((p) => p.id).filter(Boolean) as string[]
-  );
-
+  // NOTE: We intentionally do NOT gate guest projects by `livePidSet` here.
+  // `appData.projects` is filtered to projects the CURRENT user can see, which
+  // excludes private projects the owner isn't a collaborator on — but the guest
+  // still has legitimate access to those projects. The People page should reflect
+  // the guest's actual access, not the viewer's project visibility.
   function getActiveGuestProjects(person: any) {
     const personProjects = person.projects ?? {};
     return Object.entries(personProjects)
-      .filter(([pid, p]: [string, any]) => {
-        if ((p?.status ?? "active") !== "active") return false;
-        if (!livePidSet.has(pid)) return false;
-        return true;
+      .filter(([, p]: [string, any]) => {
+        const status = String(p?.status ?? "active").toLowerCase();
+        return status === "active" || status === "pending";
       })
       .map(([pid, p]: [string, any]) => ({
         ...(p as any),
@@ -310,14 +315,92 @@ export default function TeamPage() {
       })) as any[];
   }
 
-  const externalGuests = workspacePeople.filter((p) => {
-    const personId = p.userId || p.uid;
-    if (!personId) return false;
-    if (activeMemberIds.has(personId)) return false;
-    if ((p.type ?? "guest") !== "guest") return false;
-    if ((p.status ?? "active") !== "active") return false;
-    return getActiveGuestProjects(p).length > 0;
+
+  function getActiveGuestTasks(person: any) {
+    const personTasks = person.tasks ?? {};
+    return Object.entries(personTasks)
+      .filter(([, t]: [string, any]) => {
+        const status = String(t?.status ?? "active").toLowerCase();
+        return status === "active" || status === "pending";
+      })
+      .map(([tid, t]: [string, any]) => ({
+        ...(t as any),
+        taskId: tid,
+      })) as any[];
+  }
+
+
+   const externalGuests = workspacePeople.filter((p) => {
+    // Match by uid OR by email — guests often have no uid until they accept.
+    const personUid = p.userId || p.uid || "";
+    const personEmail = String(p.emailLower || p.email || "")
+      .toLowerCase()
+      .trim();
+
+    // Exclude anyone who is already a real workspace member.
+    if (personUid && activeMemberIds.has(personUid)) {
+      console.log("[TeamPage] guest skipped (already member by uid):", personEmail);
+      return false;
+    }
+
+    const memberByEmail = personEmail
+      ? activeMembersRaw.find(
+          (m) => String(m.email || "").toLowerCase().trim() === personEmail,
+        )
+      : null;
+    if (memberByEmail) {
+      console.log("[TeamPage] guest skipped (already member by email):", personEmail);
+      return false;
+    }
+
+    if ((p.type ?? "guest") !== "guest") {
+      console.log("[TeamPage] guest skipped (type != guest):", personEmail, "type:", p.type);
+      return false;
+    }
+
+    // Show pending guests too so the user can see who was just invited.
+    const status = p.status ?? "active";
+    if (status !== "active" && status !== "pending") {
+      console.log("[TeamPage] guest skipped (status):", personEmail, "status:", status);
+      return false;
+    }
+
+    const projectCount = getActiveGuestProjects(p).length;
+    const taskCount = getActiveGuestTasks(p).length;
+
+    if (projectCount === 0 && taskCount === 0) {
+      console.log(
+        "[TeamPage] guest skipped (no active projects/tasks):",
+        personEmail,
+        "projects raw:",
+        p.projects,
+        "tasks raw:",
+        p.tasks
+      );
+      return false;
+    }
+
+    console.log("[TeamPage] guest INCLUDED:", personEmail, "projects:", projectCount, "tasks:", taskCount);
+    return true;
   });
+  // Diagnostic — confirms TeamPage is seeing the people documents.
+  useEffect(() => {
+    console.log(
+      "[TeamPage] workspacePeople received:",
+      workspacePeople.length,
+      "| externalGuests after filter:",
+      externalGuests.length,
+      workspacePeople.map((p: any) => ({
+        id: p.id || p.userId || p.uid,
+        email: p.email,
+        type: p.type,
+        status: p.status,
+        projects: p.projects ? Object.keys(p.projects).length : 0,
+        tasks: p.tasks ? Object.keys(p.tasks).length : 0,
+      }))
+    );
+  }, [workspacePeople, externalGuests.length]);
+
 
   const filtered = visibleMembers.filter((m) => {
     const q = search.toLowerCase().trim();
@@ -329,20 +412,25 @@ export default function TeamPage() {
     );
   });
 
-  const filteredGuests = externalGuests.filter((p) => {
+    const filteredGuests = externalGuests.filter((p) => {
     const q = search.toLowerCase().trim();
     if (!q) return true;
 
     const activeProjects = getActiveGuestProjects(p);
+    const activeTasks = getActiveGuestTasks(p);
 
     return (
       (p.displayName || "").toLowerCase().includes(q) ||
       (p.email || "").toLowerCase().includes(q) ||
       activeProjects.some((project: any) =>
-        (project.projectName || "").toLowerCase().includes(q)
+        (project.projectName || "").toLowerCase().includes(q),
+      ) ||
+      activeTasks.some((task: any) =>
+        (task.taskTitle || "").toLowerCase().includes(q),
       )
     );
   });
+
 
     // Workspace initialization is handled centrally in AuthContext
   // (ensurePersonalWorkspace / ensureWorkspaceAndMembership). No init needed here.
@@ -503,21 +591,60 @@ export default function TeamPage() {
     }
   }
 
-  const handleCancelInvite = async (inviteCode: string) => {
+   const handleCancelInvite = async (inviteCode: string) => {
     if (cancellingCode) return;
 
     setCancellingCode(inviteCode);
     setCancelError(null);
 
     try {
-      await cancelInvite(inviteCode);
-    } catch {
+      const invite = pendingInvites.find((i) => i.code === inviteCode) as any;
+
+      console.log("[TeamPage] cancel invite:", {
+        inviteCode,
+        inviteType: invite?.inviteType,
+        taskId: invite?.taskId,
+        workspaceId,
+        invite,
+      });
+
+      const isTaskShare =
+        invite?.inviteType === "task" ||
+        Boolean(invite?.taskId);
+
+      if (isTaskShare && invite?.taskId && workspaceId) {
+        // Task-share invite: mark the share doc as revoked.
+        await updateDoc(
+          doc(
+            db,
+            "workspaces",
+            workspaceId,
+            "tasks",
+            invite.taskId,
+            "shares",
+            inviteCode
+          ),
+          {
+            status: "revoked",
+            revokedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
+        );
+        console.log("[TeamPage] ✅ task share revoked:", inviteCode);
+      } else {
+        await cancelInvite(inviteCode);
+        console.log("[TeamPage] ✅ workspace invite cancelled:", inviteCode);
+      }
+    } catch (err) {
+      console.error("[TeamPage] cancel invite failed:", err);
       setCancelError("Failed to cancel invite. Please try again.");
       setTimeout(() => setCancelError(null), 4000);
     } finally {
       setCancellingCode(null);
     }
   };
+
+
   // Fix #7 — workspace ownership transfer.
   async function transferOwnership(targetUid: string, targetName: string) {
     if (!workspaceId || !user?.uid) return;
@@ -570,26 +697,59 @@ export default function TeamPage() {
   }
 
 
-  async function resendInvite(invite: any) {
+    async function resendInvite(invite: any) {
     if (!workspaceId) return;
 
     try {
       const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-      await updateDoc(
-        doc(db, "workspaces", workspaceId, "invites", invite.code),
-        {
-          expiresAt: newExpiry,
-          updatedAt: serverTimestamp(),
-        }
-      );
+      console.log("[TeamPage] resend invite:", {
+        code: invite?.code,
+        inviteType: invite?.inviteType,
+        taskId: invite?.taskId,
+        workspaceId,
+        invite,
+      });
 
-            showToast(`Invite expiry extended for ${invite.email}`);
+      const isTaskShare =
+        invite?.inviteType === "task" ||
+        Boolean(invite?.taskId);
+
+      if (isTaskShare && invite?.taskId) {
+        await updateDoc(
+          doc(
+            db,
+            "workspaces",
+            workspaceId,
+            "tasks",
+            invite.taskId,
+            "shares",
+            invite.code
+          ),
+          {
+            expiresAt: newExpiry,
+            updatedAt: serverTimestamp(),
+          }
+        );
+        console.log("[TeamPage] ✅ task share expiry extended:", invite.code);
+      } else {
+        await updateDoc(
+          doc(db, "workspaces", workspaceId, "invites", invite.code),
+          {
+            expiresAt: newExpiry,
+            updatedAt: serverTimestamp(),
+          }
+        );
+        console.log("[TeamPage] ✅ workspace invite expiry extended:", invite.code);
+      }
+
+      showToast(`Invite expiry extended for ${invite.email}`);
     } catch (err) {
       console.error("[TeamPage] resendInvite error:", err);
       showToast("Failed to resend invite.");
     }
   }
+
 
   function copyWorkspaceId() {
     navigator.clipboard.writeText(workspaceId ?? "").then(() => {
@@ -1189,12 +1349,19 @@ export default function TeamPage() {
                 ) : (
                   <div className="space-y-3">
                     {filteredGuests.map((guest) => {
-                      const guestId = guest.userId || guest.uid || guest.email;
+                                            const guestId = guest.userId || guest.uid || guest.email;
                       const activeProjects = getActiveGuestProjects(guest);
+                      const activeTasks = getActiveGuestTasks(guest);
                       const primaryProject = activeProjects[0] as any;
+                      const primaryTask = activeTasks[0] as any;
 
                       const displayRole =
-                        primaryProject?.role ?? "viewer";
+                        primaryProject?.role ??
+                        (activeTasks.length > 0 ? "Task guest" : "viewer");
+
+                      const guestStatus = guest.status ?? "active";
+                      const isPending = guestStatus === "pending";
+
 
                       const initials = (
                         guest.displayName ||
@@ -1248,19 +1415,43 @@ export default function TeamPage() {
                               </p>
                             </div>
 
-                            <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize flex-shrink-0 bg-blue-100 text-blue-700">
-                              Project-only
+                                                        <span
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize flex-shrink-0 ${
+                                isPending
+                                  ? "bg-amber-100 text-amber-700"
+                                  : activeTasks.length > 0 && activeProjects.length === 0
+                                    ? "bg-indigo-100 text-indigo-700"
+                                    : "bg-blue-100 text-blue-700"
+                              }`}
+                            >
+                              {isPending
+                                ? "Pending"
+                                : activeTasks.length > 0 && activeProjects.length === 0
+                                  ? "Task guest"
+                                  : "Project-only"}
                             </span>
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2 mt-3 text-xs text-slate-400">
-                            <span>
-                              Access to{" "}
-                              <span className="font-semibold text-slate-600">
-                                {activeProjects.length}
-                              </span>{" "}
-                              project{activeProjects.length === 1 ? "" : "s"}
-                            </span>
+                            {activeProjects.length > 0 && (
+                              <span>
+                                Access to{" "}
+                                <span className="font-semibold text-slate-600">
+                                  {activeProjects.length}
+                                </span>{" "}
+                                project{activeProjects.length === 1 ? "" : "s"}
+                              </span>
+                            )}
+
+                            {activeTasks.length > 0 && (
+                              <span>
+                                Access to{" "}
+                                <span className="font-semibold text-slate-600">
+                                  {activeTasks.length}
+                                </span>{" "}
+                                task{activeTasks.length === 1 ? "" : "s"}
+                              </span>
+                            )}
 
                             {primaryProject?.projectName && (
                               <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full">
@@ -1268,12 +1459,19 @@ export default function TeamPage() {
                               </span>
                             )}
 
-                            {activeProjects.length > 1 && (
+                            {!primaryProject && primaryTask?.taskTitle && (
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded-full truncate max-w-[180px]">
+                                {primaryTask.taskTitle}
+                              </span>
+                            )}
+
+                            {activeProjects.length + activeTasks.length > 1 && (
                               <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
-                                +{activeProjects.length - 1} more
+                                +{activeProjects.length + activeTasks.length - 1} more
                               </span>
                             )}
                           </div>
+
 
                           <div className="flex items-center justify-between mt-2">
                             <span
@@ -1406,12 +1604,25 @@ export default function TeamPage() {
                               )}
                             </div>
 
-                            <p className="text-[10px] text-slate-400">
-                              Sent {timeAgo(inv.createdAt)} · Code:{" "}
-                              <span className="font-mono">
-                                {inv.inviteCode || inv.code}
-                              </span>
+                                                       <p className="text-[10px] text-slate-400">
+                              {(inv as any).inviteType === "task" ? (
+                                <>
+                                  Task invite
+                                  {(inv as any).taskTitle
+                                    ? ` · ${(inv as any).taskTitle}`
+                                    : ""}{" "}
+                                  · Sent {timeAgo(inv.createdAt)}
+                                </>
+                              ) : (
+                                <>
+                                  Sent {timeAgo(inv.createdAt)} · Code:{" "}
+                                  <span className="font-mono">
+                                    {inv.inviteCode || inv.code}
+                                  </span>
+                                </>
+                              )}
                             </p>
+
 
                             <div className="flex gap-2 mt-1">
                               <button

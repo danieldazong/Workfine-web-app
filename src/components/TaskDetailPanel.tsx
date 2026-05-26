@@ -79,6 +79,7 @@
   import { useMentionableUsers } from "../hooks/useMentionableUsers";
   import { storageService, UploadedAttachment } from "../lib/firebase/storage";
   import { createCommentNotifications } from "../lib/firebase/notifications";
+  import { upsertTaskGuestPerson } from "../lib/firebase/tasks";
 
   export interface Task {
     id: string;
@@ -2839,7 +2840,7 @@ function formatFullLocalDateTime(timestamp: any): string {
       );
     }, [workspaceMembers, user?.uid, user?.email]);
 
-    const currentWorkspaceRole = useMemo(() => {
+       const currentWorkspaceRole = useMemo(() => {
       const rawRole = String(
         currentWorkspaceMember?.role ||
           currentWorkspaceMember?.accessRole ||
@@ -2988,6 +2989,7 @@ function formatFullLocalDateTime(timestamp: any): string {
     const canUseCommentComposer = canCommentOnTask;
 
     const canReplyToComments = canCommentOnTask && taskParticipantCount > 1;
+
 
 
 
@@ -5245,7 +5247,29 @@ await notifyCommentRecipients({
           },
           { merge: true },
         );
-
+                // Register this email as an External Guest on the workspace people list.
+        // This makes it appear under "External Guests" on the Team Page.
+        try {
+          await upsertTaskGuestPerson({
+            workspaceId: taskWorkspaceId,
+            taskId: sourceTaskId,
+            shareId: shareRef.id,
+            invitedEmail: recipientEmail,
+            invitedBy: safeCurrentUserUid,
+            invitedByName: senderName,
+            invitedByEmail: safeCurrentUserEmail,
+            taskTitle,
+            taskCode: taskView.taskCode || task.taskCode || "",
+            projectId: taskView.projectId || task.projectId || "",
+            projectName,
+            status: "pending",
+          });
+        } catch (guestErr) {
+          console.warn(
+            "[TaskDetailPanel] upsertTaskGuestPerson failed:",
+            guestErr,
+          );
+        }
         await emailjs.send(
           EJ_SERVICE,
           EJ_TASK_TEMPLATE,
@@ -7797,17 +7821,20 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                           </p>
                         </div>
 
-                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 flex-shrink-0">
-                          Owner
+                                                <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 flex-shrink-0 capitalize">
+                          {isWorkspaceOwner
+                            ? "Owner"
+                            : currentWorkspaceRole || "Member"}
                         </span>
+
                       </div>
 
                       {/* Assignee */}
-                      {task.assignee &&
-                        task.assignee !== safeCurrentUserDisplayName && (
+                                            {(taskView.assignee || task.assignee) &&
+                        (taskView.assignee || task.assignee) !== safeCurrentUserDisplayName && (
                           <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors">
                             <ModernAvatar
-                              name={task.assignee}
+                                                            name={taskView.assignee || task.assignee}
                               email=""
                               photoURL=""
                               size={32}
@@ -7815,7 +7842,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
 
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-slate-800 truncate leading-tight">
-                                {task.assignee}
+                                                                {taskView.assignee || task.assignee}
                               </p>
                               <p className="text-[11px] text-slate-400 truncate">
                                 Assigned to this task

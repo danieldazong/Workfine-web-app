@@ -10,6 +10,8 @@ import {
 
 import { db } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
+import { activateTaskGuestPerson } from "../lib/firebase/tasks";
+
 
 type InviteState =
   | "checking-auth"
@@ -344,6 +346,30 @@ export default function AcceptTaskInvitePage() {
         updatedAt: serverTimestamp(),
         acceptedAt: serverTimestamp(),
       });
+            // Flip the External Guest from "pending" to "active" on the workspace people list.
+      try {
+        const inviteEmailForGuest =
+          invite.invitedEmail ||
+          invite.sharedWithEmail ||
+          invite.invitedEmailLower ||
+          user.email ||
+          "";
+
+        if (inviteEmailForGuest) {
+          await activateTaskGuestPerson({
+            workspaceId,
+            invitedEmail: inviteEmailForGuest,
+            acceptedByUid: user.uid,
+            acceptedByName: user.displayName || user.email || "",
+            acceptedByPhotoURL: user.photoURL || "",
+          });
+        }
+      } catch (guestErr) {
+        console.warn(
+          "[AcceptTaskInvitePage] activateTaskGuestPerson failed:",
+          guestErr,
+        );
+      }
 
       setState("accepted");
 
@@ -489,13 +515,14 @@ export default function AcceptTaskInvitePage() {
               </p>
             )}
 
-            <button
+                        <button
               onClick={handleAcceptInvite}
-              disabled={state === "accepting"}
+              disabled={(state as InviteState) === "accepting"}
               className="w-full py-3 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
             >
               Accept Task Invitation →
             </button>
+
 
             <button
               onClick={() => navigate("/my-tasks")}

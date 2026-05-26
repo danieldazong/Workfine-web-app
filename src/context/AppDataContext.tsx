@@ -9,7 +9,10 @@ import React, {
 import {
   onSnapshot,
   collection,
+  collectionGroup,
   doc,
+  query,
+  where,
   writeBatch,
   getDocs,
 } from "firebase/firestore";
@@ -68,7 +71,7 @@ interface WorkspaceMember {
 interface PendingInvite {
   code: string;
   email: string;
-  role: "admin" | "member" | "viewer";
+  role: "admin" | "member" | "viewer" | "task_guest";
   status: "pending" | "accepted" | "declined" | "expired";
   invitedBy: string;
   invitedByName: string;
@@ -78,7 +81,15 @@ interface PendingInvite {
   createdAt: any;
   expiresAt: any;
   acceptedAt: any;
+  /** "workspace" for normal workspace invites, "task" for per-task share invites. */
+  inviteType?: "workspace" | "task";
+  taskId?: string;
+  taskTitle?: string;
+  taskCode?: string;
+  projectId?: string;
+  projectName?: string;
 }
+
 
 interface WorkspaceData {
   id: string;
@@ -112,15 +123,27 @@ interface WorkspacePerson {
   userId?: string;
   uid?: string;
   email?: string;
+  emailLower?: string;
   displayName?: string;
   photoURL?: string;
   avatarColor?: string;
   type?: "guest" | "member";
-  status?: "active" | "inactive";
+  status?: "active" | "inactive" | "pending";
+  invitedVia?: "task" | "project" | "workspace";
   lastActive?: any;
   projects?: Record<string, { projectName?: string; role?: string; status?: string }>;
+  tasks?: Record<string, {
+    taskId?: string;
+    taskTitle?: string;
+    taskCode?: string;
+    projectId?: string;
+    projectName?: string;
+    shareId?: string;
+    status?: string;
+  }>;
   [key: string]: any;
 }
+
 
 interface AppDataContextType {
   tasks: Task[];
@@ -717,6 +740,30 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
     );
 
+        // Holds the two streams of pending invites so we can publish them together.
+    let latestWorkspaceInvites: PendingInvite[] = [];
+    let latestTaskShareInvites: PendingInvite[] = [];
+
+    const publishPendingInvites = () => {
+      const merged = [...latestWorkspaceInvites, ...latestTaskShareInvites];
+
+      // Newest first
+      merged.sort(
+        (a, b) => getSeconds(b.createdAt) - getSeconds(a.createdAt)
+      );
+
+      setPendingInvites(merged);
+
+      console.log(
+        "[AppData] pending invites:",
+        merged.length,
+        "| workspace:",
+        latestWorkspaceInvites.length,
+        "| task shares:",
+        latestTaskShareInvites.length
+      );
+    };
+
     const unsubInvites = onSnapshot(
       collection(db, "workspaces", workspaceId, "invites"),
       (snap) => {
@@ -727,22 +774,78 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
               ({
                 code: d.id,
                 ...d.data(),
+                inviteType: "workspace",
               } as unknown as PendingInvite)
           );
 
-        setPendingInvites(data);
-
-        console.log("[AppData] pending invites:", data.length);
+        latestWorkspaceInvites = data;
+        publishPendingInvites();
 
         invitesReady = true;
         tryResolve();
       },
       (err) => {
         console.warn("[AppData] invites error:", err.code);
+        latestWorkspaceInvites = [];
+        publishPendingInvites();
         invitesReady = true;
         tryResolve();
       }
     );
+
+    // Task-share invites (workspaces/{wsId}/tasks/{taskId}/shares/{shareId}).
+    // Discovered via collectionGroup so we don't need to know each taskId.
+    const taskSharesQuery = query(
+      collectionGroup(db, "shares"),
+      where("workspaceId", "==", workspaceId),
+      where("status", "==", "pending")
+    );
+
+    const unsubTaskShareInvites = onSnapshot(
+      taskSharesQuery,
+      (snap) => {
+        const data: PendingInvite[] = snap.docs.map((d) => {
+          const raw = d.data() as any;
+
+          const email = String(
+            raw.invitedEmail ||
+              raw.invitedEmailLower ||
+              raw.sharedWithEmail ||
+              ""
+          );
+
+          return {
+            code: d.id,
+            inviteCode: d.id,
+            email,
+            role: "task_guest",
+            status: "pending",
+            invitedBy: String(raw.invitedBy || raw.sharedByUid || ""),
+            invitedByName: String(raw.invitedByName || raw.sharedByName || ""),
+            workspaceId: String(raw.workspaceId || workspaceId),
+            workspaceName: "",
+            createdAt: raw.createdAt,
+            expiresAt: raw.expiresAt ?? null,
+            acceptedAt: raw.acceptedAt ?? null,
+            inviteType: "task",
+            taskId: String(raw.taskId || ""),
+            taskTitle: String(raw.taskTitle || ""),
+            taskCode: String(raw.taskCode || ""),
+            projectId: String(raw.projectId || ""),
+            projectName: String(raw.projectName || ""),
+          } as PendingInvite;
+        });
+
+        latestTaskShareInvites = data;
+        publishPendingInvites();
+      },
+      (err) => {
+        console.warn("[AppData] task share invites error:", err.code);
+        latestTaskShareInvites = [];
+        publishPendingInvites();
+      }
+    );
+
 
            const unsubWorkspaceProjects = subscribeToProjects(workspaceId, (data) => {
       latestWorkspaceProjects = data.map((project: any) => ({
@@ -782,7 +885,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           })();
 
 
-    // External guests / project collaborators listener
+        // External guests / project collaborators listener
     const unsubPeople = onSnapshot(
       collection(db, "workspaces", workspaceId, "people"),
       (snap) => {
@@ -795,15 +898,28 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           };
         });
         setWorkspacePeople(data);
+        const guestCount = data.filter((p) => (p.type ?? "guest") === "guest").length;
+        console.log(
+          "[AppData] workspace people:",
+          data.length,
+          "| guests:",
+          guestCount,
+          data.map((p) => ({
+            id: (p as any).id,
+            email: p.email,
+            type: p.type,
+            status: p.status,
+            tasks: p.tasks ? Object.keys(p.tasks).length : 0,
+            projects: p.projects ? Object.keys(p.projects).length : 0,
+          }))
+        );
       },
       (err) => {
-        // Silently ignore — collection may not exist yet for older workspaces.
-        if (err.code !== "permission-denied") {
-          console.warn("[AppData] people listener error:", err.code);
-        }
+        console.warn("[AppData] people listener error:", err.code, err.message);
         setWorkspacePeople([]);
       }
     );
+
 
 
     const unsubTasks = onSnapshot(
@@ -842,11 +958,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       unsubWorkspace();
       unsubWsMembers();
       unsubInvites();
+      unsubTaskShareInvites();
       unsubWorkspaceProjects();
       unsubPersonalProjects();
       unsubTasks();
       unsubPeople();
     };
+
 
         }, [uid, workspaceId, personalWorkspaceId, user?.email]);
 
