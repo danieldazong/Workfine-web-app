@@ -32,7 +32,11 @@ import AcceptTaskInvitePage from "./pages/AcceptTaskInvitePage";
 function ProtectedRoute() {
   const { user, loading } = useAuth();
 
-  if (loading) {
+  // Only show the full-screen spinner on the very first auth check
+  // (i.e. when we don't yet know if the user is signed in).
+  // Once we have a user, never show the spinner again — keep the app
+  // mounted so navigation feels like instant tab switching.
+  if (loading && !user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="w-12 h-12 border-4 border-violet-500 border-t-transparent rounded-full animate-spin" />
@@ -53,6 +57,7 @@ function ProtectedRoute() {
     </AppDataProvider>
   );
 }
+
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();

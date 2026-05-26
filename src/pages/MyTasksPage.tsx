@@ -119,7 +119,19 @@ const filterFromQuery = (
 
 export default function MyTasksPage() {
   const { user, workspaceId } = useAuth();
-  const { tasks: workspaceTasks } = useAppData();
+    const { tasks: workspaceTasks, members, workspaceData } = useAppData();
+
+  const myRole = (() => {
+    if (workspaceData?.ownerId === user?.uid) return "owner";
+    const mine = (Array.isArray(members) ? members : []).find((m: any) => {
+      const memberUid = m.userId || m.uid || m.id;
+      return !!user?.uid && memberUid === user.uid;
+    });
+    return String(mine?.role || "viewer").toLowerCase();
+  })();
+
+  const isViewerOnly = myRole === "viewer";
+
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -263,13 +275,14 @@ export default function MyTasksPage() {
           );
         });
 
-        console.log("[MyTasksPage] User tasks loaded:", list.length);
-        setTasks(list);
+                console.log("[MyTasksPage] User tasks loaded:", list.length);
+        setUserTaskIndex(list);
       },
-      (error) => {
+            (error) => {
         console.error("[MyTasksPage] users tasks listener error:", error);
-        setTasks([]);
+        setUserTaskIndex([]);
       }
+
     );
 
     return () => unsubscribe();
@@ -760,8 +773,13 @@ export default function MyTasksPage() {
 
   const toggleDone = async (task: any) => {
     if (!user?.uid) return;
+    if (isViewerOnly) {
+      console.warn("[MyTasksPage] toggleDone blocked: viewer access");
+      return;
+    }
 
     const newStatus = task.status === "Done" ? "To Do" : "Done";
+
 
     await setDoc(
       doc(db, "users", user.uid, "tasks", task.id),

@@ -65,11 +65,22 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
   const canCreateWorkspaceProject =
     !!user?.uid && !!workspaceId && isActiveWorkspaceMember;
 
-  const canCreateProjects =
-    visibility === "private"
-      ? canCreatePrivateProject
-      : canCreateWorkspaceProject;
+  const myMembershipRole = (() => {
+    if (workspaceData?.ownerId === user?.uid) return "owner";
+    const mine = safeMembers.find((m: any) => {
+      const memberUid = m.userId || m.uid || m.id;
+      return !!user?.uid && memberUid === user.uid;
+    });
+    return String(mine?.role || "viewer").toLowerCase();
+  })();
 
+  const isViewerOnly = myMembershipRole === "viewer";
+
+  const canCreateProjects =
+    !isViewerOnly &&
+    (visibility === "private"
+      ? canCreatePrivateProject
+      : canCreateWorkspaceProject);
 
 
 
@@ -142,8 +153,8 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
     setSaving(true);
 
     try {
-      const projectId = await createProject(
-        workspaceId,
+            const projectId = await createProject(
+        targetWorkspaceId,
         {
           name: trimmedName,
           description: trimmedDescription,
@@ -155,9 +166,16 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
           dueDate: dueDate || null,
           code: projectCode || null,
           memberIds: [user.uid],
+          workspaceId: targetWorkspaceId,
+          sourceWorkspaceId: targetWorkspaceId,
+          projectWorkspaceId: targetWorkspaceId,
+          createdBy: user.uid,
+          ownerId: user.uid,
+          isPrivateProject: visibility === "private",
         },
         user.uid
       );
+
 
       resetForm();
       onClose();
@@ -224,12 +242,16 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
             </div>
           )}
 
-                              {!canCreateProjects && (
+                                                                               {!canCreateProjects && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              Your workspace is still loading or your account is not an active member of this workspace.
-              If this is a new account, sign out and sign back in once.
+              {isViewerOnly
+                ? "You have viewer access. Viewers cannot create projects."
+                : visibility === "private"
+                  ? "Your personal workspace is still loading. Please refresh and try again."
+                  : "Your workspace is still loading or your account is not an active member of this workspace."}
             </div>
           )}
+
 
 
 
@@ -367,9 +389,10 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
                   Workspace
                 </p>
 
-                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
-                  Visible to active workspace members.
+                               <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                  Visible to active shared workspace members.
                 </p>
+
               </button>
 
               <button
@@ -386,9 +409,10 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
 
                 <p className="text-xs font-semibold text-slate-800">Private</p>
 
-                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
-                  Only you and added members can access it.
+                                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                  Saved only in your own private account sidebar.
                 </p>
+
               </button>
             </div>
           </div>

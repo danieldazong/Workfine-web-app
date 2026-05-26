@@ -3,7 +3,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ─── Helpers ────────────────────────────────────────────────────────
     function isSignedIn() {
       return request.auth != null;
     }
@@ -22,6 +21,15 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email_lowercase is string
         ? request.auth.token.email_lowercase
         : signedInEmail();
+    }
+
+    function signedInEmailMatches(emailValue) {
+      return isSignedIn()
+        && emailValue is string
+        && (
+          emailValue == signedInEmail()
+          || emailValue == signedInEmailLower()
+        );
     }
 
     function changedKeys() {
@@ -47,20 +55,60 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid));
     }
 
+    function memberData(workspaceId, uid) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data;
+    }
+
+    function hasLegacyEmailMemberDoc(workspaceId, emailValue) {
+      return isSignedIn()
+        && emailValue is string
+        && emailValue != ""
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(emailValue));
+    }
+
+    function legacyEmailMemberData(workspaceId, emailValue) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(emailValue)).data;
+    }
+
+    function legacyEmailMemberMatchesSignedIn(workspaceId, emailValue) {
+      return hasLegacyEmailMemberDoc(workspaceId, emailValue)
+        && legacyEmailMemberData(workspaceId, emailValue).status == "active"
+        && legacyEmailMemberData(workspaceId, emailValue).workspaceId == workspaceId
+        && legacyEmailMemberData(workspaceId, emailValue).role in ["admin", "member", "viewer"]
+        && (
+          (
+            "email" in legacyEmailMemberData(workspaceId, emailValue)
+            && signedInEmailMatches(legacyEmailMemberData(workspaceId, emailValue).email)
+          )
+          || (
+            "emailLower" in legacyEmailMemberData(workspaceId, emailValue)
+            && signedInEmailMatches(legacyEmailMemberData(workspaceId, emailValue).emailLower)
+          )
+          || (
+            "email_lowercase" in legacyEmailMemberData(workspaceId, emailValue)
+            && signedInEmailMatches(legacyEmailMemberData(workspaceId, emailValue).email_lowercase)
+          )
+          || (
+            "emailAddress" in legacyEmailMemberData(workspaceId, emailValue)
+            && signedInEmailMatches(legacyEmailMemberData(workspaceId, emailValue).emailAddress)
+          )
+        );
+    }
+
     function memberDocMatchesUserAndWorkspace(workspaceId, uid) {
       return hasWorkspaceMemberDoc(workspaceId, uid)
-        && get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data.status == "active"
+        && memberData(workspaceId, uid).status == "active"
         && (
-          !("workspaceId" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data)
-          || get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data.workspaceId == workspaceId
+          !("workspaceId" in memberData(workspaceId, uid))
+          || memberData(workspaceId, uid).workspaceId == workspaceId
         )
         && (
-          !("uid" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data)
-          || get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data.uid == uid
+          !("uid" in memberData(workspaceId, uid))
+          || memberData(workspaceId, uid).uid == uid
         )
         && (
-          !("userId" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data)
-          || get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data.userId == uid
+          !("userId" in memberData(workspaceId, uid))
+          || memberData(workspaceId, uid).userId == uid
         );
     }
 
@@ -68,14 +116,14 @@ service cloud.firestore {
       return hasWorkspaceMemberDoc(workspaceId, uid)
         && (
           isWorkspaceOwnerByDoc(workspaceId, uid)
-          || get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data.role == "owner"
-          || "inviteCode" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data
-          || "acceptedInviteCode" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data
-          || "code" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data
-          || "invitedBy" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data
-          || "invitedByUid" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data
-          || "addedBy" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data
-          || "createdBy" in get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(uid)).data
+          || memberData(workspaceId, uid).role == "owner"
+          || "inviteCode" in memberData(workspaceId, uid)
+          || "acceptedInviteCode" in memberData(workspaceId, uid)
+          || "code" in memberData(workspaceId, uid)
+          || "invitedBy" in memberData(workspaceId, uid)
+          || "invitedByUid" in memberData(workspaceId, uid)
+          || "addedBy" in memberData(workspaceId, uid)
+          || "createdBy" in memberData(workspaceId, uid)
         );
     }
 
@@ -92,18 +140,47 @@ service cloud.firestore {
         );
     }
 
+    function workspaceRole(workspaceId, uid) {
+      return isWorkspaceOwnerByDoc(workspaceId, uid)
+        ? "owner"
+        : (
+          isTrustedActiveWorkspaceMemberDoc(workspaceId, uid)
+            ? memberData(workspaceId, uid).role
+            : "viewer"
+        );
+    }
+
     function isWorkspaceOwnerOrAdmin(workspaceId) {
       return isSignedIn()
         && (
           isWorkspaceOwnerByDoc(workspaceId, request.auth.uid)
           || (
             isTrustedActiveWorkspaceMemberDoc(workspaceId, request.auth.uid)
-            && (
-              get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.role == "owner"
-              || get(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid)).data.role == "admin"
-            )
+            && memberData(workspaceId, request.auth.uid).role in ["owner", "admin"]
           )
         );
+    }
+
+    function canEditWorkspaceContent(workspaceId) {
+      return isSignedIn()
+        && isWorkspaceOwnerOrAdmin(workspaceId);
+    }
+
+    function canCommentInWorkspace(workspaceId) {
+      return isSignedIn()
+        && (
+          isWorkspaceOwnerOrAdmin(workspaceId)
+          || (
+            isTrustedActiveWorkspaceMemberDoc(workspaceId, request.auth.uid)
+            && memberData(workspaceId, request.auth.uid).role == "member"
+          )
+        );
+    }
+
+    function isWorkspaceViewerOnly(workspaceId) {
+      return isSignedIn()
+        && isTrustedActiveWorkspaceMemberDoc(workspaceId, request.auth.uid)
+        && memberData(workspaceId, request.auth.uid).role == "viewer";
     }
 
     function inviteStatusAllowsJoin(inviteData) {
@@ -145,31 +222,31 @@ service cloud.firestore {
         && (
           (
             inviteData.email is string
-            && inviteData.email == signedInEmail()
+            && signedInEmailMatches(inviteData.email)
           )
           || (
             inviteData.emailLower is string
-            && inviteData.emailLower == signedInEmailLower()
+            && signedInEmailMatches(inviteData.emailLower)
           )
           || (
             inviteData.email_lowercase is string
-            && inviteData.email_lowercase == signedInEmailLower()
+            && signedInEmailMatches(inviteData.email_lowercase)
           )
           || (
             inviteData.invitedEmail is string
-            && inviteData.invitedEmail == signedInEmail()
+            && signedInEmailMatches(inviteData.invitedEmail)
           )
           || (
             inviteData.invitedEmailLower is string
-            && inviteData.invitedEmailLower == signedInEmailLower()
+            && signedInEmailMatches(inviteData.invitedEmailLower)
           )
           || (
             inviteData.acceptedByEmail is string
-            && inviteData.acceptedByEmail == signedInEmail()
+            && signedInEmailMatches(inviteData.acceptedByEmail)
           )
           || (
             inviteData.acceptedByEmailLower is string
-            && inviteData.acceptedByEmailLower == signedInEmailLower()
+            && signedInEmailMatches(inviteData.acceptedByEmailLower)
           )
           || (
             inviteData.acceptedByUid is string
@@ -199,6 +276,12 @@ service cloud.firestore {
           || (projectData.uid is string && projectData.uid == request.auth.uid)
           || (projectData.createdBy is string && projectData.createdBy == request.auth.uid)
         );
+    }
+
+    function isProjectPrivate(projectData) {
+      return projectData.visibility == "private"
+        || projectData.projectScope == "private"
+        || projectData.isPrivateProject == true;
     }
 
     function isRootProjectCollaborator(projectId) {
@@ -236,7 +319,6 @@ service cloud.firestore {
         ]);
     }
 
-        // ─── Global Invites ─────────────────────────────────────────────────
     match /invites/{inviteCode} {
       allow read: if true;
 
@@ -245,8 +327,6 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && (
           inviteAcceptUpdateAllowed()
-          || request.resource.data.acceptedByUid == request.auth.uid
-          || request.resource.data.acceptedBy == request.auth.uid
           || (
             resource.data.workspaceId is string
             && isWorkspaceOwnerOrAdmin(resource.data.workspaceId)
@@ -264,8 +344,6 @@ service cloud.firestore {
         );
     }
 
-
-    // ─── Collection Group: Collaborators ────────────────────────────────
     match /{path=**}/collaborators/{collaboratorId} {
       allow get: if isSignedIn()
         && (
@@ -279,7 +357,6 @@ service cloud.firestore {
       allow create, update, delete: if isSignedIn();
     }
 
-    // ─── Legacy Root Projects ───────────────────────────────────────────
     match /projects/{projectId} {
       allow get: if rootProjectVisibleToMe(resource.data, projectId);
 
@@ -299,10 +376,9 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && (
           isProjectOwner(resource.data)
-          || isRootProjectCollaborator(projectId)
           || (
             resource.data.workspaceId is string
-            && isWorkspaceOwnerOrAdmin(resource.data.workspaceId)
+            && canEditWorkspaceContent(resource.data.workspaceId)
           )
         );
 
@@ -311,7 +387,7 @@ service cloud.firestore {
           isProjectOwner(resource.data)
           || (
             resource.data.workspaceId is string
-            && isWorkspaceOwnerOrAdmin(resource.data.workspaceId)
+            && canEditWorkspaceContent(resource.data.workspaceId)
           )
         );
 
@@ -335,23 +411,40 @@ service cloud.firestore {
       }
 
       match /tasks/{taskId} {
-        allow read, write: if isSignedIn()
+        allow read: if isSignedIn()
           && rootProjectVisibleToMe(
             get(/databases/$(database)/documents/projects/$(projectId)).data,
             projectId
           );
 
+        allow create, update, delete: if isSignedIn()
+          && (
+            isProjectOwner(get(/databases/$(database)/documents/projects/$(projectId)).data)
+            || (
+              get(/databases/$(database)/documents/projects/$(projectId)).data.workspaceId is string
+              && canEditWorkspaceContent(get(/databases/$(database)/documents/projects/$(projectId)).data.workspaceId)
+            )
+          );
+
         match /{document=**} {
-          allow read, write: if isSignedIn()
+          allow read: if isSignedIn()
             && rootProjectVisibleToMe(
               get(/databases/$(database)/documents/projects/$(projectId)).data,
               projectId
+            );
+
+          allow write: if isSignedIn()
+            && (
+              isProjectOwner(get(/databases/$(database)/documents/projects/$(projectId)).data)
+              || (
+                get(/databases/$(database)/documents/projects/$(projectId)).data.workspaceId is string
+                && canEditWorkspaceContent(get(/databases/$(database)/documents/projects/$(projectId)).data.workspaceId)
+              )
             );
         }
       }
     }
 
-    // ─── Workspaces ─────────────────────────────────────────────────────
     match /workspaces/{workspaceId} {
       function workspaceOwnerId() {
         return get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId;
@@ -372,12 +465,8 @@ service cloud.firestore {
             || (
               isActiveWorkspaceMember(workspaceId, request.auth.uid)
               && (
-                !("visibility" in projectData)
-                || projectData.visibility == "workspace"
-                || projectData.visibility == "public"
-                || projectData.createdBy == request.auth.uid
-                || projectData.ownerId == request.auth.uid
-                || projectData.uid == request.auth.uid
+                !isProjectPrivate(projectData)
+                || isProjectOwner(projectData)
                 || (
                   projectData.memberIds is list
                   && request.auth.uid in projectData.memberIds
@@ -394,22 +483,14 @@ service cloud.firestore {
       function canManageWorkspaceProject(projectData) {
         return isSignedIn()
           && (
-            isWorkspaceOwnerOrAdmin(workspaceId)
-            || projectData.createdBy == request.auth.uid
-            || projectData.ownerId == request.auth.uid
-            || projectData.uid == request.auth.uid
+            canEditWorkspaceContent(workspaceId)
             || (
-              projectData.memberIds is list
-              && request.auth.uid in projectData.memberIds
-            )
-            || (
-              projectData.collaboratorUids is list
-              && request.auth.uid in projectData.collaboratorUids
+              isProjectPrivate(projectData)
+              && isProjectOwner(projectData)
             )
           );
       }
 
-      // Workspace document
       allow get: if isSignedIn()
         && (
           isActiveWorkspaceMember(workspaceId, request.auth.uid)
@@ -448,42 +529,12 @@ service cloud.firestore {
       allow delete: if isSignedIn()
         && isWorkspaceOwnerByDoc(workspaceId, request.auth.uid);
 
-           // Workspace members
       match /members/{memberId} {
-        function isSelfMemberWrite() {
-          return isSignedIn()
-            && memberId == request.auth.uid
-            && request.resource.data.workspaceId == workspaceId
-            && request.resource.data.status == "active"
-            && (
-              request.resource.data.uid == request.auth.uid
-              || request.resource.data.userId == request.auth.uid
-            );
-        }
-
-        function selfHasInviteCode() {
-          return (
-            hasValidWorkspaceInvite(workspaceId, request.resource.data.inviteCode)
-            || hasValidWorkspaceInvite(workspaceId, request.resource.data.acceptedInviteCode)
-            || hasValidWorkspaceInvite(workspaceId, request.resource.data.code)
-          );
-        }
-
-        function canSelfJoinWorkspace() {
-          return isSelfMemberWrite()
-            && request.resource.data.role in ["admin", "member", "viewer"]
-            && selfHasInviteCode();
-        }
-
-        function canSelfCreatePersonalOwner() {
-          return isSelfMemberWrite()
-            && isPersonalWorkspaceId(workspaceId, request.auth.uid)
-            && request.resource.data.role == "owner";
-        }
-
         allow get: if isSignedIn()
           && (
             memberId == request.auth.uid
+            || memberId == signedInEmailLower()
+            || memberId == signedInEmail()
             || isActiveWorkspaceMember(workspaceId, request.auth.uid)
             || isWorkspaceOwnerOrAdmin(workspaceId)
           );
@@ -494,16 +545,67 @@ service cloud.firestore {
         allow create: if isSignedIn()
           && (
             isWorkspaceOwnerOrAdmin(workspaceId)
-            || canSelfCreatePersonalOwner()
-            || canSelfJoinWorkspace()
+            || (
+              isPersonalWorkspaceId(workspaceId, request.auth.uid)
+              && memberId == request.auth.uid
+              && request.resource.data.workspaceId == workspaceId
+              && request.resource.data.status == "active"
+              && request.resource.data.role == "owner"
+              && (
+                request.resource.data.uid == request.auth.uid
+                || request.resource.data.userId == request.auth.uid
+              )
+            )
+            || (
+              memberId == request.auth.uid
+              && request.resource.data.workspaceId == workspaceId
+              && request.resource.data.status == "active"
+              && request.resource.data.role in ["admin", "member", "viewer"]
+              && (
+                request.resource.data.uid == request.auth.uid
+                || request.resource.data.userId == request.auth.uid
+              )
+              && (
+                hasValidWorkspaceInvite(workspaceId, request.resource.data.inviteCode)
+                || hasValidWorkspaceInvite(workspaceId, request.resource.data.acceptedInviteCode)
+                || hasValidWorkspaceInvite(workspaceId, request.resource.data.code)
+              )
+            )
+            || (
+              memberId == request.auth.uid
+              && legacyEmailMemberMatchesSignedIn(workspaceId, signedInEmailLower())
+              && request.resource.data.workspaceId == workspaceId
+              && request.resource.data.status == "active"
+              && request.resource.data.role == legacyEmailMemberData(workspaceId, signedInEmailLower()).role
+              && (
+                request.resource.data.uid == request.auth.uid
+                || request.resource.data.userId == request.auth.uid
+              )
+            )
+            || (
+              memberId == request.auth.uid
+              && legacyEmailMemberMatchesSignedIn(workspaceId, signedInEmail())
+              && request.resource.data.workspaceId == workspaceId
+              && request.resource.data.status == "active"
+              && request.resource.data.role == legacyEmailMemberData(workspaceId, signedInEmail()).role
+              && (
+                request.resource.data.uid == request.auth.uid
+                || request.resource.data.userId == request.auth.uid
+              )
+            )
           );
 
         allow update: if isSignedIn()
           && (
-            isWorkspaceOwnerOrAdmin(workspaceId)
-            || canSelfJoinWorkspace()
-            || (
+            (
               memberId == request.auth.uid
+              && request.resource.data.role == resource.data.role
+              && request.resource.data.status == resource.data.status
+              && request.resource.data.workspaceId == resource.data.workspaceId
+              && (
+                !("permissions" in resource.data)
+                || request.resource.data.permissions == resource.data.permissions
+              )
               && onlyChanged([
                 "displayName",
                 "name",
@@ -520,6 +622,13 @@ service cloud.firestore {
                 "updatedAt"
               ])
             )
+            || (
+              isWorkspaceOwnerOrAdmin(workspaceId)
+              && (
+                !isEditingCanonicalOwner(memberId)
+                || isWorkspaceOwner()
+              )
+            )
           );
 
         allow delete: if isSignedIn()
@@ -535,7 +644,6 @@ service cloud.firestore {
           );
       }
 
-      // Workspace people/profile cache
       match /people/{personId} {
         allow read: if isSignedIn()
           && (
@@ -551,7 +659,6 @@ service cloud.firestore {
           );
       }
 
-            // Workspace invites
       match /invites/{inviteCode} {
         allow read: if true;
 
@@ -561,11 +668,17 @@ service cloud.firestore {
         allow update: if isSignedIn()
           && (
             isWorkspaceOwnerOrAdmin(workspaceId)
-            || request.resource.data.acceptedByUid == request.auth.uid
-            || request.resource.data.acceptedBy == request.auth.uid
             || (
               resource.data.workspaceId == workspaceId
-              && inviteAcceptUpdateAllowed()
+              && (
+                inviteAcceptUpdateAllowed()
+                || request.resource.data.acceptedByUid == request.auth.uid
+                || request.resource.data.acceptedBy == request.auth.uid
+              )
+            )
+            || (
+              hasValidWorkspaceInvite(workspaceId, inviteCode)
+              && request.resource.data.acceptedByUid == request.auth.uid
             )
           );
 
@@ -573,7 +686,6 @@ service cloud.firestore {
           && isWorkspaceOwnerOrAdmin(workspaceId);
       }
 
-      // Workspace projects
       match /projects/{projectId} {
         allow get: if workspaceProjectVisibleToMe(resource.data);
 
@@ -592,7 +704,7 @@ service cloud.firestore {
             || request.resource.data.uid == request.auth.uid
           )
           && (
-            isActiveWorkspaceMember(workspaceId, request.auth.uid)
+            canEditWorkspaceContent(workspaceId)
             || (
               isPersonalWorkspaceId(workspaceId, request.auth.uid)
               && exists(/databases/$(database)/documents/workspaces/$(workspaceId))
@@ -604,12 +716,7 @@ service cloud.firestore {
           && canManageWorkspaceProject(resource.data);
 
         allow delete: if isSignedIn()
-          && (
-            isWorkspaceOwnerOrAdmin(workspaceId)
-            || resource.data.ownerId == request.auth.uid
-            || resource.data.createdBy == request.auth.uid
-            || resource.data.uid == request.auth.uid
-          );
+          && canManageWorkspaceProject(resource.data);
 
         match /{document=**} {
           allow read: if isSignedIn()
@@ -624,7 +731,6 @@ service cloud.firestore {
         }
       }
 
-      // Workspace tasks
       match /tasks/{taskId} {
         function taskSharedWithSignedInEmail(taskData) {
           return isSignedIn()
@@ -675,11 +781,11 @@ service cloud.firestore {
           && isActiveWorkspaceMember(workspaceId, request.auth.uid);
 
         allow create: if isSignedIn()
-          && isActiveWorkspaceMember(workspaceId, request.auth.uid)
+          && canEditWorkspaceContent(workspaceId)
           && request.resource.data.workspaceId == workspaceId;
 
         allow update, delete: if isSignedIn()
-          && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+          && canEditWorkspaceContent(workspaceId);
 
         match /shares/{shareId} {
           allow get: if isSignedIn()
@@ -697,7 +803,7 @@ service cloud.firestore {
             );
 
           allow create: if isSignedIn()
-            && isActiveWorkspaceMember(workspaceId, request.auth.uid)
+            && canEditWorkspaceContent(workspaceId)
             && (
               request.resource.data.sharedByUid == request.auth.uid
               || request.resource.data.invitedBy == request.auth.uid
@@ -705,7 +811,7 @@ service cloud.firestore {
 
           allow update: if isSignedIn()
             && (
-              isActiveWorkspaceMember(workspaceId, request.auth.uid)
+              canEditWorkspaceContent(workspaceId)
               || (
                 shareBelongsToSignedInEmail(resource.data)
                 && resource.data.status == "pending"
@@ -725,7 +831,7 @@ service cloud.firestore {
 
           allow delete: if isSignedIn()
             && (
-              isActiveWorkspaceMember(workspaceId, request.auth.uid)
+              canEditWorkspaceContent(workspaceId)
               || shareOwnerIsSignedInUser(resource.data)
             );
         }
@@ -734,20 +840,23 @@ service cloud.firestore {
           allow read: if canReadCurrentTask();
 
           allow create: if canReadCurrentTask()
+            && canCommentInWorkspace(workspaceId)
             && request.resource.data.authorId == request.auth.uid
             && request.resource.data.workspaceId == workspaceId
             && request.resource.data.taskId == taskId;
 
           allow update: if canReadCurrentTask()
+            && canCommentInWorkspace(workspaceId)
             && (
               resource.data.authorId == request.auth.uid
-              || isWorkspaceOwnerOrAdmin(workspaceId)
+              || canEditWorkspaceContent(workspaceId)
             );
 
           allow delete: if canReadCurrentTask()
+            && canCommentInWorkspace(workspaceId)
             && (
               resource.data.authorId == request.auth.uid
-              || isWorkspaceOwnerOrAdmin(workspaceId)
+              || canEditWorkspaceContent(workspaceId)
             );
         }
 
@@ -755,12 +864,16 @@ service cloud.firestore {
           allow read: if canReadCurrentTask();
 
           allow create, update, delete: if canReadCurrentTask()
+            && canCommentInWorkspace(workspaceId)
             && request.auth.uid == likeId;
         }
 
         match /{document=**} {
-          allow read, write: if isSignedIn()
+          allow read: if isSignedIn()
             && isActiveWorkspaceMember(workspaceId, request.auth.uid);
+
+          allow write: if isSignedIn()
+            && canEditWorkspaceContent(workspaceId);
         }
       }
 
@@ -769,7 +882,6 @@ service cloud.firestore {
       }
     }
 
-    // ─── Users ──────────────────────────────────────────────────────────
     match /users/{userId} {
       allow read: if isSignedIn();
 

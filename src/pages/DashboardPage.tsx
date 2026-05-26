@@ -414,8 +414,8 @@ const DashboardPage = () => {
               Tasks by status
             </p>
             {workflowData.some(d => d.count > 0) ? (
-              <div style={{ width: "100%", height: 160 }}>
-                <ResponsiveContainer width="100%" height="100%">
+                            <div style={{ width: "100%", height: 160, minWidth: 0, minHeight: 160 }}>
+                <ResponsiveContainer width="100%" height="100%" debounce={0}>
                   <BarChart data={workflowData} barSize={28}>
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={20} />
@@ -444,8 +444,8 @@ const DashboardPage = () => {
               Distribution by level
             </p>
             {priorityData.length > 0 ? (
-              <div style={{ width: "100%", height: 160 }}>
-                <ResponsiveContainer width="100%" height="100%">
+                            <div style={{ width: "100%", height: 160, minWidth: 0, minHeight: 160 }}>
+                <ResponsiveContainer width="100%" height="100%" debounce={0}>
                   <PieChart>
                     <Pie
                       data={priorityData}
@@ -540,8 +540,8 @@ const DashboardPage = () => {
             <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-3">
               Completed last 7 days
             </p>
-            <div style={{ width: "100%", height: 130 }}>
-              <ResponsiveContainer width="100%" height="100%">
+                        <div style={{ width: "100%", height: 130, minWidth: 0, minHeight: 130 }}>
+              <ResponsiveContainer width="100%" height="100%" debounce={0}>
                 <LineChart data={weeklyData}>
                   <XAxis dataKey="day" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={20} />

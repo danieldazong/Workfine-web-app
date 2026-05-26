@@ -3,7 +3,6 @@ import {
   addDoc,
   deleteDoc,
   doc,
-  setDoc,
   updateDoc,
   onSnapshot,
   serverTimestamp,
@@ -29,18 +28,10 @@ export interface NewProject {
   createdBy?: string;
   ownerId?: string;
   workspaceId?: string;
-}
 
-async function ensureWorkspaceDocExists(workspaceId: string): Promise<void> {
-  await setDoc(
-    doc(db, "workspaces", workspaceId),
-    {
-      id: workspaceId,
-      workspaceId,
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  sourceWorkspaceId?: string;
+  projectWorkspaceId?: string;
+  isPrivateProject?: boolean;
 }
 
 function uniqueArray(values: Array<string | undefined | null>): string[] {
@@ -52,7 +43,9 @@ export async function createProject(
   data: NewProject,
   createdBy?: string
 ): Promise<string> {
-  if (!workspaceId) throw new Error("No active workspace.");
+  if (!workspaceId) {
+    throw new Error("No workspace found. Please sign out and sign back in.");
+  }
 
   const projectName = data.name?.trim();
 
@@ -60,10 +53,16 @@ export async function createProject(
     throw new Error("Project name is required.");
   }
 
-  await ensureWorkspaceDocExists(workspaceId);
-
   const creatorId = createdBy ?? data.createdBy ?? data.ownerId ?? "";
-  const visibility: ProjectVisibility = data.visibility ?? "workspace";
+
+  if (!creatorId) {
+    throw new Error("Missing creator ID.");
+  }
+
+  const visibility: ProjectVisibility = data.visibility ?? "private";
+
+  const isPrivateProject =
+    visibility === "private" || data.isPrivateProject === true;
 
   const memberIds = uniqueArray([
     creatorId,
@@ -83,12 +82,17 @@ export async function createProject(
     code: data.code ?? null,
 
     workspaceId,
+    sourceWorkspaceId: data.sourceWorkspaceId ?? workspaceId,
+    projectWorkspaceId: data.projectWorkspaceId ?? workspaceId,
 
     visibility,
+    projectScope: isPrivateProject ? "private" : "workspace",
+    isPrivateProject,
     pinnedToWorkspace:
       visibility === "workspace" ? data.pinnedToWorkspace ?? true : false,
 
     memberIds,
+    collaboratorUids: memberIds,
 
     createdBy: creatorId,
     ownerId: creatorId,
@@ -104,7 +108,9 @@ export async function createProject(
 
   console.log(
     "[Projects] ✅ Created:",
-    `workspaces/${workspaceId}/projects/${docRef.id}`
+    `workspaces/${workspaceId}/projects/${docRef.id}`,
+    "| visibility:",
+    visibility
   );
 
   return docRef.id;
@@ -137,8 +143,11 @@ export async function addExistingProjectToWorkspace(
 
   await updateDoc(doc(db, "workspaces", workspaceId, "projects", projectId), {
     visibility: "workspace",
+    projectScope: "workspace",
+    isPrivateProject: false,
     pinnedToWorkspace: true,
     memberIds: arrayUnion(userId),
+    collaboratorUids: arrayUnion(userId),
     updatedAt: serverTimestamp(),
   });
 
@@ -174,9 +183,11 @@ export async function deleteProject(
 
 function getSeconds(value: any): number {
   if (!value) return 0;
+
   if (typeof value?.toMillis === "function") {
     return Math.floor(value.toMillis() / 1000);
   }
+
   if (typeof value?.seconds === "number") {
     return value.seconds;
   }
@@ -209,13 +220,22 @@ export function subscribeToProjects(
   return onSnapshot(
     collection(db, "workspaces", workspaceId, "projects"),
     (snapshot) => {
-      const list: Project[] = snapshot.docs.map(
-        (d) =>
-          ({
-            id: d.id,
-            ...(d.data() as Omit<Project, "id">),
-          } as Project)
-      );
+      const list: Project[] = snapshot.docs.map((d) => {
+        const data = d.data() as any;
+
+        return {
+          id: d.id,
+          ...data,
+          workspaceId: data.workspaceId || workspaceId,
+          sourceWorkspaceId: data.sourceWorkspaceId || workspaceId,
+          projectWorkspaceId: data.projectWorkspaceId || workspaceId,
+          projectScope:
+            data.projectScope ||
+            (data.visibility === "private" ? "private" : "workspace"),
+          isPrivateProject:
+            data.isPrivateProject === true || data.visibility === "private",
+        } as Project;
+      });
 
       list.sort((a, b) => getSeconds(b.createdAt) - getSeconds(a.createdAt));
 
@@ -235,5 +255,3 @@ export function subscribeToProjects(
     }
   );
 }
-
-

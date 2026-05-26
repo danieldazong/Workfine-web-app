@@ -45,20 +45,24 @@ interface WorkspaceMember {
   displayName: string;
   avatar: string;
   avatarColor: string;
-  role: "owner" | "admin" | "member" | "viewer";
+    role?: "owner" | "admin" | "member" | "viewer";
   status: "active" | "pending" | "invited" | "suspended";
   joinedAt: any;
   invitedBy: string;
   lastActive: any;
-  permissions: {
+    permissions: {
+    canView?: boolean;
+    canComment?: boolean;
+    canEdit?: boolean;
+    canDelete?: boolean;
+    canInvite?: boolean;
     canCreateProjects: boolean;
     canDeleteProjects: boolean;
     canInviteMembers: boolean;
     canManageTasks: boolean;
-    canEdit?: boolean;
-    canDelete?: boolean;
-    canInvite?: boolean;
+    canViewOnly?: boolean;
   };
+
 }
 
 interface PendingInvite {
@@ -82,11 +86,16 @@ interface WorkspaceData {
   name: string;
   ownerId: string;
   ownerEmail: string;
+  ownerEmailLower?: string;
+  createdBy?: string;
+  uid?: string;
+  userId?: string;
   createdAt: any;
   memberCount: number;
   plan: "free" | "pro";
   description?: string;
 }
+
 
 interface Note {
   id: string;
@@ -172,7 +181,7 @@ function getSeconds(v: any): number {
 }
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
-  const { user, workspaceId, setWorkspaceId } = useAuth();
+    const { user, workspaceId, personalWorkspaceId, setWorkspaceId } = useAuth();
   const uid = user?.uid ?? "";
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -184,7 +193,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
 
-  const resolvedRef = useRef(false);
+    const resolvedRef = useRef(false);
+  const hasEverResolvedRef = useRef(false);
 
   const cancelInvite = async (inviteCode: string): Promise<void> => {
     if (!workspaceId) throw new Error("No workspace found");
@@ -286,10 +296,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    console.log("[AppData] 🔄 Attaching workspace listeners:", workspaceId);
+        console.log("[AppData] 🔄 Attaching workspace listeners:", workspaceId);
 
     resolvedRef.current = false;
-    setLoading(true);
+    // Only show loading spinner on the very first load.
+    // Subsequent re-subscribes keep cached data visible (tab-like switching).
+    if (!hasEverResolvedRef.current) {
+      setLoading(true);
+    }
+
 
        let wsReady = false;
     let membersReady = false;
@@ -298,26 +313,58 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let tasksReady = false;
 
         let latestMembers: WorkspaceMember[] = [];
-    let latestProjects: Project[] = [];
+    let latestWorkspaceProjects: Project[] = [];
+    let latestPersonalProjects: Project[] = [];
     let latestTasks: Task[] = [];
     let latestWorkspaceData: WorkspaceData | null = null;
-    function isTrustedActiveMember(member: WorkspaceMember | undefined) {
+        function isTrustedActiveMember(member: WorkspaceMember | undefined) {
       if (!member) return false;
 
-      const memberUid = (member as any).userId || (member as any).uid || (member as any).id;
+      const memberUid = String(
+        (member as any).userId || (member as any).uid || (member as any).id || ""
+      ).trim();
 
-      if (latestWorkspaceData?.ownerId === memberUid) {
-        return member.status === "active";
-      }
+        const memberEmail = String(
+        (member as any).emailLower ||
+          (member as any).email_lowercase ||
+          (member as any).email ||
+          (member as any).emailAddress ||
+          ""
+      )
+        .trim()
+        .toLowerCase();
 
-      return member.status === "active";
+
+      const currentEmail = String(user?.email || "")
+        .trim()
+        .toLowerCase();
+
+      const status = String((member as any).status || "").trim().toLowerCase();
+
+      if (status !== "active") return false;
+
+      if (latestWorkspaceData?.ownerId === memberUid) return true;
+
+      return memberUid === uid || Boolean(currentEmail && memberEmail === currentEmail);
     }
 
 
            function getMyWorkspaceRole() {
-      const mine = latestMembers.find((m: any) => {
-        const memberUid = m.userId || m.uid || m.id;
-        return memberUid === uid;
+            const mine = latestMembers.find((m: any) => {
+        const memberUid = String(m.userId || m.uid || m.id || "").trim();
+               const memberEmail = String(
+          m.emailLower || m.email_lowercase || m.email || m.emailAddress || ""
+        )
+          .trim()
+          .toLowerCase();
+        const currentEmail = String(user?.email || "")
+          .trim()
+          .toLowerCase();
+
+        return (
+          memberUid === uid ||
+          Boolean(currentEmail && memberEmail === currentEmail)
+        );
       });
 
       if (latestWorkspaceData?.ownerId === uid) {
@@ -329,9 +376,21 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
 
        function isActiveMemberOrOwner() {
-      const mine = latestMembers.find((m: any) => {
-        const memberUid = m.userId || m.uid || m.id;
-        return memberUid === uid;
+            const mine = latestMembers.find((m: any) => {
+        const memberUid = String(m.userId || m.uid || m.id || "").trim();
+                const memberEmail = String(
+          m.emailLower || m.email_lowercase || m.email || m.emailAddress || ""
+        )
+          .trim()
+          .toLowerCase();
+        const currentEmail = String(user?.email || "")
+          .trim()
+          .toLowerCase();
+
+        return (
+          memberUid === uid ||
+          Boolean(currentEmail && memberEmail === currentEmail)
+        );
       });
 
       return latestWorkspaceData?.ownerId === uid || isTrustedActiveMember(mine);
@@ -339,32 +398,62 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
 
 
-    function canAccessProject(project: Project) {
+    function isPrivateProject(project: any) {
+      return (
+        project.visibility === "private" ||
+        project.projectScope === "private" ||
+        project.isPrivateProject === true
+      );
+    }
+
+    function isProjectOwner(project: any) {
+      return (
+        project.createdBy === uid ||
+        project.ownerId === uid ||
+        project.uid === uid ||
+        (Array.isArray(project.memberIds) && project.memberIds.includes(uid)) ||
+        (Array.isArray(project.collaboratorUids) &&
+          project.collaboratorUids.includes(uid))
+      );
+    }
+
+    function canAccessWorkspaceProject(project: Project) {
       if (!uid) return false;
 
       const myRole = getMyWorkspaceRole();
 
-      if (myRole === "owner" || myRole === "admin") {
-        return true;
+      if (isPrivateProject(project)) {
+        return isProjectOwner(project);
       }
 
-      if (project.visibility === "private") {
-        return (
-          project.createdBy === uid ||
-          project.ownerId === uid ||
-          project.uid === uid ||
-          (Array.isArray(project.memberIds) && project.memberIds.includes(uid)) ||
-          (Array.isArray(project.collaboratorUids) &&
-            project.collaboratorUids.includes(uid))
-        );
+      if (myRole === "owner" || myRole === "admin") {
+        return true;
       }
 
       return isActiveMemberOrOwner();
     }
 
     function getAccessibleProjects() {
-      return latestProjects.filter((project) => canAccessProject(project));
+      const workspaceList = latestWorkspaceProjects.filter((project) =>
+        canAccessWorkspaceProject(project)
+      );
+
+      const personalList = latestPersonalProjects.filter((project: any) => {
+        return isPrivateProject(project) && isProjectOwner(project);
+      });
+
+      const map = new Map<string, Project>();
+
+      [...personalList, ...workspaceList].forEach((project: any) => {
+        const key = `${project.workspaceId || ""}:${project.id}`;
+        map.set(key, project);
+      });
+
+      return Array.from(map.values()).sort(
+        (a: any, b: any) => getSeconds(b.createdAt) - getSeconds(a.createdAt)
+      );
     }
+
 
 
     function publishAccessibleData() {
@@ -453,7 +542,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setTasks(accessibleTasks);
     }
 
-    function tryResolve() {
+        function tryResolve() {
       if (
         !resolvedRef.current &&
         wsReady &&
@@ -463,19 +552,23 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         tasksReady
       ) {
         resolvedRef.current = true;
+        hasEverResolvedRef.current = true;
         setLoading(false);
         console.log("[AppData] ✅ Workspace data ready");
       }
     }
 
 
-    const timeout = setTimeout(() => {
+
+        const timeout = setTimeout(() => {
       if (!resolvedRef.current) {
         resolvedRef.current = true;
+        hasEverResolvedRef.current = true;
         setLoading(false);
         console.warn("[AppData] ⚠️ Workspace safety timeout");
       }
     }, 6000);
+
 
     fixLegacyInvites(workspaceId);
 
@@ -510,24 +603,79 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const unsubWsMembers = onSnapshot(
       collection(db, "workspaces", workspaceId, "members"),
       (snap) => {
-        const data = snap.docs.map((d) => {
+            const rawMembers = snap.docs.map((d) => {
           const raw = d.data() as any;
 
           return {
-            userId: raw.userId ?? d.id,
+            id: d.id,
             ...raw,
+            userId: raw.userId ?? raw.uid ?? d.id,
           } as WorkspaceMember;
         });
 
-                latestMembers = data;
+        const seenMembers = new Set<string>();
+
+        const data = rawMembers.filter((member: any) => {
+          const memberUid = String(
+            member.userId || member.uid || member.id || ""
+          ).trim();
+
+          const memberEmail = String(
+            member.emailLower ||
+              member.email_lowercase ||
+              member.email ||
+              member.emailAddress ||
+              ""
+          )
+            .trim()
+            .toLowerCase();
+
+          const key = memberUid
+            ? `uid:${memberUid}`
+            : memberEmail
+              ? `email:${memberEmail}`
+              : `doc:${member.id}`;
+
+          if (seenMembers.has(key)) return false;
+
+          seenMembers.add(key);
+          return true;
+        });
+
+        latestMembers = data;
         setMembers(data);
+
         publishAccessibleData();
 
         console.log("[AppData] workspace members:", data.length);
 
 
-              const iStillMember =
-          latestWorkspaceData?.ownerId === uid || snap.docs.some((d) => d.id === uid);
+                            const iStillMember =
+          latestWorkspaceData?.ownerId === uid ||
+          data.some((member: any) => {
+            const memberUid = String(
+              member.userId || member.uid || member.id || ""
+            ).trim();
+
+                       const memberEmail = String(
+              member.emailLower ||
+                member.email_lowercase ||
+                member.email ||
+                member.emailAddress ||
+                ""
+            )
+              .trim()
+            .toLowerCase();
+
+            const currentEmail = String(user?.email || "")
+              .trim()
+              .toLowerCase();
+
+            return (
+              memberUid === uid ||
+              Boolean(currentEmail && memberEmail === currentEmail)
+            );
+          });
 
         if (snap.docs.length > 0 && !iStillMember) {
           console.warn(
@@ -573,13 +721,43 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
     );
 
-       const unsubProjects = subscribeToProjects(workspaceId, (data) => {
-      latestProjects = data;
+           const unsubWorkspaceProjects = subscribeToProjects(workspaceId, (data) => {
+      latestWorkspaceProjects = data.map((project: any) => ({
+        ...project,
+        workspaceId: project.workspaceId || workspaceId,
+        sourceWorkspaceId: project.sourceWorkspaceId || workspaceId,
+        projectWorkspaceId: project.projectWorkspaceId || workspaceId,
+      }));
+
       publishAccessibleData();
 
       projectsReady = true;
       tryResolve();
     });
+
+    const effectivePersonalWorkspaceId =
+      personalWorkspaceId || (uid ? `personal_${uid}` : "");
+
+    const unsubPersonalProjects =
+      effectivePersonalWorkspaceId &&
+      effectivePersonalWorkspaceId !== workspaceId
+        ? subscribeToProjects(effectivePersonalWorkspaceId, (data) => {
+            latestPersonalProjects = data.map((project: any) => ({
+              ...project,
+              workspaceId: project.workspaceId || effectivePersonalWorkspaceId,
+              sourceWorkspaceId:
+                project.sourceWorkspaceId || effectivePersonalWorkspaceId,
+              projectWorkspaceId:
+                project.projectWorkspaceId || effectivePersonalWorkspaceId,
+            }));
+
+            publishAccessibleData();
+          })
+        : (() => {
+            latestPersonalProjects = [];
+            return () => {};
+          })();
+
 
 
     const unsubTasks = onSnapshot(
@@ -593,12 +771,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             } as Task)
         );
 
-        data.sort((a, b) => getSeconds(b.createdAt) - getSeconds(a.createdAt));
+                data.sort((a, b) => getSeconds(b.createdAt) - getSeconds(a.createdAt));
 
-                latestTasks = data;
+        latestTasks = data;
         publishAccessibleData();
 
         console.log("[AppData] workspace tasks:", data.length);
+
 
 
         tasksReady = true;
@@ -617,10 +796,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       unsubWorkspace();
       unsubWsMembers();
       unsubInvites();
-      unsubProjects();
+          unsubWorkspaceProjects();
+      unsubPersonalProjects();
       unsubTasks();
     };
-    }, [uid, workspaceId, user?.email]);
+        }, [uid, workspaceId, personalWorkspaceId, user?.email]);
+
 
   return (
     <AppDataContext.Provider

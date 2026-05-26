@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -25,7 +25,7 @@ import { deleteProject } from "../lib/firebase/projects";
 import CreateProjectModal from "./CreateProjectModal";
 
 export default function Sidebar() {
-  const { user, signOutUser, workspaceId } = useAuth();
+  const { user, signOutUser, workspaceId, personalWorkspaceId } = useAuth();
   const { projects, members, workspaceData } = useAppData();
 
   const navigate = useNavigate();
@@ -36,7 +36,10 @@ export default function Sidebar() {
 
   const safeMembers = Array.isArray(members) ? members : [];
 
-  const myMembership = safeMembers.find((m: any) => m.userId === user?.uid);
+  const myMembership = safeMembers.find((m: any) => {
+    const memberUid = m.userId || m.uid || m.id;
+    return !!user?.uid && memberUid === user.uid;
+  });
 
   const isWorkspaceOwner = !!user?.uid && workspaceData?.ownerId === user.uid;
 
@@ -47,24 +50,110 @@ export default function Sidebar() {
 
   const myRole = isWorkspaceOwner ? "owner" : myMembership?.role ?? "member";
 
-  const canCreateProjects =
-    !!user?.uid && !!workspaceId && isActiveWorkspaceMember;
+  const canCreateProjects = !!user?.uid;
 
-  const canDeleteProjects =
+  const canDeleteSharedProjects =
     myRole === "owner" ||
     myRole === "admin" ||
     myMembership?.permissions?.canDeleteProjects === true;
 
-  const handleDelete = async (e: React.MouseEvent, projectId: string) => {
+  const effectivePersonalWorkspaceId =
+    personalWorkspaceId || (user?.uid ? `personal_${user.uid}` : "");
+
+  function isPrivateProject(project: any) {
+    return (
+      project.visibility === "private" ||
+      project.projectScope === "private" ||
+      project.isPrivateProject === true
+    );
+  }
+
+  function isProjectOwner(project: any) {
+    return (
+      !!user?.uid &&
+      (project.createdBy === user.uid ||
+        project.ownerId === user.uid ||
+        project.uid === user.uid ||
+        (Array.isArray(project.memberIds) && project.memberIds.includes(user.uid)) ||
+        (Array.isArray(project.collaboratorUids) &&
+          project.collaboratorUids.includes(user.uid)))
+    );
+  }
+
+  const { privateProjects, sharedProjects } = useMemo(() => {
+    const privateList: any[] = [];
+    const sharedList: any[] = [];
+
+    const seen = new Set<string>();
+
+    (Array.isArray(projects) ? projects : []).forEach((project: any) => {
+      const projectWorkspaceId =
+        project.workspaceId || project.projectWorkspaceId || project.sourceWorkspaceId || "";
+
+      const key = `${projectWorkspaceId}:${project.id}`;
+
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      const belongsToPersonalWorkspace =
+        !!effectivePersonalWorkspaceId &&
+        projectWorkspaceId === effectivePersonalWorkspaceId;
+
+      const belongsToActiveWorkspace =
+        !!workspaceId && projectWorkspaceId === workspaceId;
+
+      if (
+        belongsToPersonalWorkspace ||
+        (isPrivateProject(project) && isProjectOwner(project))
+      ) {
+        privateList.push(project);
+        return;
+      }
+
+      if (belongsToActiveWorkspace && !isPrivateProject(project)) {
+        sharedList.push(project);
+      }
+    });
+
+    privateList.sort((a: any, b: any) => {
+      const at = a.createdAt?.seconds || 0;
+      const bt = b.createdAt?.seconds || 0;
+      return bt - at;
+    });
+
+    sharedList.sort((a: any, b: any) => {
+      const at = a.createdAt?.seconds || 0;
+      const bt = b.createdAt?.seconds || 0;
+      return bt - at;
+    });
+
+    return {
+      privateProjects: privateList,
+      sharedProjects: sharedList,
+    };
+  }, [projects, workspaceId, effectivePersonalWorkspaceId, user?.uid]);
+
+  const handleDelete = async (e: React.MouseEvent, project: any) => {
     e.stopPropagation();
 
-    if (!workspaceId) {
-      alert("No active workspace found.");
+    const projectWorkspaceId =
+      project.workspaceId ||
+      project.projectWorkspaceId ||
+      project.sourceWorkspaceId ||
+      "";
+
+    if (!projectWorkspaceId) {
+      alert("No project workspace found.");
       return;
     }
 
-    if (!canDeleteProjects) {
-      alert("You do not have permission to delete projects.");
+    const privateProject = isPrivateProject(project);
+
+    const canDeleteThisProject =
+      privateProject ? isProjectOwner(project) : canDeleteSharedProjects;
+
+    if (!canDeleteThisProject) {
+      alert("You do not have permission to delete this project.");
       return;
     }
 
@@ -72,7 +161,7 @@ export default function Sidebar() {
       return;
     }
 
-    await deleteProject(workspaceId, projectId);
+    await deleteProject(projectWorkspaceId, project.id);
   };
 
   const navItems = [
@@ -92,14 +181,17 @@ export default function Sidebar() {
           <SidebarContent
             user={user}
             signOutUser={signOutUser}
-            projects={projects}
+            privateProjects={privateProjects}
+            sharedProjects={sharedProjects}
             navigate={navigate}
             location={location}
             navItems={navItems}
             handleDelete={handleDelete}
             setShowCreateProject={setShowCreateProject}
             canCreateProjects={canCreateProjects}
-            canDeleteProjects={canDeleteProjects}
+            canDeleteSharedProjects={canDeleteSharedProjects}
+            isProjectOwner={isProjectOwner}
+            isPrivateProject={isPrivateProject}
             onClose={() => {}}
           />
         </aside>
@@ -137,14 +229,17 @@ export default function Sidebar() {
             <SidebarContent
               user={user}
               signOutUser={signOutUser}
-              projects={projects}
+              privateProjects={privateProjects}
+              sharedProjects={sharedProjects}
               navigate={navigate}
               location={location}
               navItems={navItems}
               handleDelete={handleDelete}
               setShowCreateProject={setShowCreateProject}
               canCreateProjects={canCreateProjects}
-              canDeleteProjects={canDeleteProjects}
+              canDeleteSharedProjects={canDeleteSharedProjects}
+              isProjectOwner={isProjectOwner}
+              isPrivateProject={isPrivateProject}
               onClose={() => setIsMobileMenuOpen(false)}
               showCloseButton
             />
@@ -163,32 +258,84 @@ export default function Sidebar() {
 interface SidebarContentProps {
   user: any;
   signOutUser: () => void | Promise<void>;
-  projects: any[];
-  navigate: (path: string) => void;
+  privateProjects: any[];
+  sharedProjects: any[];
+  navigate: (path: string, options?: { state?: any; replace?: boolean }) => void;
   location: any;
   navItems: { name: string; icon: any; path: string }[];
-  handleDelete: (e: React.MouseEvent, id: string) => void;
+  handleDelete: (e: React.MouseEvent, project: any) => void;
   setShowCreateProject: (v: boolean) => void;
   canCreateProjects: boolean;
-  canDeleteProjects: boolean;
+  canDeleteSharedProjects: boolean;
+  isProjectOwner: (project: any) => boolean;
+  isPrivateProject: (project: any) => boolean;
   onClose: () => void;
   showCloseButton?: boolean;
 }
 
+
 function SidebarContent({
   user,
   signOutUser,
-  projects,
+  privateProjects,
+  sharedProjects,
   navigate,
   location,
   navItems,
   handleDelete,
   setShowCreateProject,
   canCreateProjects,
-  canDeleteProjects,
+  canDeleteSharedProjects,
+  isProjectOwner,
+  isPrivateProject,
   onClose,
   showCloseButton = false,
 }: SidebarContentProps) {
+  function renderProject(project: any) {
+    const privateProject = isPrivateProject(project);
+
+    const canDeleteThisProject = privateProject
+      ? isProjectOwner(project)
+      : canDeleteSharedProjects;
+
+    return (
+                 <div
+        key={`${project.workspaceId || project.projectWorkspaceId || ""}:${project.id}`}
+        className="group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-300 transition-colors hover:bg-white/10"
+        onClick={(e) => {
+          e.preventDefault();
+          const targetPath = `/projects/${project.id}`;
+          if (location.pathname !== targetPath) {
+            navigate(targetPath, {
+              state: { prefetchedProject: project },
+            });
+          }
+          onClose();
+        }}
+      >
+        <span
+          className="h-2 w-2 flex-shrink-0 rounded-full"
+          style={{ backgroundColor: project.color ?? "#3b82f6" }}
+        />
+
+        <span className="flex-1 truncate">
+          {project.name || "Untitled Project"}
+        </span>
+
+        {canDeleteThisProject && (
+          <button
+            type="button"
+            onClick={(e) => handleDelete(e, project)}
+            className="px-1 text-xs text-gray-500 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
+            title="Delete project"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="flex flex-shrink-0 items-center justify-between p-6">
@@ -257,14 +404,14 @@ function SidebarContent({
                 )
               }
             >
-              PROJECTS
+              MY PROJECTS
             </NavLink>
 
             <button
               type="button"
               onClick={() => {
                 if (!canCreateProjects) {
-                  alert("Workspace is still loading. Please refresh and try again.");
+                  alert("Account is still loading. Please refresh and try again.");
                   return;
                 }
 
@@ -278,41 +425,27 @@ function SidebarContent({
             </button>
           </div>
 
-          {projects.length === 0 ? (
+          {privateProjects.length === 0 ? (
             <p className="px-2 py-2 text-xs italic text-gray-500">
-              No projects yet
+              No private projects yet
             </p>
           ) : (
-            projects.map((p) => (
-              <div
-                key={p.id}
-                className="group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-300 transition-colors hover:bg-white/10"
-                onClick={() => {
-                  navigate(`/projects/${p.id}`);
-                  onClose();
-                }}
-              >
-                <span
-                  className="h-2 w-2 flex-shrink-0 rounded-full"
-                  style={{ backgroundColor: p.color ?? "#3b82f6" }}
-                />
+            privateProjects.map((project) => renderProject(project))
+          )}
 
-                <span className="flex-1 truncate">
-                  {p.name || "Untitled Project"}
-                </span>
+          <div className="mb-2 mt-5 flex items-center gap-2 px-2">
+            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
+              SHARE PROJECT
+            </span>
+            <span className="h-px flex-1 bg-slate-700/80" />
+          </div>
 
-                {canDeleteProjects && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleDelete(e, p.id)}
-                    className="px-1 text-xs text-gray-500 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
-                    title="Delete project"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ))
+          {sharedProjects.length === 0 ? (
+            <p className="px-2 py-2 text-xs italic text-gray-500">
+              No shared projects yet
+            </p>
+          ) : (
+            sharedProjects.map((project) => renderProject(project))
           )}
         </div>
       </nav>

@@ -36,6 +36,50 @@ function normalizeEmail(email?: string | null): string {
 function getDisplayName(user: any): string {
   return user?.displayName || user?.email?.split("@")[0] || "Member";
 }
+function getRolePermissions(role: "admin" | "member" | "viewer") {
+  if (role === "admin") {
+    return {
+      canView: true,
+      canComment: true,
+      canEdit: true,
+      canDelete: true,
+      canInvite: true,
+      canCreateProjects: true,
+      canDeleteProjects: true,
+      canInviteMembers: true,
+      canManageTasks: true,
+      canViewOnly: false,
+    };
+  }
+
+  if (role === "member") {
+    return {
+      canView: true,
+      canComment: true,
+      canEdit: false,
+      canDelete: false,
+      canInvite: false,
+      canCreateProjects: false,
+      canDeleteProjects: false,
+      canInviteMembers: false,
+      canManageTasks: false,
+      canViewOnly: false,
+    };
+  }
+
+  return {
+    canView: true,
+    canComment: false,
+    canEdit: false,
+    canDelete: false,
+    canInvite: false,
+    canCreateProjects: false,
+    canDeleteProjects: false,
+    canInviteMembers: false,
+    canManageTasks: false,
+    canViewOnly: true,
+  };
+}
 
 function getTimestampMillis(value: any): number {
   if (!value) return 0;
@@ -198,7 +242,12 @@ export default function JoinWorkspacePage() {
       const emailLower = normalizeEmail(email);
       const photoURL = user.photoURL ?? "";
 
-      const memberRef = doc(db, "workspaces", workspaceId, "members", uid);
+           const memberRef = doc(db, "workspaces", workspaceId, "members", uid);
+                 const invitedEmailMemberRef =
+        invitedEmail && invitedEmail !== uid
+          ? doc(db, "workspaces", workspaceId, "members", invitedEmail)
+          : null;
+
       const userRef = doc(db, "users", uid);
       const globalInviteRef = doc(db, "invites", inviteCode);
       const wsInviteRef = doc(
@@ -221,57 +270,60 @@ export default function JoinWorkspacePage() {
        * This gives the invited user real access to the workspace before
        * users/{uid}.workspaceId changes.
        */
-      await setDoc(
-        memberRef,
-        {
-          uid,
-          userId: uid,
+        const memberPayload = {
+        uid,
+        userId: uid,
 
-          email,
-          emailLower,
-          email_lowercase: emailLower,
+        email,
+        emailLower,
+        email_lowercase: emailLower,
 
-          displayName,
-          name: displayName,
+        displayName,
+        name: displayName,
 
-          photoURL,
-          avatarUrl: photoURL,
-          avatarURL: photoURL,
-          googlePhotoURL: photoURL,
+        photoURL,
+        avatarUrl: photoURL,
+        avatarURL: photoURL,
+        googlePhotoURL: photoURL,
 
-          avatar: (displayName || email || "M")[0].toUpperCase(),
-          avatarColor: avatarColor(uid),
+        avatar: (displayName || email || "M")[0].toUpperCase(),
+        avatarColor: avatarColor(uid),
 
-          role: safeRole,
-          status: "active",
-          workspaceId,
+        role: safeRole,
+        status: "active",
+        workspaceId,
 
-          code: inviteCode,
-          inviteCode,
-          acceptedInviteCode: inviteCode,
+        code: inviteCode,
+        inviteCode,
+        acceptedInviteCode: inviteCode,
 
-          invitedBy: invite.invitedBy ?? "",
-          invitedByUid: invite.invitedByUid ?? invite.invitedBy ?? "",
-          invitedByName: invite.invitedByName ?? "",
-          invitedByEmail: invite.invitedByEmail ?? "",
+        invitedBy: invite.invitedBy ?? "",
+        invitedByUid: invite.invitedByUid ?? invite.invitedBy ?? "",
+        invitedByName: invite.invitedByName ?? "",
+        invitedByEmail: invite.invitedByEmail ?? "",
 
-          joinedAt: serverTimestamp(),
-          acceptedAt: serverTimestamp(),
-          lastActive: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+        joinedAt: serverTimestamp(),
+        acceptedAt: serverTimestamp(),
+        lastActive: serverTimestamp(),
+        updatedAt: serverTimestamp(),
 
-          permissions: {
-            canCreateProjects: true,
-            canDeleteProjects: safeRole === "admin",
-            canInviteMembers: safeRole === "admin",
-            canManageTasks: true,
-            canEdit: true,
-            canDelete: safeRole === "admin",
-            canInvite: safeRole === "admin",
+        permissions: getRolePermissions(safeRole),
+      };
+
+      await setDoc(memberRef, memberPayload, { merge: true });
+
+      if (invitedEmailMemberRef) {
+        await setDoc(
+          invitedEmailMemberRef,
+          {
+            ...memberPayload,
+            migratedToUidMemberDoc: uid,
+            duplicateForEmailLookup: true,
           },
-        },
-        { merge: true }
-      );
+          { merge: true }
+        );
+      }
+
 
       console.log("[JoinPage] STEP 1 OK: member doc created");
 

@@ -2810,7 +2810,186 @@ function formatFullLocalDateTime(timestamp: any): string {
       project,
     ]);
 
-       const canReplyToComments = taskParticipantCount > 1;
+               const currentWorkspaceMember = useMemo(() => {
+      if (!user?.uid && !user?.email) return null;
+
+      const currentUid = String(user?.uid || "").trim();
+      const currentEmail = normalizeEmail(user?.email);
+
+      return (
+        workspaceMembers.find((member: any) => {
+          const memberUid = String(
+            member?.uid ||
+              member?.userId ||
+              member?.id ||
+              member?.memberId ||
+              member?.userUid ||
+              "",
+          ).trim();
+
+          const memberEmail = normalizeEmail(
+            member?.email || member?.emailLower || member?.emailAddress,
+          );
+
+          return (
+            (currentUid && memberUid === currentUid) ||
+            (currentEmail && memberEmail === currentEmail)
+          );
+        }) || null
+      );
+    }, [workspaceMembers, user?.uid, user?.email]);
+
+    const currentWorkspaceRole = useMemo(() => {
+      const rawRole = String(
+        currentWorkspaceMember?.role ||
+          currentWorkspaceMember?.accessRole ||
+          currentWorkspaceMember?.memberRole ||
+          "",
+      )
+        .trim()
+        .toLowerCase();
+
+      if (rawRole === "owner") return "owner";
+      if (rawRole === "admin") return "admin";
+      if (rawRole === "viewer") return "viewer";
+      if (rawRole === "member") return "member";
+
+      return currentWorkspaceMember ? "member" : "";
+    }, [currentWorkspaceMember]);
+
+    const currentWorkspacePermissions = currentWorkspaceMember?.permissions || {};
+
+    const isWorkspaceOwner = useMemo(() => {
+      const currentUid = String(user?.uid || "").trim();
+      const currentEmail = normalizeEmail(user?.email);
+
+      if (!currentUid && !currentEmail) return false;
+
+      const ownerIds = [
+        appData?.workspaceData?.ownerId,
+        appData?.workspaceData?.createdBy,
+        appData?.workspaceData?.uid,
+        appData?.workspaceData?.userId,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+
+      const ownerEmails = [
+        appData?.workspaceData?.ownerEmail,
+        appData?.workspaceData?.ownerEmailLower,
+        appData?.workspaceData?.createdByEmail,
+        appData?.workspaceData?.email,
+      ]
+        .map((value) => normalizeEmail(value))
+        .filter(Boolean);
+
+      return (
+        Boolean(currentUid && ownerIds.includes(currentUid)) ||
+        Boolean(currentEmail && ownerEmails.includes(currentEmail))
+      );
+    }, [user?.uid, user?.email, appData?.workspaceData]);
+
+    const isTaskOwner = useMemo(() => {
+      const currentUid = String(user?.uid || "").trim();
+      const currentEmail = normalizeEmail(user?.email);
+
+      if (!currentUid && !currentEmail) return false;
+
+      const ownerUids = [
+        (taskView as any).ownerId,
+        (taskView as any).createdBy,
+        (taskView as any).createdByUid,
+        (taskView as any).uid,
+        (taskView as any).userId,
+        (task as any).ownerId,
+        (task as any).createdBy,
+        (task as any).createdByUid,
+        (task as any).uid,
+        (task as any).userId,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+
+      const ownerEmails = [
+        (taskView as any).ownerEmail,
+        (taskView as any).createdByEmail,
+        (taskView as any).email,
+        (task as any).ownerEmail,
+        (task as any).createdByEmail,
+        (task as any).email,
+      ]
+        .map((value) => normalizeEmail(value))
+        .filter(Boolean);
+
+      return (
+        Boolean(currentUid && ownerUids.includes(currentUid)) ||
+        Boolean(currentEmail && ownerEmails.includes(currentEmail))
+      );
+    }, [user?.uid, user?.email, taskView, task]);
+
+    const isProjectOwner = useMemo(() => {
+      const currentUid = String(user?.uid || "").trim();
+      const currentEmail = normalizeEmail(user?.email);
+
+      if ((!currentUid && !currentEmail) || !project) return false;
+
+      const projectOwnerUids = [
+        (project as any).ownerId,
+        (project as any).createdBy,
+        (project as any).createdByUid,
+        (project as any).uid,
+        (project as any).userId,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+
+      const projectOwnerEmails = [
+        (project as any).ownerEmail,
+        (project as any).createdByEmail,
+        (project as any).email,
+      ]
+        .map((value) => normalizeEmail(value))
+        .filter(Boolean);
+
+      return (
+        Boolean(currentUid && projectOwnerUids.includes(currentUid)) ||
+        Boolean(currentEmail && projectOwnerEmails.includes(currentEmail))
+      );
+    }, [user?.uid, user?.email, project]);
+
+    const isWorkspaceOwnerOrAdmin =
+      isWorkspaceOwner ||
+      currentWorkspaceRole === "owner" ||
+      currentWorkspaceRole === "admin";
+
+    const isWorkspaceMemberRole = currentWorkspaceRole === "member";
+
+    const isWorkspaceViewerRole =
+      currentWorkspaceRole === "viewer" ||
+      currentWorkspacePermissions?.canViewOnly === true;
+
+    const canEditTaskContent =
+      Boolean(user?.uid) &&
+      (isWorkspaceOwnerOrAdmin || isTaskOwner || isProjectOwner);
+
+    const canManageTaskSharing =
+      Boolean(user?.uid) &&
+      (isWorkspaceOwnerOrAdmin || isTaskOwner || isProjectOwner);
+
+    const canCommentOnTask =
+      Boolean(user?.uid) &&
+      !isWorkspaceViewerRole &&
+      (canEditTaskContent ||
+        isWorkspaceMemberRole ||
+        currentWorkspacePermissions?.canComment === true);
+
+    const canReactToComments = canCommentOnTask;
+
+    const canUseCommentComposer = canCommentOnTask;
+
+    const canReplyToComments = canCommentOnTask && taskParticipantCount > 1;
+
+
 
     const taskNotificationMemberUids = useMemo(() => {
       const ids = new Set<string>();
@@ -3039,9 +3218,17 @@ function formatFullLocalDateTime(timestamp: any): string {
     }, [pickerForCommentId]);
     // Toggle a reaction on a comment (atomic write of the reactions map)
     const toggleReaction = useCallback(
-      async (comment: TaskComment, emoji: string) => {
+            async (comment: TaskComment, emoji: string) => {
         if (!user?.uid) return;
+
+        if (!canReactToComments) {
+          setToast("You do not have permission to react to comments");
+          setTimeout(() => setToast(null), 2500);
+          return;
+        }
+
         if (!taskWorkspaceId || !sourceTaskId) return;
+
 
         const reactions: Record<string, string[]> = {
           ...(comment.reactions ?? {}),
@@ -3077,7 +3264,7 @@ function formatFullLocalDateTime(timestamp: any): string {
           console.error("[TaskDetailPanel] toggle reaction:", e);
         }
       },
-      [user?.uid, taskWorkspaceId, sourceTaskId],
+            [user?.uid, taskWorkspaceId, sourceTaskId, canReactToComments],
     );
     const migrateMyLegacyCommentsToCanonical = useCallback(async () => {
       if (!safeCurrentUserUid || !taskWorkspaceId || !sourceTaskId || !task.id)
@@ -3339,11 +3526,90 @@ useEffect(() => {
       setClosing(true);
       setTimeout(() => onClose(), 280);
     }, [onClose]);
+    const notifyCommentRecipients = useCallback(
+      async ({
+        commentId,
+        text,
+        mentionedUids,
+      }: {
+        commentId: string;
+        text: string;
+        mentionedUids: string[];
+      }) => {
+        if (!user?.uid || !taskWorkspaceId || !sourceTaskId || !commentId) {
+          return;
+        }
 
-     const handleSend = useCallback(async () => {
+        try {
+          const safeMentionedUids = Array.isArray(mentionedUids)
+            ? mentionedUids
+                .map((uid) => String(uid || "").trim())
+                .filter((uid) => uid && uid !== user.uid && !uid.includes("/"))
+            : [];
+
+          const safeTaskMemberUids = Array.isArray(taskNotificationMemberUids)
+            ? taskNotificationMemberUids
+                .map((uid) => String(uid || "").trim())
+                .filter((uid) => uid && uid !== user.uid && !uid.includes("/"))
+            : [];
+
+          const recipientUids = Array.from(
+            new Set([...safeTaskMemberUids, ...safeMentionedUids]),
+          );
+
+          if (recipientUids.length === 0) {
+            return;
+          }
+
+          await createCommentNotifications({
+            workspaceId: taskWorkspaceId,
+            projectId: String(taskView.projectId || task.projectId || ""),
+            taskId: sourceTaskId,
+            sourceTaskId,
+            commentId,
+            taskTitle: String(taskView.title || task.title || "Untitled task"),
+            projectName: String((project as any)?.name || ""),
+            commentText: text,
+            authorId: user.uid,
+            authorName: user.displayName || user.email || "User",
+            authorPhotoURL: currentUserRealPhotoURL,
+            mentionedUids: safeMentionedUids,
+            taskMemberUids: safeTaskMemberUids,
+          });
+        } catch (notificationError) {
+          console.error(
+            "[TaskDetailPanel] create comment notifications:",
+            notificationError,
+          );
+        }
+      },
+      [
+        user?.uid,
+        user?.displayName,
+        user?.email,
+        taskWorkspaceId,
+        sourceTaskId,
+        taskView.projectId,
+        taskView.title,
+        task.projectId,
+        task.title,
+        project,
+        currentUserRealPhotoURL,
+        taskNotificationMemberUids,
+      ],
+    );
+
+          const handleSend = useCallback(async () => {
   if (!user?.uid || !commentText.trim() || sending) return;
 
+  if (!canCommentOnTask) {
+    setToast("You do not have permission to comment on this task");
+    setTimeout(() => setToast(null), 2500);
+    return;
+  }
+
   setSending(true);
+
 
   try {
     const text = normalizeLegacyStructuredMentions(commentText.trim());
@@ -3405,21 +3671,12 @@ useEffect(() => {
 
     const commentDocRef = await addDoc(commentsRef, commentPayload);
 
-    await createCommentNotifications({
-      workspaceId: taskWorkspaceId,
-      projectId: taskView.projectId || task.projectId || "",
-      taskId: sourceTaskId,
-      sourceTaskId,
+      await notifyCommentRecipients({
       commentId: commentDocRef.id,
-      taskTitle: taskView.title || task.title || "Untitled task",
-      projectName: project?.name || "",
-      commentText: text,
-      authorId: user.uid,
-      authorName,
-      authorPhotoURL: currentUserRealPhotoURL,
+      text,
       mentionedUids,
-      taskMemberUids: taskNotificationMemberUids,
     });
+
 
     setCommentText("");
     setReplyingTo(null);
@@ -3454,24 +3711,30 @@ useEffect(() => {
   replyingTo,
   mentionableUsers,
   scrollToLatestComment,
-  taskView.projectId,
-  taskView.title,
-  task.projectId,
-  task.title,
-  project?.name,
-  taskNotificationMemberUids,
+  notifyCommentRecipients,
+  canCommentOnTask,
 ]);
 
 
 
 
+
+
     const handleAttachFile = useCallback(
-      async (e: React.ChangeEvent<HTMLInputElement>) => {
+            async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
 
         e.target.value = "";
 
         if (!file) return;
+
+        if (!canCommentOnTask) {
+          setToast("You do not have permission to attach files");
+          setTimeout(() => setToast(null), 2500);
+          return;
+        }
+
+
 
         if (!user?.uid) {
           setToast("You must be signed in to upload files");
@@ -3574,20 +3837,10 @@ const commentDocRef = await addDoc(
   }),
 );
 
-await createCommentNotifications({
-  workspaceId: taskWorkspaceId,
-  projectId: taskView.projectId || task.projectId || "",
-  taskId: sourceTaskId,
-  sourceTaskId,
+await notifyCommentRecipients({
   commentId: commentDocRef.id,
-  taskTitle: taskView.title || task.title || "Untitled task",
-  projectName: project?.name || "",
-  commentText: text || `Attachment: ${cleanAttachment.name}`,
-  authorId: user.uid,
-  authorName,
-  authorPhotoURL: currentUserRealPhotoURL,
+  text: text || `Attachment: ${cleanAttachment.name}`,
   mentionedUids,
-  taskMemberUids: taskNotificationMemberUids,
 });
 
 
@@ -3645,7 +3898,7 @@ await createCommentNotifications({
           setUploadingAttachment(false);
         }
       },
-                  [
+                       [
         user,
         task.id,
         task.projectId,
@@ -3659,14 +3912,20 @@ await createCommentNotifications({
         replyingTo,
         mentionableUsers,
         scrollToLatestComment,
-        project?.name,
-        taskNotificationMemberUids,
+              notifyCommentRecipients,
+        canCommentOnTask,
       ],
+
     );
 
-
-    async function handleSaveDescription() {
+        async function handleSaveDescription() {
       if (!user?.uid || savingDescription || !taskView.id) return;
+
+      if (!canEditTaskContent) {
+        setToast("Only admins can edit task details");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
 
       const trimmed = descriptionDraft.trim();
 
@@ -3679,24 +3938,38 @@ await createCommentNotifications({
       setSavingDescription(true);
 
       try {
-        const taskRef = doc(db, "users", user.uid, "tasks", taskView.id);
+        const taskPayload = {
+          title: taskView.title,
+          status: taskView.status ?? "To Do",
+          priority: taskView.priority ?? "Low",
+          projectId: taskView.projectId ?? null,
+          projectCode: taskView.projectCode ?? null,
+          assignee: taskView.assignee ?? "",
+          dueDate: taskView.dueDate ?? "",
+          taskCode: taskView.taskCode ?? "",
+          description: trimmed,
+          updatedAt: serverTimestamp(),
+        };
 
-        await setDoc(
-          taskRef,
-          {
-            title: taskView.title,
-            status: taskView.status ?? "To Do",
-            priority: taskView.priority ?? "Low",
-            projectId: taskView.projectId ?? null,
-            projectCode: taskView.projectCode ?? null,
-            assignee: taskView.assignee ?? "",
-            dueDate: taskView.dueDate ?? "",
-            taskCode: taskView.taskCode ?? "",
-            description: trimmed,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
+        const writes: Promise<any>[] = [];
+
+        if (taskWorkspaceId && sourceTaskId) {
+          writes.push(
+            setDoc(
+              doc(db, "workspaces", taskWorkspaceId, "tasks", sourceTaskId),
+              taskPayload,
+              { merge: true },
+            ),
+          );
+        }
+
+        writes.push(
+          setDoc(doc(db, "users", user.uid, "tasks", taskView.id), taskPayload, {
+            merge: true,
+          }),
         );
+
+        await Promise.all(writes);
 
         setTaskView((prev) => ({
           ...prev,
@@ -3717,20 +3990,41 @@ await createCommentNotifications({
       }
     }
 
-    function startEditingDescription() {
+
+       function startEditingDescription() {
+      if (!canEditTaskContent) {
+        setToast("Only admins can edit task details");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
       setDescriptionDraft(taskView.description ?? "");
       setEditingDescription(true);
     }
+
 
     function cancelEditingDescription() {
       setEditingDescription(false);
       setDescriptionDraft("");
     }
 
-    async function handleDelete(c: TaskComment) {
+     async function handleDelete(c: TaskComment) {
       if (!user?.uid) return;
       if (!taskWorkspaceId || !sourceTaskId) return;
-      if (c.authorId !== user.uid) return;
+
+      const canDeleteThisComment = canEditTaskContent || c.authorId === user.uid;
+
+      if (!canCommentOnTask && !canEditTaskContent) {
+        setToast("You do not have permission to delete comments");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
+      if (!canDeleteThisComment) {
+        setToast("You can only delete your own comments");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
 
       try {
         await deleteDoc(
@@ -3748,6 +4042,7 @@ await createCommentNotifications({
         console.error("[TaskDetailPanel] delete comment:", e);
       }
     }
+
 
     function handleMentionClick(code: string) {
       if (code.startsWith("TSK-")) {
@@ -4666,11 +4961,17 @@ await createCommentNotifications({
       setShowShareMessage(false);
       setTaskAccessOpen(false);
     }
-    async function handleChangeTaskAccessMode(nextMode: TaskAccessMode) {
+       async function handleChangeTaskAccessMode(nextMode: TaskAccessMode) {
       setTaskAccessOpen(false);
       setShareError("");
 
+      if (!canManageTaskSharing) {
+        setShareError("Only admins can change task access.");
+        return;
+      }
+
       const previousMode = taskAccessMode;
+
 
       setTaskAccessMode(nextMode);
 
@@ -4723,13 +5024,19 @@ await createCommentNotifications({
         setSavingTaskAccess(false);
       }
     }
-    async function handleRevokeTaskShare(share: TaskShare) {
+       async function handleRevokeTaskShare(share: TaskShare) {
       if (!user?.uid) {
         setShareError("You must be signed in to remove access.");
         return;
       }
 
+      if (!canManageTaskSharing) {
+        setShareError("Only admins can remove task access.");
+        return;
+      }
+
       if (!taskWorkspaceId || !sourceTaskId || !share.id) {
+
         setShareError("Task share information is missing.");
         return;
       }
@@ -4821,10 +5128,16 @@ await createCommentNotifications({
       }
     }
 
-    async function handleSendTaskShare() {
+       async function handleSendTaskShare() {
       setShareError("");
 
+      if (!canManageTaskSharing) {
+        setShareError("Only admins can share tasks.");
+        return;
+      }
+
       const recipientEmail = shareEmail.trim().toLowerCase();
+
 
       if (!isValidEmail(recipientEmail)) {
         setShareError("Please enter a valid email address.");
@@ -5033,12 +5346,19 @@ await createCommentNotifications({
 
 
 
-    function handleStartReply(comment: TaskComment) {
+      function handleStartReply(comment: TaskComment) {
+      if (!canCommentOnTask) {
+        setToast("You do not have permission to comment on this task");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
       if (!canReplyToComments) {
         setToast("Reply is available when more than one person has access");
         setTimeout(() => setToast(null), 2500);
         return;
       }
+
 
       setReplyingTo(buildCommentReplyReference(comment));
       setComposerExpanded(true);
@@ -5049,12 +5369,19 @@ await createCommentNotifications({
       });
     }
 
-       function handleStartEditComment(comment: TaskComment) {
+            function handleStartEditComment(comment: TaskComment) {
+      if (!canCommentOnTask) {
+        setToast("You do not have permission to edit comments");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
       if (!isCommentEditableNow(comment, safeCurrentUserUid)) {
         setToast("You can only edit your comment within 15 minutes");
         setTimeout(() => setToast(null), 2500);
         return;
       }
+
 
       if (!String(comment.text || "").trim()) {
         setToast("Attachment-only comments cannot be edited");
@@ -5224,11 +5551,18 @@ useEffect(() => {
         return;
       }
 
+            if (!canCommentOnTask) {
+        setToast("You do not have permission to edit comments");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
       if (!safeCurrentUserUid || comment.authorId !== safeCurrentUserUid) {
         setToast("You can only edit your own comment");
         setTimeout(() => setToast(null), 2500);
         return;
       }
+
 
       if (!isCommentEditableNow(comment, safeCurrentUserUid)) {
         setToast("Edit time expired");
@@ -5279,14 +5613,21 @@ editedAt: serverTimestamp(),
       }
     }
 
-    async function handleTogglePinComment(comment: TaskComment) {
+      async function handleTogglePinComment(comment: TaskComment) {
       if (!safeCurrentUserUid) {
         setToast("You must be signed in");
         setTimeout(() => setToast(null), 2500);
         return;
       }
 
+      if (!canEditTaskContent) {
+        setToast("Only admins can pin comments");
+        setTimeout(() => setToast(null), 2500);
+        return;
+      }
+
       if (!taskWorkspaceId || !sourceTaskId) {
+
         setToast("Task comments are not available yet");
         setTimeout(() => setToast(null), 2500);
         return;
@@ -5375,35 +5716,39 @@ editedAt: serverTimestamp(),
               <ArrowLeft size={18} />
             </button>
 
-            {task.taskCode && (
+                        {(taskView.taskCode || task.taskCode) && (
               <span className="font-mono text-xs bg-slate-100 text-slate-500 px-2 py-1 rounded mr-2 flex-shrink-0">
-                {task.taskCode}
+                {taskView.taskCode || task.taskCode}
               </span>
             )}
 
             <h2 className="text-lg font-bold text-slate-800 flex-1 min-w-0 truncate">
-              {task.title}
+              {taskView.title || task.title}
             </h2>
+
 
             {/* Task top actions — Share, Like, Copy Link */}
             <div className="flex items-center gap-1 flex-shrink-0">
-              {/* Share */}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowShareModal(true);
-                  setShareError("");
-                  setShareSent(false);
-                  setShowShareMessage(false);
-                  setTaskAccessOpen(false);
-                }}
-                className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50 transition-colors"
-                title="Share task"
-                aria-label="Share task"
-              >
-                <Share2 size={14} />
-                <span className="hidden sm:inline">Share</span>
-              </button>
+                            {/* Share */}
+              {canManageTaskSharing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowShareModal(true);
+                    setShareError("");
+                    setShareSent(false);
+                    setShowShareMessage(false);
+                    setTaskAccessOpen(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50 transition-colors"
+                  title="Share task"
+                  aria-label="Share task"
+                >
+                  <Share2 size={14} />
+                  <span className="hidden sm:inline">Share</span>
+                </button>
+              )}
+
 
               {/* Like */}
               <button
@@ -5448,13 +5793,16 @@ editedAt: serverTimestamp(),
               </button>
             </div>
 
-            <button
-              onClick={() => onEdit(task)}
-              className="bg-violet-50 hover:bg-violet-100 text-violet-600 rounded-lg p-2 transition-colors flex-shrink-0"
-              title="Edit task"
-            >
-              <Edit2 size={16} />
-            </button>
+                        {canEditTaskContent && (
+              <button
+                                onClick={() => onEdit(taskView)}
+                className="bg-violet-50 hover:bg-violet-100 text-violet-600 rounded-lg p-2 transition-colors flex-shrink-0"
+                title="Edit task"
+              >
+                <Edit2 size={16} />
+              </button>
+            )}
+
 
             <button
               onClick={handleClose}
@@ -5511,29 +5859,30 @@ editedAt: serverTimestamp(),
                 {/* Status */}
                 <span
                   className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
-                    STATUS_STYLE[task.status] ?? "bg-gray-100 text-gray-500"
+                                        STATUS_STYLE[taskView.status || task.status] ?? "bg-gray-100 text-gray-500"
                   }`}
                 >
-                  {task.status ?? "To Do"}
+                                    {taskView.status || task.status || "To Do"}
                 </span>
 
                 {/* Priority */}
                 <span className="flex items-center gap-1 text-xs text-slate-600 flex-shrink-0">
                   <span
                     className={`w-1.5 h-1.5 rounded-full ${
-                      PRIORITY_DOT[task.priority] ?? "bg-gray-400"
+                                 PRIORITY_DOT[taskView.priority || task.priority] ?? "bg-gray-400"
+
                     }`}
                   />
-                  {task.priority ?? "Low"}
+                                    {taskView.priority || task.priority || "Low"}
                 </span>
 
                 {/* Assignee */}
-                {task.assignee ? (
+                                {(taskView.assignee || task.assignee) ? (
                   <span className="flex items-center gap-1 text-xs text-slate-600 truncate max-w-[130px]">
                     <span className="w-4 h-4 rounded-full bg-violet-500 text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0">
-                      {task.assignee[0]?.toUpperCase()}
+                      {(taskView.assignee || task.assignee || "")[0]?.toUpperCase()}
                     </span>
-                    <span className="truncate">{task.assignee}</span>
+                    <span className="truncate">{taskView.assignee || task.assignee}</span>
                   </span>
                 ) : (
                   <span className="text-xs text-slate-400 italic flex-shrink-0">
@@ -5608,10 +5957,10 @@ editedAt: serverTimestamp(),
                       </p>
                       <span
                         className={`inline-block text-xs px-2 py-1 rounded-full font-medium ${
-                          STATUS_STYLE[task.status] ?? "bg-gray-100 text-gray-500"
+                                                    STATUS_STYLE[taskView.status || task.status] ?? "bg-gray-100 text-gray-500"
                         }`}
                       >
-                        {task.status ?? "To Do"}
+                                                {taskView.status || task.status || "To Do"}
                       </span>
                     </div>
 
@@ -5621,16 +5970,16 @@ editedAt: serverTimestamp(),
                       </p>
                       <span
                         className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full font-medium ${
-                          PRIORITY_STYLE[task.priority] ??
+                                                    PRIORITY_STYLE[taskView.priority || task.priority] ??
                           "bg-gray-100 text-gray-500"
                         }`}
                       >
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            PRIORITY_DOT[task.priority] ?? "bg-gray-400"
+                                              PRIORITY_DOT[taskView.priority || task.priority] ?? "bg-gray-400"
                           }`}
                         />
-                        {task.priority ?? "Low"}
+                                                {taskView.priority || task.priority || "Low"}
                       </span>
                     </div>
 
@@ -5638,13 +5987,13 @@ editedAt: serverTimestamp(),
                       <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
                         Assignee
                       </p>
-                      {task.assignee ? (
+                                            {(taskView.assignee || task.assignee) ? (
                         <div className="flex items-center gap-1.5 min-w-0">
                           <div className="w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">
-                            {task.assignee[0]?.toUpperCase()}
+                            {(taskView.assignee || task.assignee || "")[0]?.toUpperCase()}
                           </div>
                           <span className="text-slate-700 truncate text-xs">
-                            {task.assignee}
+                            {taskView.assignee || task.assignee}
                           </span>
                         </div>
                       ) : (
@@ -5706,7 +6055,7 @@ editedAt: serverTimestamp(),
                           Description
                         </p>
 
-                        {!editingDescription && (
+                                                {!editingDescription && canEditTaskContent && (
                           <button
                             type="button"
                             onClick={startEditingDescription}
@@ -5717,6 +6066,7 @@ editedAt: serverTimestamp(),
                             Edit
                           </button>
                         )}
+
                       </div>
 
                       {editingDescription ? (
@@ -5769,19 +6119,30 @@ editedAt: serverTimestamp(),
                           </div>
                         </div>
                       ) : (
-                        <p
-                          onClick={startEditingDescription}
-                          className="text-sm text-slate-600 whitespace-pre-wrap cursor-text hover:bg-slate-100 rounded-lg px-2 py-1.5 -mx-2 transition-colors"
-                          title="Click to edit"
+                                               <p
+                          onClick={() => {
+                            if (canEditTaskContent) startEditingDescription();
+                          }}
+                          className={`text-sm text-slate-600 whitespace-pre-wrap rounded-lg px-2 py-1.5 -mx-2 transition-colors ${
+                            canEditTaskContent
+                              ? "cursor-text hover:bg-slate-100"
+                              : "cursor-default"
+                          }`}
+                          title={
+                            canEditTaskContent
+                              ? "Click to edit"
+                              : "Only admins can edit this description"
+                          }
                         >
                           {taskView.description}
                         </p>
+
                       )}
                     </div>
                   )}
 
                   {/* Small add-description action only when empty */}
-                  {!taskView.description && !editingDescription && (
+                                                      {!taskView.description && !editingDescription && canEditTaskContent && (
                     <button
                       type="button"
                       onClick={startEditingDescription}
@@ -5790,6 +6151,8 @@ editedAt: serverTimestamp(),
                       + Add description
                     </button>
                   )}
+
+
                 </div>
               )}
             </div>
@@ -5911,37 +6274,40 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                         }`}
                       >
 
-                                              <button
-                          type="button"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => {
-                            e.stopPropagation();
+                                                                      {canReactToComments && (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
 
-                            const placement = getCommentPopoverPlacement(
-                              e.currentTarget,
-                            );
+                              const placement = getCommentPopoverPlacement(
+                                e.currentTarget,
+                              );
 
-                            setEmojiPickerPlacementByCommentId((prev) => ({
-                              ...prev,
-                              [c.id]: placement,
-                            }));
+                              setEmojiPickerPlacementByCommentId((prev) => ({
+                                ...prev,
+                                [c.id]: placement,
+                              }));
 
-                            setPickerForCommentId((prev) =>
-                              prev === c.id ? null : c.id,
-                            );
-                            setActionMenuCommentId(null);
-                            setShowSkinTonePicker(false);
-                          }}
-                          className={`w-7 h-7 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center hover:bg-violet-50 hover:text-violet-600 transition-colors ${
-                            isPickerOpen
-                              ? "text-violet-600 bg-violet-50"
-                              : "text-slate-500"
-                          }`}
-                          title="Add reaction"
-                          aria-label="Add reaction"
-                        >
-                          <Smile size={13} />
-                        </button>
+                              setPickerForCommentId((prev) =>
+                                prev === c.id ? null : c.id,
+                              );
+                              setActionMenuCommentId(null);
+                              setShowSkinTonePicker(false);
+                            }}
+                            className={`w-7 h-7 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center hover:bg-violet-50 hover:text-violet-600 transition-colors ${
+                              isPickerOpen
+                                ? "text-violet-600 bg-violet-50"
+                                : "text-slate-500"
+                            }`}
+                            title="Add reaction"
+                            aria-label="Add reaction"
+                          >
+                            <Smile size={13} />
+                          </button>
+                        )}
+
 
 
                                                                   <button
@@ -5994,16 +6360,18 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                           >
 
 
-                            <button
-                              type="button"
-                              onClick={() => handleTogglePinComment(c)}
-                              className="w-full px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700 flex items-center gap-2 transition-colors"
-                            >
-                              <Pin size={14} />
-                              {c.pinned ? "Unpin from top" : "Pin to top"}
-                            </button>
+                                                       {canEditTaskContent && (
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePinComment(c)}
+                                className="w-full px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700 flex items-center gap-2 transition-colors"
+                              >
+                                <Pin size={14} />
+                                {c.pinned ? "Unpin from top" : "Pin to top"}
+                              </button>
+                            )}
 
-                            {canReplyToComments && (
+                                                       {canReplyToComments && canCommentOnTask && (
                               <button
                                 type="button"
                                 onClick={() => handleStartReply(c)}
@@ -6013,6 +6381,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                 Reply
                               </button>
                             )}
+
 
                                                       <button
                               type="button"
@@ -6024,7 +6393,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                             </button>
 
 
-                            {isMine && (
+                                                        {isMine && canCommentOnTask && (
                               <button
                                 type="button"
                                 disabled={!canEditThisComment}
@@ -6050,7 +6419,8 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                               </button>
                             )}
 
-                            {isMine && (
+
+                                                        {(isMine || canEditTaskContent) && (canCommentOnTask || canEditTaskContent) && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -6064,6 +6434,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                 Delete
                               </button>
                             )}
+
                           </div>
                         )}
 
@@ -6503,21 +6874,33 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                   const mine =
                                     !!user?.uid && uids.includes(user.uid);
                                   return (
-                                    <button
+                                                                        <button
                                       key={emoji}
                                       type="button"
-                                      onClick={() => toggleReaction(c, emoji)}
+                                      onClick={() => {
+                                        if (canReactToComments) {
+                                          toggleReaction(c, emoji);
+                                        }
+                                      }}
+                                      disabled={!canReactToComments}
                                       className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
                                         mine
                                           ? "bg-violet-50 border-violet-300 text-violet-700"
                                           : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                                      } ${
+                                        !canReactToComments
+                                          ? "opacity-70 cursor-default"
+                                          : ""
                                       }`}
                                       title={
-                                        mine
-                                          ? "Click to remove your reaction"
-                                          : "Click to react"
+                                        !canReactToComments
+                                          ? "You do not have permission to react"
+                                          : mine
+                                            ? "Click to remove your reaction"
+                                            : "Click to react"
                                       }
                                     >
+
                                       <span className="text-sm leading-none">
                                         {emoji}
                                       </span>
@@ -6560,7 +6943,26 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
 
             className="flex-shrink-0 border-t border-slate-200 bg-white px-5 py-3"
           >
-            {!composerExpanded ? (
+                        {!canUseCommentComposer ? (
+              <div className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border border-slate-200 bg-slate-50 text-left">
+                <ModernAvatar
+                  name={user?.displayName || user?.email || "You"}
+                  email={user?.email || ""}
+                  photoURL={currentUserRealPhotoURL}
+                  size={32}
+                  className="mt-1"
+                />
+
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-500">
+                    Viewer access
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    You can view this task, but you cannot comment or edit.
+                  </p>
+                </div>
+              </div>
+            ) : !composerExpanded ? (
               // ── COLLAPSED STATE — slim one-line bar ────────────────────────────
               <button
                 type="button"
@@ -6586,6 +6988,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                 </span>
               </button>
             ) : (
+
               // ── EXPANDED STATE — full composer with toolbar ───────────────────
               <div className="flex items-start gap-2 relative">
                 <ModernAvatar
@@ -7245,12 +7648,17 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                     </p>
 
                     <div className="relative">
-                      <button
+                                            <button
                         type="button"
-                        onClick={() => setTaskAccessOpen((open) => !open)}
-                        disabled={savingTaskAccess}
+                        onClick={() => {
+                          if (canManageTaskSharing) {
+                            setTaskAccessOpen((open) => !open);
+                          }
+                        }}
+                        disabled={savingTaskAccess || !canManageTaskSharing}
                         className="w-full min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 flex items-center justify-between gap-3 hover:border-violet-200 hover:bg-violet-50/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
+
                         <div className="flex items-center gap-2 min-w-0 text-left">
                           <UserIcon
                             size={14}
@@ -7484,15 +7892,18 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                 : shareStatus}
                             </span>
 
-                            <button
-                              type="button"
-                              onClick={() => handleRevokeTaskShare(share)}
-                              className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0"
-                              title={`Remove access for ${shareEmail || "this user"}`}
-                              aria-label={`Remove access for ${shareEmail || "this user"}`}
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                                                        {canManageTaskSharing && (
+                              <button
+                                type="button"
+                                onClick={() => handleRevokeTaskShare(share)}
+                                className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0"
+                                title={`Remove access for ${shareEmail || "this user"}`}
+                                aria-label={`Remove access for ${shareEmail || "this user"}`}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+
                           </div>
                         );
                       })}
@@ -7517,13 +7928,16 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                             : "Anyone with the task link can access this task."}
                       </span>
 
-                      <button
-                        type="button"
-                        onClick={() => setTaskAccessOpen(true)}
-                        className="text-violet-500 hover:text-violet-600 flex-shrink-0"
-                      >
-                        Manage access ›
-                      </button>
+                                           {canManageTaskSharing && (
+                        <button
+                          type="button"
+                          onClick={() => setTaskAccessOpen(true)}
+                          className="text-violet-500 hover:text-violet-600 flex-shrink-0"
+                        >
+                          Manage access ›
+                        </button>
+                      )}
+
                     </div>
                   </div>
                 </div>

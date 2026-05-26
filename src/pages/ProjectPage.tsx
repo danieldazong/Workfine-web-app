@@ -93,8 +93,13 @@ function getTimeMs(value: any): number {
 // ─── Main Component ───────────────────────────────────────────────────────
 const ProjectPage = () => {
   const { id } = useParams<{ id: string }>();
-  const { user, workspaceId } = useAuth();
-  const { projects: rawProjects, loading } = useAppData();
+    const { user, workspaceId } = useAuth();
+  const {
+    projects: rawProjects,
+    loading,
+    members,
+    workspaceData,
+  } = useAppData();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -110,15 +115,42 @@ const ProjectPage = () => {
   const [form, setForm] = useState<TaskForm>(() => emptyTask());
   const [saving, setSaving] = useState(false);
   const [drawerTask, setDrawerTask] = useState<Task | null>(null);
+  // Grace period before showing "not found" — gives Firestore a moment
+  // to deliver the project doc after navigation. Prevents the flash where
+  // the page briefly says "Project not found" before the data arrives.
+  const [notFoundGrace, setNotFoundGrace] = useState(true);
+
+  useEffect(() => {
+    setNotFoundGrace(true);
+    const timer = setTimeout(() => setNotFoundGrace(false), 1500);
+    return () => clearTimeout(timer);
+  }, [projectId]);
+
+
+  const prefetchedProject = (location.state as any)?.prefetchedProject || null;
 
   const activeProject = useMemo(() => {
     if (!projectId) return null;
 
-    return (
-      projects.find((p: any) => String(p?.id || "").trim() === projectId) ||
-      null
+    const fromList = projects.find(
+      (p: any) => String(p?.id || "").trim() === projectId
     );
-  }, [projects, projectId]);
+
+    if (fromList) return fromList;
+
+    // Fall back to the project object the sidebar passed via router state.
+    // This makes the page render instantly on click — no loader, no flash —
+    // until the context's live listener catches up.
+    if (
+      prefetchedProject &&
+      String(prefetchedProject.id || "").trim() === projectId
+    ) {
+      return prefetchedProject;
+    }
+
+    return null;
+  }, [projects, projectId, prefetchedProject]);
+
 
   const notificationTaskId = useMemo(() => {
     return new URLSearchParams(location.search).get("taskId") || "";
@@ -143,18 +175,64 @@ const ProjectPage = () => {
   const projectTags = Array.isArray((activeProject as any)?.tags)
     ? (activeProject as any).tags
     : [];
+      const activeProjectWorkspaceId = String(
+    (activeProject as any)?.workspaceId ||
+      (activeProject as any)?.projectWorkspaceId ||
+      (activeProject as any)?.sourceWorkspaceId ||
+      workspaceId ||
+      ""
+  ).trim();
+
+  const myMembership = Array.isArray(members)
+    ? members.find((member: any) => {
+        const memberUid = member.userId || member.uid || member.id;
+        return !!user?.uid && memberUid === user.uid;
+      })
+    : null;
+
+  const myRole = (
+    workspaceData?.ownerId === user?.uid
+      ? "owner"
+      : String(myMembership?.role || "viewer").toLowerCase()
+  ) as "owner" | "admin" | "member" | "viewer";
+
+  const isProjectOwner =
+    !!user?.uid &&
+    ((activeProject as any)?.ownerId === user.uid ||
+      (activeProject as any)?.createdBy === user.uid ||
+      (activeProject as any)?.uid === user.uid);
+
+  const isViewerOnly =
+    myRole === "viewer" ||
+    myMembership?.permissions?.canViewOnly === true;
+
+  const canEditProjectContent =
+    !isViewerOnly &&
+    (myRole === "owner" ||
+      myRole === "admin" ||
+      isProjectOwner ||
+      myMembership?.permissions?.canEdit === true ||
+      myMembership?.permissions?.canManageTasks === true);
+
+  const canCommentOnProject =
+    !isViewerOnly &&
+    (canEditProjectContent ||
+      myRole === "member" ||
+      myMembership?.permissions?.canComment === true);
+
 
   // ── Real-time tasks listener ───────────────────────────────────────────
   useEffect(() => {
-    if (!workspaceId || !projectId) {
+        if (!activeProjectWorkspaceId || !projectId) {
       setTasks([]);
       return;
     }
 
     const q = query(
-      collection(db, "workspaces", workspaceId, "tasks"),
+      collection(db, "workspaces", activeProjectWorkspaceId, "tasks"),
       where("projectId", "==", projectId)
     );
+
 
     const unsub = onSnapshot(
       q,
@@ -174,7 +252,8 @@ const ProjectPage = () => {
     );
 
     return () => unsub();
-  }, [workspaceId, projectId]);
+      }, [activeProjectWorkspaceId, projectId]);
+
 
   // ── Keep drawerTask in sync with the latest task data ─────────────────
   useEffect(() => {
@@ -210,19 +289,20 @@ const ProjectPage = () => {
 
   // ── Live progress update on Firestore project doc ─────────────────────
   useEffect(() => {
-    if (!workspaceId || !projectId) return;
+        if (!activeProjectWorkspaceId || !projectId || !canEditProjectContent) return;
+
 
     const doneCount = tasks.filter((t) => t.status === "Done").length;
     const calculatedProgress =
       tasks.length > 0 ? Math.round((doneCount / tasks.length) * 100) : 0;
 
-    updateDoc(doc(db, "workspaces", workspaceId, "projects", projectId), {
+        updateDoc(doc(db, "workspaces", activeProjectWorkspaceId, "projects", projectId), {
       taskCount: tasks.length,
       completedTaskCount: doneCount,
       progress: calculatedProgress,
       updatedAt: serverTimestamp(),
     }).catch(() => {});
-  }, [tasks, workspaceId, projectId]);
+    }, [tasks, activeProjectWorkspaceId, projectId, canEditProjectContent]);
 
   // ── Derived stats ──────────────────────────────────────────────────────
   const done = tasks.filter((t) => t.status === "Done").length;
@@ -301,13 +381,22 @@ const ProjectPage = () => {
 
   // ── Save task ──────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!user?.uid || !workspaceId || !projectId || !form.title.trim()) return;
+        if (
+      !user?.uid ||
+      !activeProjectWorkspaceId ||
+      !projectId ||
+      !form.title.trim() ||
+      !canEditProjectContent
+    ) {
+      return;
+    }
+
 
     setSaving(true);
 
     try {
       if (editTask) {
-        await updateDoc(doc(db, "workspaces", workspaceId, "tasks", editTask.id), {
+                await updateDoc(doc(db, "workspaces", activeProjectWorkspaceId, "tasks", editTask.id), {
           ...form,
           updatedAt: serverTimestamp(),
         });
@@ -315,12 +404,12 @@ const ProjectPage = () => {
         const pCode = String((activeProject as any)?.code || "WF-000");
         const taskCode = `${pCode}-T${tasks.length + 1}`;
 
-        await addDoc(collection(db, "workspaces", workspaceId, "tasks"), {
+                await addDoc(collection(db, "workspaces", activeProjectWorkspaceId, "tasks"), {
           ...form,
           taskCode,
           assignee: form.assignee.trim(),
           projectId,
-          workspaceId,
+          workspaceId: activeProjectWorkspaceId,
           ownerId: user.uid,
           createdBy: user.uid,
           createdAt: serverTimestamp(),
@@ -340,9 +429,9 @@ const ProjectPage = () => {
 
   // ── Delete task ────────────────────────────────────────────────────────
   const handleDelete = async (taskId: string) => {
-    if (!workspaceId || !taskId) return;
+        if (!activeProjectWorkspaceId || !taskId || !canEditProjectContent) return;
 
-    await deleteDoc(doc(db, "workspaces", workspaceId, "tasks", taskId));
+    await deleteDoc(doc(db, "workspaces", activeProjectWorkspaceId, "tasks", taskId));
   };
 
   // ── Toggle task status ─────────────────────────────────────────────────
@@ -350,16 +439,18 @@ const ProjectPage = () => {
     const order: TaskStatus[] = ["To Do", "In Progress", "In Review", "Done"];
     const next = order[(order.indexOf(task.status) + 1) % order.length];
 
-    if (!workspaceId || !task.id) return;
+        if (!activeProjectWorkspaceId || !task.id || !canEditProjectContent) return;
 
-    await updateDoc(doc(db, "workspaces", workspaceId, "tasks", task.id), {
+    await updateDoc(doc(db, "workspaces", activeProjectWorkspaceId, "tasks", task.id), {
       status: next,
       updatedAt: serverTimestamp(),
     });
   };
 
   // ── Open edit modal ────────────────────────────────────────────────────
-  const openEdit = (task: Task) => {
+    const openEdit = (task: Task) => {
+    if (!canEditProjectContent) return;
+
     setEditTask(task);
     setForm({
       title: task.title || "",
@@ -404,10 +495,43 @@ const ProjectPage = () => {
     navigate(`/my-tasks?${params.toString()}`, { replace: true });
   }, [activeProject, location.search, navigate]);
 
-  if (loading) {
+    // Render-state strategy (tab-like instant switching):
+  // 1. If activeProject exists -> render the page immediately (no loader, no flash).
+  // 2. If activeProject is missing but data is still loading OR projects array
+  //    hasn't arrived yet -> render a subtle skeleton (no "not found" flash).
+  // 3. Only after we've confirmed projects are loaded AND the id is truly
+  //    missing for a brief grace period -> show "not found".
+  const isProjectListReady = !loading && projects.length >= 0;
+  const shouldShowSkeleton =
+    !activeProject && (loading || !isProjectListReady || notFoundGrace);
+
+  if (!activeProject && shouldShowSkeleton) {
     return (
-      <div className="bg-[#f4f5f7] min-h-screen flex items-center justify-center">
-        <div className="text-sm text-gray-400">Loading project...</div>
+      <div className="bg-[#f4f5f7] min-h-screen">
+        <div className="max-w-6xl mx-auto px-6 pt-14 pb-12">
+          <div className="mb-6">
+            <div className="h-3 w-24 bg-gray-200 rounded animate-pulse mb-4" />
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gray-200 animate-pulse" />
+                <div>
+                  <div className="h-6 w-48 bg-gray-200 rounded animate-pulse mb-2" />
+                  <div className="h-3 w-72 bg-gray-100 rounded animate-pulse" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="h-16 bg-white border border-gray-200 rounded-xl animate-pulse mb-4" />
+          <div className="grid grid-cols-4 gap-3 mb-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                className="h-20 bg-white border border-gray-200 rounded-xl animate-pulse"
+              />
+            ))}
+          </div>
+          <div className="h-64 bg-white border border-gray-200 rounded-xl animate-pulse" />
+        </div>
       </div>
     );
   }
@@ -430,6 +554,8 @@ const ProjectPage = () => {
       </div>
     );
   }
+
+
 
   return (
     <div className="ml-0 bg-[#f4f5f7] min-h-screen overflow-y-auto">
@@ -483,16 +609,19 @@ const ProjectPage = () => {
                 {projectStatus}
               </span>
 
-              <button
-                onClick={() => {
-                  setEditTask(null);
-                  setForm(emptyTask());
-                  setShowModal(true);
-                }}
-                className="ml-2 flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                + New Task
-              </button>
+                            {canEditProjectContent && (
+                <button
+                  onClick={() => {
+                    setEditTask(null);
+                    setForm(emptyTask());
+                    setShowModal(true);
+                  }}
+                  className="ml-2 flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+                >
+                  + New Task
+                </button>
+              )}
+
             </div>
           </div>
 
@@ -652,12 +781,13 @@ const ProjectPage = () => {
                   className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-4 px-5 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors items-center group cursor-pointer"
                 >
                   <div className="flex items-center gap-3">
-                    <button
+                                        <button
+                      disabled={!canEditProjectContent}
                       onClick={(e) => {
                         e.stopPropagation();
                         cycleStatus(task);
                       }}
-                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                         task.status === "Done"
                           ? "border-emerald-500 bg-emerald-500"
                           : "border-gray-300 hover:border-blue-400"
@@ -776,43 +906,47 @@ const ProjectPage = () => {
                       : "—"}
                   </span>
 
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openEdit(task);
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-xs"
-                    >
-                      ✏️
-                    </button>
+                                    {canEditProjectContent && (
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEdit(task);
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-xs"
+                      >
+                        ✏️
+                      </button>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(task.id);
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors text-xs"
-                    >
-                      🗑
-                    </button>
-                  </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(task.id);
+                        }}
+                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors text-xs"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             ) : (
               <div className="py-20 flex flex-col items-center gap-2">
                 <p className="text-3xl">📋</p>
                 <p className="text-sm text-gray-400 font-medium">No tasks found</p>
-                <button
-                  onClick={() => {
-                    setEditTask(null);
-                    setForm(emptyTask());
-                    setShowModal(true);
-                  }}
-                  className="mt-2 text-xs text-blue-600 hover:underline"
-                >
-                  + Create your first task
-                </button>
+                                {canEditProjectContent && (
+                  <button
+                    onClick={() => {
+                      setEditTask(null);
+                      setForm(emptyTask());
+                      setShowModal(true);
+                    }}
+                    className="mt-2 text-xs text-blue-600 hover:underline"
+                  >
+                    + Create your first task
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -911,16 +1045,19 @@ const ProjectPage = () => {
                       </div>
                     ))}
 
-                    <button
-                      onClick={() => {
-                        setEditTask(null);
-                        setForm({ ...emptyTask(), status: col });
-                        setShowModal(true);
-                      }}
-                      className="w-full py-2 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border-2 border-dashed border-gray-100 hover:border-blue-200"
-                    >
-                      + Add task
-                    </button>
+                                        {canEditProjectContent && (
+                      <button
+                        onClick={() => {
+                          setEditTask(null);
+                          setForm({ ...emptyTask(), status: col });
+                          setShowModal(true);
+                        }}
+                        className="w-full py-2 text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border-2 border-dashed border-gray-100 hover:border-blue-200"
+                      >
+                        + Add task
+                      </button>
+                    )}
+
                   </div>
                 </div>
               );
@@ -1091,7 +1228,7 @@ const ProjectPage = () => {
         <TaskDetailPanel
           task={drawerTask as any}
           onClose={closeDrawer}
-          onEdit={handleDrawerEdit}
+                    onEdit={canEditProjectContent ? handleDrawerEdit : (() => {})}
           highlightCommentId={notificationCommentId}
         />
       )}

@@ -355,8 +355,8 @@ export default function InsightsPage() {
           {/* Task Completion Trend line chart */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
             <h3 className="text-gray-900 font-semibold mb-4 text-sm">Task Completion Trend</h3>
-            <div className="h-[180px]">
-              <ResponsiveContainer width="100%" height="100%">
+                        <div style={{ width: "100%", height: 180, minWidth: 0, minHeight: 180 }}>
+              <ResponsiveContainer width="100%" height="100%" debounce={0}>
                 <LineChart data={chartTrendData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                   <XAxis dataKey="day" tick={{ fill: "#6b7280", fontSize: 10 }} axisLine={false} tickLine={false} />
@@ -373,9 +373,10 @@ export default function InsightsPage() {
           {/* Task Status Breakdown bar chart */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
             <h3 className="text-gray-900 font-semibold mb-4 text-sm">Task Status Breakdown</h3>
-            <div className="h-[180px]">
-              <ResponsiveContainer width="100%" height="100%">
+                       <div style={{ width: "100%", height: 180, minWidth: 0, minHeight: 180 }}>
+              <ResponsiveContainer width="100%" height="100%" debounce={0}>
                 <BarChart data={statusData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
                   <XAxis dataKey="name" tick={{ fill: "#6b7280", fontSize: 10 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} allowDecimals={false} axisLine={false} tickLine={false} />

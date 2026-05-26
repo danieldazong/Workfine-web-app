@@ -53,6 +53,75 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "members",  label: "Members"  },
   { id: "settings", label: "Settings" },
 ];
+function normalizeEmail(email?: string | null): string {
+  return String(email || "").trim().toLowerCase();
+}
+
+function normalizeRole(role?: string | null): WorkspaceRole | "" {
+  const value = String(role || "").trim().toLowerCase();
+
+  if (
+    value === "owner" ||
+    value === "admin" ||
+    value === "member" ||
+    value === "viewer"
+  ) {
+    return value;
+  }
+
+  return "";
+}
+
+function getMemberUid(member: any): string {
+  return String(
+    member?.userId ||
+      member?.uid ||
+      member?.memberId ||
+      member?.userUid ||
+      member?.id ||
+      ""
+  ).trim();
+}
+
+function getMemberEmail(member: any): string {
+  return normalizeEmail(
+    member?.emailLower ||
+      member?.email_lowercase ||
+      member?.email ||
+      member?.emailAddress
+  );
+}
+
+function isActiveWorkspaceMember(member: any): boolean {
+  return String(member?.status || "").trim().toLowerCase() === "active";
+}
+
+function isSameWorkspaceMember(member: any, uid?: string | null, email?: string | null): boolean {
+  const memberUid = getMemberUid(member);
+  const memberEmail = getMemberEmail(member);
+  const currentEmail = normalizeEmail(email);
+
+  return (
+    (!!uid && memberUid === uid) ||
+    (!!currentEmail && memberEmail === currentEmail)
+  );
+}
+
+function dedupeWorkspaceMembers(list: any[]): any[] {
+  const seen = new Set<string>();
+
+  return list.filter((member: any) => {
+    const uid = getMemberUid(member);
+    const email = getMemberEmail(member);
+    const key = uid ? `uid:${uid}` : email ? `email:${email}` : `row:${Math.random()}`;
+
+    if (seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
+}
+
 
 export default function WorkspacePage() {
   const { tab } = useParams<{ tab?: string }>();
@@ -82,10 +151,14 @@ const isOwnerFromWorkspaceDoc =
 const fallbackOwnerMember =
   isOwnerFromWorkspaceDoc && user
     ? {
+        uid: user.uid,
         userId: user.uid,
         email: user.email ?? "",
+        emailLower: normalizeEmail(user.email),
+        email_lowercase: normalizeEmail(user.email),
         displayName:
           user.displayName ?? user.email?.split("@")[0] ?? "Owner",
+        name: user.displayName ?? user.email?.split("@")[0] ?? "Owner",
         avatar:
           (user.displayName ?? user.email ?? "O")[0]?.toUpperCase() ?? "O",
         avatarColor: "#8b5cf6",
@@ -94,42 +167,111 @@ const fallbackOwnerMember =
         status: "active",
         workspaceId: wsId,
         joinedAt: workspaceData?.createdAt ?? null,
-        invitedBy: "",
+        invitedBy: user.uid,
+        invitedByUid: user.uid,
+        createdBy: user.uid,
         lastActive: null,
         permissions: {
+          canView: true,
+          canComment: true,
+          canEdit: true,
+          canDelete: true,
+          canInvite: true,
           canCreateProjects: true,
           canDeleteProjects: true,
           canInviteMembers: true,
           canManageTasks: true,
-          canEdit: true,
-          canDelete: true,
-          canInvite: true,
+          canViewOnly: false,
         },
       }
     : null;
 
-const membersForUi =
+const membersForUi = dedupeWorkspaceMembers(
   members.length > 0
     ? members
     : fallbackOwnerMember
       ? [fallbackOwnerMember]
-      : [];
+      : []
+);
 
-const activeMembers = membersForUi.filter((m) => m.status === "active");
+const activeMembers = membersForUi.filter(isActiveWorkspaceMember);
 
-const myMembership = membersForUi.find((m) => m.userId === user?.uid);
+const currentUserEmail = normalizeEmail(user?.email);
+
+const exactUidMembership = user?.uid
+  ? membersForUi.find((m: any) => getMemberUid(m) === user.uid)
+  : null;
+
+const emailFallbackMembership =
+  !exactUidMembership && currentUserEmail
+    ? membersForUi.find((m: any) => {
+        const memberUid = getMemberUid(m);
+        const memberEmail = getMemberEmail(m);
+
+        return !memberUid && memberEmail === currentUserEmail;
+      })
+    : null;
+
+const myMembership = exactUidMembership || emailFallbackMembership || null;
+
+const exactUidRole = normalizeRole(exactUidMembership?.role);
+const emailFallbackRole = normalizeRole(emailFallbackMembership?.role);
+
+const currentWorkspaceRole: WorkspaceRole | "" = isOwnerFromWorkspaceDoc
+  ? "owner"
+  : exactUidMembership && isActiveWorkspaceMember(exactUidMembership)
+    ? ((exactUidRole || "member") as WorkspaceRole)
+    : emailFallbackMembership && isActiveWorkspaceMember(emailFallbackMembership)
+      ? emailFallbackRole === "viewer"
+        ? "viewer"
+        : "member"
+      : "";
+
+const isCurrentWorkspaceOwner =
+  !!user?.uid &&
+  !!wsId &&
+  isOwnerFromWorkspaceDoc &&
+  currentWorkspaceRole === "owner";
+
+const isCurrentWorkspaceAdmin =
+  !!user?.uid &&
+  !!wsId &&
+  !!exactUidMembership &&
+  isActiveWorkspaceMember(exactUidMembership) &&
+  currentWorkspaceRole === "admin";
+
+const isCurrentWorkspaceMember = currentWorkspaceRole === "member";
+
+const isCurrentWorkspaceViewer = currentWorkspaceRole === "viewer";
+
+const isCurrentUserActiveMember =
+  isCurrentWorkspaceOwner ||
+  (!!exactUidMembership && isActiveWorkspaceMember(exactUidMembership)) ||
+  (!!emailFallbackMembership && isActiveWorkspaceMember(emailFallbackMembership));
 
 const canManage =
-  isOwnerFromWorkspaceDoc ||
-  myMembership?.role === "owner" ||
-  myMembership?.role === "admin";
+  !!user?.uid &&
+  !!wsId &&
+  isCurrentUserActiveMember &&
+  (isCurrentWorkspaceOwner || isCurrentWorkspaceAdmin);
+
+const canInviteWorkspaceMembers = canManage;
 
 const canCreateWorkspaceProjects =
   !!user?.uid &&
   !!wsId &&
-  (isOwnerFromWorkspaceDoc ||
-    myMembership?.status === "active" ||
-    (!!authWorkspaceId && authWorkspaceId === wsId));
+  isCurrentUserActiveMember &&
+  (isCurrentWorkspaceOwner || isCurrentWorkspaceAdmin);
+
+
+function handleOpenInvite() {
+  if (!canInviteWorkspaceMembers) return;
+
+  setShowInvite(true);
+}
+
+
+
 
 
 const availableProjectsToAdd = useMemo(() => {
@@ -218,14 +360,17 @@ return (
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowInvite(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-xl hover:bg-violet-700 transition-colors shadow-sm"
-          >
-            <UserPlus size={15} />
-            Invite
-          </button>
+                    {canInviteWorkspaceMembers && (
+            <button
+              type="button"
+              onClick={handleOpenInvite}
+              className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-xl hover:bg-violet-700 transition-colors shadow-sm"
+            >
+              <UserPlus size={15} />
+              Invite
+            </button>
+          )}
+
         </div>
 
         {/* ── Tab bar ────────────────────────────────────────────────── */}
@@ -266,7 +411,7 @@ return (
   tasks={tasks}
     canManage={canManage}
   canCreateWorkspaceProjects={canCreateWorkspaceProjects}
-  onInvite={() => setShowInvite(true)}
+   onInvite={handleOpenInvite}
   onCreateProject={() => setShowCreateProject(true)}
   onAddExistingProject={() => {
     setAddProjectError("");
@@ -285,7 +430,7 @@ return (
   myUid={user?.uid ?? ""}
   workspaceOwnerId={workspaceData?.ownerId ?? ""}
   canManage={canManage}
-  onInvite={() => setShowInvite(true)}
+    onInvite={handleOpenInvite}
   onCancelInvite={cancelInvite}
 />
 
@@ -297,7 +442,7 @@ return (
     workspaceId={wsId}
     workspaceData={workspaceData}
     myUid={user?.uid ?? ""}
-    myRole={myMembership?.role as WorkspaceRole}
+        myRole={(currentWorkspaceRole || "member") as WorkspaceRole}
     canManage={canManage}
     members={membersForUi}
   />
@@ -306,7 +451,7 @@ return (
 
       </div>
 
-      {showInvite && wsId && (
+            {showInvite && wsId && canInviteWorkspaceMembers && (
   <InviteMemberModal
     onClose={() => setShowInvite(false)}
     workspaceId={wsId}
@@ -315,6 +460,7 @@ return (
     pendingInvites={pendingInvites}
   />
 )}
+
 
 
       <CreateProjectModal
@@ -413,13 +559,20 @@ function OverviewTab({
     },
 
   },
-  {
+    {
     id: "team",
     label: hasTeammates
       ? "Invite another teammate"
       : "Invite a teammate",
     done: hasTeammates,
-    onClick: onInvite,
+    onClick: () => {
+      if (!canManage) {
+        alert("Only workspace owners or admins can invite teammates.");
+        return;
+      }
+
+      onInvite();
+    },
   },
 ];
 
@@ -483,33 +636,34 @@ function OverviewTab({
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              {setupItems.map((item) => (
-                <button
-  key={item.id}
-  type="button"
-  onClick={item.onClick}
-  className={`text-left p-3 rounded-xl border transition-all ${
+                            {setupItems
+                .filter((item) => item.id !== "team" || canManage)
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={item.onClick}
+                    className={`text-left p-3 rounded-xl border transition-all ${
+                      item.done
+                        ? "bg-emerald-50 border-emerald-200 hover:border-emerald-300 hover:shadow-md active:scale-[0.98] cursor-pointer"
+                        : "bg-white border-gray-200 hover:border-violet-400 hover:shadow-md hover:bg-violet-50/30 active:scale-[0.98] cursor-pointer"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      {item.done ? (
+                        <CheckCircle2 size={16} className="text-emerald-600 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <Circle size={16} className="text-gray-300 flex-shrink-0 mt-0.5" />
+                      )}
+                      <span className={`text-xs font-medium leading-tight ${
+                        item.done ? "text-emerald-700" : "text-gray-700"
+                      }`}>
+                        {item.label}
+                      </span>
+                    </div>
+                  </button>
+                ))}
 
-                   item.done
-  ? "bg-emerald-50 border-emerald-200 hover:border-emerald-300 hover:shadow-md active:scale-[0.98] cursor-pointer"
-  : "bg-white border-gray-200 hover:border-violet-400 hover:shadow-md hover:bg-violet-50/30 active:scale-[0.98] cursor-pointer"
-
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    {item.done ? (
-                      <CheckCircle2 size={16} className="text-emerald-600 flex-shrink-0 mt-0.5" />
-                    ) : (
-                      <Circle size={16} className="text-gray-300 flex-shrink-0 mt-0.5" />
-                    )}
-                    <span className={`text-xs font-medium leading-tight ${
-                      item.done ? "text-emerald-700" : "text-gray-700"
-                    }`}>
-                      {item.label}
-                    </span>
-                  </div>
-                </button>
-              ))}
             </div>
           </div>
         )}
@@ -607,6 +761,8 @@ function OverviewTab({
                     )}
 
 
+
+
         </div>
       </div>
 
@@ -628,7 +784,7 @@ function OverviewTab({
             <p className="text-xs text-gray-400 italic">No members yet</p>
           ) : (
             <div className="flex flex-wrap gap-2 mb-3">
-              {members.slice(0, 6).map((m: any) => {
+                            {dedupeWorkspaceMembers(members).slice(0, 6).map((m: any) => {
   const label =
     m.displayName ||
     m.email ||
@@ -645,7 +801,7 @@ function OverviewTab({
 
   return (
     <div
-      key={m.userId}
+            key={getMemberUid(m) || getMemberEmail(m)}
       title={`${m.displayName || "Member"}${m.email ? ` • ${m.email}` : ""}`}
       className="w-9 h-9 rounded-full border-2 border-white shadow-sm overflow-hidden flex items-center justify-center text-white text-xs font-bold bg-violet-500"
       style={{ backgroundColor: m.photoURL ? undefined : m.avatarColor || "#8b5cf6" }}
@@ -669,22 +825,28 @@ function OverviewTab({
                   +{members.length - 6}
                 </div>
               )}
-              <button
-                onClick={onInvite}
-                title="Invite member"
-                className="w-9 h-9 rounded-full border-2 border-dashed border-gray-300 text-gray-400 hover:text-violet-600 hover:border-violet-300 flex items-center justify-center transition-colors"
-              >
-                <Plus size={14} />
-              </button>
+                            {canManage && (
+                <button
+                  onClick={onInvite}
+                  title="Invite member"
+                  className="w-9 h-9 rounded-full border-2 border-dashed border-gray-300 text-gray-400 hover:text-violet-600 hover:border-violet-300 flex items-center justify-center transition-colors"
+                >
+                  <Plus size={14} />
+                </button>
+              )}
+
             </div>
           )}
 
-          <button
-            onClick={onInvite}
-            className="w-full py-2 bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1"
-          >
-            <UserPlus size={12} /> Invite teammate
-          </button>
+                    {canManage && (
+            <button
+              onClick={onInvite}
+              className="w-full py-2 bg-violet-50 hover:bg-violet-100 text-violet-700 text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1"
+            >
+              <UserPlus size={12} /> Invite teammate
+            </button>
+          )}
+
         </div>
 
         <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
@@ -909,11 +1071,19 @@ function MembersTab({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const activeMembers = members.filter((m) => m.status === "active");
+  const activeMembers = members.filter(isActiveWorkspaceMember);
   const pendingList   = pendingInvites.filter((i) => i.status === "pending");
 
-  const myMembership = members.find((m) => m.userId === myUid);
-  const myRole: WorkspaceRole = (myMembership?.role as WorkspaceRole) ?? "member";
+  const myMembership = members.find((m: any) => {
+    return isSameWorkspaceMember(m, myUid, "");
+  });
+
+  const myRole: WorkspaceRole =
+    workspaceOwnerId === myUid
+      ? "owner"
+      : ((normalizeRole(myMembership?.role) || "member") as WorkspaceRole);
+
+
 
   const q = query.trim().toLowerCase();
   const filteredMembers = q
@@ -1130,16 +1300,17 @@ function ActiveMembersList({
       </div>
 
       {members.map((m) => {
-        const role = (m.role as WorkspaceRole) ?? "member";
+            const role = (normalizeRole(m.role) || "member") as WorkspaceRole;
 
-const isCanonicalOwner = m.userId === workspaceOwnerId;
+const memberUid = getMemberUid(m);
+const isCanonicalOwner = memberUid === workspaceOwnerId;
 const effectiveRole: WorkspaceRole =
   isCanonicalOwner ? "owner" : role === "owner" ? "admin" : role;
 
 const meta = ROLE_META[effectiveRole] ?? ROLE_META.member;
 const Icon = meta.icon;
-const isMe = m.userId === myUid;
-const isBusy = busyId === m.userId;
+const isMe = memberUid === myUid;
+const isBusy = busyId === memberUid;
 
 const editable =
   canManage &&
@@ -1162,7 +1333,7 @@ const removable =
 
         return (
           <div
-            key={m.userId}
+                    key={memberUid || m.email}
             className="grid grid-cols-[1fr_140px_120px_36px] items-center gap-3 px-2 py-3 hover:bg-gray-50 transition-colors rounded-lg"
           >
             <div className="flex items-center gap-3 min-w-0">
@@ -1200,8 +1371,9 @@ const removable =
             {editable ? (
               <select
   disabled={isBusy}
-  value={effectiveRole === "owner" ? "admin" : effectiveRole}
-  onChange={(e) => onRoleChange(m.userId, e.target.value as WorkspaceRole)}
+    value={effectiveRole === "owner" ? "admin" : effectiveRole}
+  onChange={(e) => onRoleChange(memberUid, e.target.value as WorkspaceRole)}
+
                 className={`text-xs font-semibold px-2 py-1.5 rounded-lg border border-gray-200 ${meta.color} bg-white focus:outline-none focus:ring-2 focus:ring-violet-500 disabled:opacity-50 cursor-pointer`}
               >
                 {myRole === "owner" && <option value="admin">Admin</option>}
@@ -1221,7 +1393,7 @@ const removable =
             <div className="flex justify-end">
               {removable ? (
                 <button
-                  onClick={() => onRemove(m.userId, m.displayName)}
+                                    onClick={() => onRemove(memberUid, m.displayName)}
                   disabled={isBusy}
                   className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
                   title="Remove member"
@@ -1383,7 +1555,7 @@ function SettingsTab({
     description.trim() !== (workspaceData?.description ?? "");
 
   const transferCandidates = members.filter(
-    (m) => m.status === "active" && m.userId !== myUid
+        (m) => isActiveWorkspaceMember(m) && getMemberUid(m) !== myUid
   );
 
   async function saveGeneral() {
@@ -1623,7 +1795,7 @@ function TransferOwnershipDialog({
   const [working, setWorking] = useState(false);
   const [err, setErr] = useState("");
 
-  const selected = candidates.find((c) => c.userId === selectedId);
+  const selected = candidates.find((c) => getMemberUid(c) === selectedId);
   const requiredWord = "TRANSFER";
   const canConfirm = !!selected && confirmText === requiredWord;
 
@@ -1640,7 +1812,7 @@ function TransferOwnershipDialog({
     setErr("");
     setWorking(true);
     try {
-      await transferOwnership(workspaceId, currentOwnerId, selected.userId, selected.email);
+         await transferOwnership(workspaceId, currentOwnerId, getMemberUid(selected), selected.email);
       onTransferred();
     } catch (e: any) {
       console.error("[TransferOwnership]", e);
@@ -1695,12 +1867,13 @@ function TransferOwnershipDialog({
             ) : (
               <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
                 {candidates.map((c) => {
-                  const isSelected = c.userId === selectedId;
+                                const candidateUid = getMemberUid(c);
+                  const isSelected = candidateUid === selectedId;
                   return (
                     <button
-                      key={c.userId}
+                                            key={candidateUid || getMemberEmail(c)}
                       type="button"
-                      onClick={() => setSelectedId(c.userId)}
+                      onClick={() => setSelectedId(candidateUid)}
                       disabled={working}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
                         isSelected ? "bg-violet-50" : "hover:bg-gray-50"

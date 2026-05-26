@@ -37,6 +37,51 @@ function isValidEmail(e: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 }
 
+function getRolePermissions(role: RoleId) {
+  if (role === "admin") {
+    return {
+      canView: true,
+      canComment: true,
+      canEdit: true,
+      canDelete: true,
+      canInvite: true,
+      canCreateProjects: true,
+      canDeleteProjects: true,
+      canInviteMembers: true,
+      canManageTasks: true,
+      canViewOnly: false,
+    };
+  }
+
+  if (role === "member") {
+    return {
+      canView: true,
+      canComment: true,
+      canEdit: false,
+      canDelete: false,
+      canInvite: false,
+      canCreateProjects: false,
+      canDeleteProjects: false,
+      canInviteMembers: false,
+      canManageTasks: false,
+      canViewOnly: false,
+    };
+  }
+
+  return {
+    canView: true,
+    canComment: false,
+    canEdit: false,
+    canDelete: false,
+    canInvite: false,
+    canCreateProjects: false,
+    canDeleteProjects: false,
+    canInviteMembers: false,
+    canManageTasks: false,
+    canViewOnly: true,
+  };
+}
+
 // ── Role options ─────────────────────────────────────────────────────────────
 const ROLES: {
   id: RoleId;
@@ -49,7 +94,7 @@ const ROLES: {
   {
     id: "admin",
     label: "Admin",
-    description: "Can manage projects, tasks, and invite members",
+    description: "Can add, edit, and delete anything in the project.",
     icon: Shield,
     color: "text-blue-600",
     bg: "bg-blue-50",
@@ -57,7 +102,7 @@ const ROLES: {
   {
     id: "member",
     label: "Member",
-    description: "Can create and manage tasks and projects",
+    description: "Can comment, but can't edit anything in the project.",
     icon: User,
     color: "text-emerald-600",
     bg: "bg-emerald-50",
@@ -65,12 +110,13 @@ const ROLES: {
   {
     id: "viewer",
     label: "Viewer",
-    description: "Can view projects and tasks but cannot edit",
+    description: "Can view, but can't add comments or edit the project.",
     icon: Eye,
     color: "text-orange-500",
     bg: "bg-orange-50",
   },
 ];
+
 
 // ── Component ────────────────────────────────────────────────────────────────
 export default function InviteMemberModal({
@@ -137,18 +183,34 @@ export default function InviteMemberModal({
 const payload = {
   code,
   inviteCode: code,
+
   email: trimmed,
+  emailLower: trimmed,
+  email_lowercase: trimmed,
+  invitedEmail: trimmed,
+  invitedEmailLower: trimmed,
+
   workspaceId,
   workspaceName: workspaceName || "Workfine Workspace",
+
   invitedBy: user?.uid ?? "",
+  invitedByUid: user?.uid ?? "",
   invitedByName: inviterName,
   invitedByEmail: user?.email ?? "",
-  role,
+
+   role,
+  permissions: getRolePermissions(role),
+  rolePermissions: getRolePermissions(role),
   message: message.trim(),
   status: "pending",
+
+
   createdAt: serverTimestamp(),
+  updatedAt: serverTimestamp(),
   expiresAt,
 };
+
+
 
 
       // ✅ PATH 1 — workspace subcollection
