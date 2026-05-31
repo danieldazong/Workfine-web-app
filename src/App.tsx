@@ -16,6 +16,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { AppDataProvider } from "./context/AppDataContext";
 
 import Sidebar from "./components/Sidebar";
+import { usePresenceHeartbeat } from "./hooks/usePresenceHeartbeat";
 import AppShell from "./components/AppShell";
 
 import LoginPage from "./pages/LoginPage";
@@ -29,6 +30,14 @@ import TeamPage from "./pages/TeamPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import JoinWorkspacePage from "./pages/JoinWorkspacePage";
 import AcceptTaskInvitePage from "./pages/AcceptTaskInvitePage";
+import PendingTaskInviteGate from "./components/PendingTaskInviteGate";
+
+
+function PresenceTracker() {
+  const { user, workspaceId } = useAuth();
+  usePresenceHeartbeat(workspaceId, user?.uid ?? null);
+  return null;
+}
 
 function ProtectedRoute() {
   const { user, loading } = useAuth();
@@ -49,6 +58,7 @@ function ProtectedRoute() {
 
   return (
     <AppDataProvider>
+      <PresenceTracker />
       <div className="flex h-screen w-screen overflow-hidden bg-white">
         <Sidebar />
         <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -58,6 +68,7 @@ function ProtectedRoute() {
     </AppDataProvider>
   );
 }
+
 
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -123,8 +134,13 @@ export default function App() {
             </Route>
           </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+
+        {/* Universal pending-invite safety net.
+            Inside AuthProvider + Router so it can use useAuth() and navigate,
+            but OUTSIDE Routes so it surfaces on every page after sign-in. */}
+        <PendingTaskInviteGate />
       </Router>
     </AuthProvider>
   );

@@ -17,6 +17,8 @@ import {
 import { db, auth, storage } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
+import { resolveWorkspaceDisplayId } from "../lib/utils";
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -636,8 +638,7 @@ export default function SettingsPage() {
                 <p className="text-[10px] text-slate-400 uppercase tracking-wide font-medium mb-1">
                   Workspace
                 </p>
-                <p className="text-xs font-mono font-bold text-violet-600">{workspaceId}</p>
-                <p className="text-xs text-slate-500 mt-0.5 capitalize">{myRole}</p>
+                                                                <p className="text-xs font-mono font-bold text-violet-600">{resolveWorkspaceDisplayId(workspaceId, workspaceData, user?.uid)}</p>
               </div>
             </div>
           </div>
@@ -935,8 +936,8 @@ export default function SettingsPage() {
                     </label>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                        <span className="text-sm font-mono font-bold text-violet-700">
-                          {workspaceId}
+                                                                                                <span className="text-sm font-mono font-bold text-violet-700">
+                          {resolveWorkspaceDisplayId(workspaceId, workspaceData, user?.uid)}
                         </span>
                       </div>
                       <button

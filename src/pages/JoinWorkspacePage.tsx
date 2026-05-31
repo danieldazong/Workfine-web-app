@@ -242,13 +242,10 @@ export default function JoinWorkspacePage() {
       const emailLower = normalizeEmail(email);
       const photoURL = user.photoURL ?? "";
 
-           const memberRef = doc(db, "workspaces", workspaceId, "members", uid);
-                 const invitedEmailMemberRef =
-        invitedEmail && invitedEmail !== uid
-          ? doc(db, "workspaces", workspaceId, "members", invitedEmail)
-          : null;
+                 const memberRef = doc(db, "workspaces", workspaceId, "members", uid);
 
       const userRef = doc(db, "users", uid);
+
       const globalInviteRef = doc(db, "invites", inviteCode);
       const wsInviteRef = doc(
         db,
@@ -310,22 +307,10 @@ export default function JoinWorkspacePage() {
         permissions: getRolePermissions(safeRole),
       };
 
-      await setDoc(memberRef, memberPayload, { merge: true });
-
-      if (invitedEmailMemberRef) {
-        await setDoc(
-          invitedEmailMemberRef,
-          {
-            ...memberPayload,
-            migratedToUidMemberDoc: uid,
-            duplicateForEmailLookup: true,
-          },
-          { merge: true }
-        );
-      }
-
+            await setDoc(memberRef, memberPayload, { merge: true });
 
       console.log("[JoinPage] STEP 1 OK: member doc created");
+
 
       console.log("[JoinPage] STEP 2: updating user workspaceId");
 

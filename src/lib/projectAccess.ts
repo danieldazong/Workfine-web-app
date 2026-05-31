@@ -1,3 +1,4 @@
+
 export type WorkspaceRole = "owner" | "admin" | "member" | "viewer";
 export type ProjectVisibility = "workspace" | "private";
 
@@ -65,6 +66,8 @@ export function canUserEditProject(
 ): boolean {
   if (!project || !userId) return false;
 
+  if (role === "viewer") return false;
+
   if (isWorkspaceManager(role)) return true;
 
   return (
@@ -73,6 +76,23 @@ export function canUserEditProject(
     project.uid === userId
   );
 }
+
+export function canUserCommentOnProject(
+  project: AccessProjectLike,
+  userId?: string,
+  role?: string | null
+): boolean {
+  if (!project || !userId) return false;
+  if (role === "viewer") return false;
+  if (isWorkspaceManager(role)) return true;
+  if (role === "member") return true;
+  return (
+    project.createdBy === userId ||
+    project.ownerId === userId ||
+    project.uid === userId
+  );
+}
+
 
 export function isProjectPinnedToWorkspace(project: AccessProjectLike): boolean {
   return project.pinnedToWorkspace !== false;

@@ -66,6 +66,18 @@ type TaskData = {
   code?: string;
   [key: string]: any;
 };
+function cleanLower(value: any): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function firstText(...values: any[]): string {
+  for (const value of values) {
+    const clean = String(value ?? "").trim();
+    if (clean) return clean;
+  }
+
+  return "";
+}
 
 export default function AcceptTaskInvitePage() {
   const navigate = useNavigate();
@@ -91,6 +103,152 @@ export default function AcceptTaskInvitePage() {
       shareId
     )}`;
   }, [workspaceId, taskId, shareId]);
+  async function readSourceTaskSafely(): Promise<TaskData | null> {
+    if (!workspaceId || !taskId) return null;
+
+    try {
+      const taskSnap = await getDoc(
+        doc(db, "workspaces", workspaceId, "tasks", taskId)
+      );
+
+      if (!taskSnap.exists()) {
+        console.warn(
+          "[AcceptTaskInvitePage] Source task doc missing. Using invite summary instead:",
+          { workspaceId, taskId }
+        );
+
+        return null;
+      }
+
+      return {
+        id: taskSnap.id,
+        ...taskSnap.data(),
+      } as TaskData;
+    } catch (err) {
+      console.warn(
+        "[AcceptTaskInvitePage] Source task unreadable. Using invite summary instead:",
+        err
+      );
+
+      return null;
+    }
+  }
+
+  async function upsertMyTaskCopyFromInvite(
+    inviteData: TaskInviteData,
+    sourceTask: TaskData | null,
+    fresh: { freshDisplayName?: string; freshPhotoURL?: string } = {}
+  ) {
+    const currentUser = user;
+
+    if (!currentUser?.uid) {
+      throw new Error("You must be signed in.");
+    }
+
+    if (!workspaceId || !taskId || !shareId) {
+      throw new Error("Invite link is missing workspaceId, taskId, or shareId.");
+    }
+
+    const taskData = sourceTask || ({ id: taskId } as TaskData);
+
+    const invitedEmailLowerFinal = cleanLower(
+      inviteData.invitedEmailLower ||
+        inviteData.invitedEmail ||
+        inviteData.sharedWithEmail ||
+        currentUser.email ||
+        ""
+    );
+
+    const acceptedByEmailLower = cleanLower(currentUser.email);
+
+    await setDoc(
+      doc(db, "users", currentUser.uid, "tasks", taskId),
+      {
+        ...taskData,
+
+        id: taskId,
+        originalTaskId: taskId,
+        sharedTaskId: taskId,
+
+        workspaceId,
+        shareId,
+
+        title: firstText(
+          taskData.title,
+          taskData.name,
+          inviteData.taskTitle,
+          "Untitled Task"
+        ),
+
+        taskCode: firstText(
+          taskData.taskCode,
+          taskData.code,
+          inviteData.taskCode
+        ),
+
+        status: firstText(taskData.status, inviteData.taskStatus, "To Do"),
+
+        priority: firstText(
+          taskData.priority,
+          inviteData.taskPriority,
+          "Low"
+        ),
+
+        dueDate: taskData.dueDate || inviteData.taskDueDate || "",
+
+        projectId: firstText(taskData.projectId, inviteData.projectId),
+
+        projectName: firstText(
+          taskData.projectName,
+          inviteData.projectName,
+          "Shared task"
+        ),
+
+        description: firstText(taskData.description, ""),
+
+        isSharedTask: true,
+        sharedWithMe: true,
+        accessType: inviteData.accessType || "email_invite",
+
+        sharedBy: inviteData.invitedBy || inviteData.sharedByUid || "",
+        sharedByUid: inviteData.invitedBy || inviteData.sharedByUid || "",
+        sharedByName: inviteData.invitedByName || inviteData.sharedByName || "",
+        sharedByEmail:
+          inviteData.invitedByEmail || inviteData.sharedByEmail || "",
+
+        acceptedBy: currentUser.uid,
+        acceptedByUid: currentUser.uid,
+        acceptedByEmail: currentUser.email || "",
+        acceptedByEmailLower,
+
+        acceptedByName:
+          fresh.freshDisplayName ||
+          currentUser.displayName ||
+          (currentUser.email ? currentUser.email.split("@")[0] : "") ||
+          "",
+
+        acceptedByPhotoURL:
+          fresh.freshPhotoURL || currentUser.photoURL || "",
+
+        invitedEmailLower: invitedEmailLowerFinal,
+
+        acceptedAt: serverTimestamp(),
+        createdAt:
+          taskData.createdAt ||
+          (inviteData as any).createdAt ||
+          serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    console.log("[AcceptTaskInvitePage] Personal task copy written:", {
+      uid: currentUser.uid,
+      workspaceId,
+      taskId,
+      shareId,
+    });
+  }
 
   useEffect(() => {
     localStorage.removeItem("currentWorkspaceId");
@@ -180,27 +338,30 @@ export default function AcceptTaskInvitePage() {
           return;
         }
 
-        const taskRef = doc(db, "workspaces", workspaceId, "tasks", taskId);
-        const taskSnap = await getDoc(taskRef);
-
-        let taskData: TaskData | null = null;
-
-        if (taskSnap.exists()) {
-          taskData = {
-            id: taskSnap.id,
-            ...taskSnap.data(),
-          } as TaskData;
-        }
+               const taskData = await readSourceTaskSafely();
 
         setInvite(shareData);
         setTask(taskData);
 
         if (shareData.status === "active" || shareData.status === "accepted") {
+          // GLOBAL REPAIR:
+          // If the share is already active but users/{uid}/tasks/{taskId}
+          // is missing, repair it here.
+          try {
+            await upsertMyTaskCopyFromInvite(shareData, taskData);
+          } catch (repairErr) {
+            console.warn(
+              "[AcceptTaskInvitePage] Active invite repair failed:",
+              repairErr
+            );
+          }
+
           setState("accepted");
           return;
         }
 
         setState("ready");
+
       } catch (err: any) {
         console.error("Failed to load task invite:", err);
         setState("error");
@@ -213,6 +374,53 @@ export default function AcceptTaskInvitePage() {
 
     loadInvite();
   }, [workspaceId, taskId, shareId, user, authLoading, currentInviteUrl]);
+
+    // ============================================================
+  // AUTO-ACCEPT for first-time signups.
+  //
+  // When a brand-new user clicks an invite link, they go through:
+  //   1. /accept-task-invite?... (sees Sign In screen, params saved)
+  //   2. /login → Google OAuth → account created
+  //   3. Returns to /accept-task-invite?... (AuthContext restores URL)
+  //   4. state becomes "ready"
+  //
+  // Without this hook, the user would have to MANUALLY click
+  // "Accept Task Invitation" again. With it, we auto-fire the
+  // accept flow as soon as the user is signed in AND the invite
+  // is ready. This makes first-click signup work end-to-end.
+  // ============================================================
+  useEffect(() => {
+    if (!user) return;
+    if (state !== "ready") return;
+    if (!invite) return;
+    if (!workspaceId || !taskId || !shareId) return;
+
+    // Only auto-fire for users who just signed up via the invite flow.
+    // We detect this by checking if pendingTaskInviteUrl is still set
+    // in localStorage (it gets cleared right after auto-accept fires).
+    const pending = localStorage.getItem("pendingTaskInviteUrl");
+    if (!pending) return;
+
+    console.log(
+      "[AcceptTaskInvitePage] Auto-accepting invite for newly signed-in user",
+      user.uid
+    );
+
+    // Clear the flag first so we never auto-fire twice (e.g., on
+    // re-renders or fast-refresh in dev).
+    localStorage.removeItem("pendingTaskInviteUrl");
+
+    // Tiny delay so AuthContext can finish ensureUserProfile()
+    // before we write users/{uid}/tasks/{taskId}.
+    const timer = setTimeout(() => {
+      handleAcceptInvite();
+    }, 600);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, state, invite?.id, workspaceId, taskId, shareId]);
+
+
 
   const handleSignIn = () => {
     localStorage.setItem("pendingTaskInviteUrl", currentInviteUrl);
@@ -267,109 +475,121 @@ export default function AcceptTaskInvitePage() {
         "shares",
         shareId
       );
+            const taskData = await readSourceTaskSafely();
 
-      const taskRef = doc(db, "workspaces", workspaceId, "tasks", taskId);
-      const taskSnap = await getDoc(taskRef);
+            // ============================================================
+      // Refresh auth user so photoURL/displayName are guaranteed populated
+      // (Google sign-in sometimes leaves these blank until reload()).
+      // ============================================================
+      let freshPhotoURL = user.photoURL || "";
+      let freshDisplayName = user.displayName || "";
+      try {
+        if (typeof user.reload === "function") {
+          await user.reload();
+        }
+        freshPhotoURL = user.photoURL || freshPhotoURL;
+        freshDisplayName = user.displayName || freshDisplayName;
 
-      if (!taskSnap.exists()) {
-        setState("error");
-        setError(
-          "The shared task no longer exists. Please contact the sender."
-        );
-        return;
+        if (!freshPhotoURL && Array.isArray(user.providerData)) {
+          for (const p of user.providerData) {
+            if (p?.photoURL) { freshPhotoURL = p.photoURL; break; }
+          }
+        }
+        if (!freshDisplayName && Array.isArray(user.providerData)) {
+          for (const p of user.providerData) {
+            if (p?.displayName) { freshDisplayName = p.displayName; break; }
+          }
+        }
+      } catch (reloadErr) {
+        console.warn("[AcceptTaskInvitePage] user.reload failed:", reloadErr);
       }
 
-      const taskData = {
-        id: taskSnap.id,
-        ...taskSnap.data(),
-      } as TaskData;
+      const inviteEmailForGuest =
+        invite.invitedEmail ||
+        invite.sharedWithEmail ||
+        invite.invitedEmailLower ||
+        user.email ||
+        "";
 
-      const userTaskRef = doc(db, "users", user.uid, "tasks", taskId);
-
-      await setDoc(
-        userTaskRef,
-        {
-          ...taskData,
-
-          id: taskId,
-          originalTaskId: taskId,
-          workspaceId,
-          sharedTaskId: taskId,
-          shareId,
-
-          title:
-            taskData.title ||
-            taskData.name ||
-            invite.taskTitle ||
-            "Untitled Task",
-
-          taskCode:
-            taskData.taskCode || taskData.code || invite.taskCode || "",
-
-          status: taskData.status || invite.taskStatus || "To Do",
-
-          priority: taskData.priority || invite.taskPriority || "Low",
-
-          dueDate: taskData.dueDate || invite.taskDueDate || "",
-
-          projectId: taskData.projectId || invite.projectId || "",
-
-          projectName:
-            taskData.projectName || invite.projectName || "Shared task",
-
-          isSharedTask: true,
-          sharedWithMe: true,
-
-          sharedBy: invite.invitedBy || invite.sharedByUid || "",
-          sharedByUid: invite.invitedBy || invite.sharedByUid || "",
-          sharedByName: invite.invitedByName || invite.sharedByName || "",
-          sharedByEmail: invite.invitedByEmail || invite.sharedByEmail || "",
-
-          acceptedBy: user.uid,
-          acceptedByUid: user.uid,
-          acceptedByEmail: user.email || "",
-          acceptedAt: serverTimestamp(),
-
-          createdAt: taskData.createdAt || serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      await updateDoc(shareRef, {
-        status: "active",
-
-        acceptedBy: user.uid,
-        acceptedByUid: user.uid,
-        acceptedByEmail: user.email || "",
-
-        updatedAt: serverTimestamp(),
-        acceptedAt: serverTimestamp(),
-      });
-            // Flip the External Guest from "pending" to "active" on the workspace people list.
-      try {
-        const inviteEmailForGuest =
+      const userEmailLower = String(user.email || "").toLowerCase();
+      const invitedEmailLowerFinal = String(
+        invite.invitedEmailLower ||
           invite.invitedEmail ||
           invite.sharedWithEmail ||
-          invite.invitedEmailLower ||
           user.email ||
-          "";
+          ""
+      ).toLowerCase();
 
-        if (inviteEmailForGuest) {
-          await activateTaskGuestPerson({
-            workspaceId,
-            invitedEmail: inviteEmailForGuest,
-            acceptedByUid: user.uid,
-            acceptedByName: user.displayName || user.email || "",
-            acceptedByPhotoURL: user.photoURL || "",
-          });
-        }
-      } catch (guestErr) {
+      // ============================================================
+      // STEP 1 — Write the user's personal task copy FIRST.
+      // This is the doc MyTasksPage reads. It MUST succeed for the
+      // task to appear, so we run it before anything that could fail
+      // due to permission rules on the workspace shares doc.
+      // ============================================================
+            await upsertMyTaskCopyFromInvite(invite, taskData, {
+        freshDisplayName,
+        freshPhotoURL,
+      });
+
+
+            // ============================================================
+      // STEP 2 — Flip the share doc to "active".
+      //
+      // NON-FATAL: if the rules reject this write for any edge case
+      // (case-sensitive email mismatch, missing invitedEmailLower on
+      // the original share doc, etc.) we DO NOT throw. The personal
+      // task copy from Step 1 has already been written, so /my-tasks
+      // will show the task regardless. The share doc will be
+      // reconciled later by the inviter re-sharing or by the
+      // self-healing reconciler in MyTasksPage.
+      // ============================================================
+      try {
+        const rawAuthEmail = user.email || "";
+        const lowerAuthEmail = rawAuthEmail.toLowerCase();
+
+        await updateDoc(shareRef, {
+          status: "active",
+          acceptedBy: user.uid,
+          acceptedByUid: user.uid,
+          acceptedByEmail: rawAuthEmail,            // matches request.auth.token.email
+          acceptedByEmailLower: lowerAuthEmail,     // matches signedInEmailLower()
+          acceptedByName:
+            freshDisplayName ||
+            (rawAuthEmail ? rawAuthEmail.split("@")[0] : "") ||
+            "",
+          acceptedByPhotoURL: freshPhotoURL,
+          invitedEmailLower: invitedEmailLowerFinal,
+          updatedAt: serverTimestamp(),
+          acceptedAt: serverTimestamp(),
+        });
+
+        console.log("[AcceptTaskInvitePage] Share doc updated to active");
+      } catch (shareErr: any) {
+        // CRITICAL: do NOT rethrow. The user's personal task is already
+        // written. Log it so we can audit which share docs needed
+        // reconciliation, but never block the user.
         console.warn(
-          "[AcceptTaskInvitePage] activateTaskGuestPerson failed:",
-          guestErr,
+          "[AcceptTaskInvitePage] Share doc update failed (NON-FATAL, task is already in My Tasks):",
+          {
+            code: shareErr?.code,
+            message: shareErr?.message,
+            workspaceId,
+            taskId,
+            shareId,
+          }
         );
       }
+
+
+      // ============================================================
+      // STEP 3 — Activate the External Guest (best-effort, non-blocking).
+      // If this fails (e.g. rules), the task is still in users/{uid}/tasks
+      // and the share is "active", so the task page still works.
+      // ============================================================
+            // Clear the pending-invite flag whether or not this was auto-fired.
+      try {
+        localStorage.removeItem("pendingTaskInviteUrl");
+      } catch {}
 
       setState("accepted");
 

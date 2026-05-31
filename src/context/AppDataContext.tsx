@@ -158,7 +158,15 @@ interface AppDataContextType {
   workspaceData: WorkspaceData | null;
   workspacePeople: WorkspacePerson[];
   cancelInvite: (inviteCode: string) => Promise<void>;
+  /**
+   * True when the signed-in user is operating as an external task guest:
+   * their active workspace is their OWN personal workspace, but they have
+   * one or more tasks shared with them. The UI renders a scoped guest shell
+   * (no Team / Workspace / Insights / Dashboard) in this mode.
+   */
+  isGuestView: boolean;
 }
+
 
 
 const AppDataContext = createContext<AppDataContextType>({
@@ -174,7 +182,9 @@ const AppDataContext = createContext<AppDataContextType>({
   workspaceData: null,
   workspacePeople: [],
   cancelInvite: async () => {},
+  isGuestView: false,
 });
+
 
 
 
@@ -886,19 +896,58 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
 
         // External guests / project collaborators listener
+        // External guests / project collaborators listener
     const unsubPeople = onSnapshot(
       collection(db, "workspaces", workspaceId, "people"),
       (snap) => {
-        const data: WorkspacePerson[] = snap.docs.map((d) => {
-          const raw = d.data() as any;
-          return {
-            id: d.id,
-            userId: raw.userId ?? raw.uid ?? d.id,
-            ...raw,
-          };
-        });
+        const data: WorkspacePerson[] = snap.docs
+          .map((d) => {
+            const raw = d.data() as any;
+            return {
+              id: d.id,
+              userId: raw.userId ?? raw.uid ?? d.id,
+              ...raw,
+            };
+          })
+          // FAANG-grade: hide revoked guests immediately, in real time.
+          .filter((p) => {
+            const status = String(p.status ?? "").toLowerCase();
+            if (status === "revoked" || status === "removed") return false;
+
+            // Hide guests whose every nested task entry is revoked/empty.
+            const tasksMap = (p.tasks ?? {}) as Record<string, any>;
+            const projectsMap = (p.projects ?? {}) as Record<string, any>;
+
+            const activeTaskCount = Object.values(tasksMap).filter((t: any) => {
+              const ts = String(t?.status ?? "").toLowerCase();
+              return ts !== "revoked" && ts !== "removed";
+            }).length;
+
+            const activeProjectCount = Object.values(projectsMap).filter(
+              (pr: any) => {
+                const ps = String(pr?.status ?? "").toLowerCase();
+                return ps !== "revoked" && ps !== "removed";
+              },
+            ).length;
+
+            // If this is a guest with no remaining task/project access, hide it.
+            if (
+              (p.type ?? "guest") === "guest" &&
+              activeTaskCount === 0 &&
+              activeProjectCount === 0
+            ) {
+              return false;
+            }
+
+            return true;
+          });
+
         setWorkspacePeople(data);
-        const guestCount = data.filter((p) => (p.type ?? "guest") === "guest").length;
+
+        const guestCount = data.filter(
+          (p) => (p.type ?? "guest") === "guest",
+        ).length;
+
         console.log(
           "[AppData] workspace people:",
           data.length,
@@ -911,13 +960,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             status: p.status,
             tasks: p.tasks ? Object.keys(p.tasks).length : 0,
             projects: p.projects ? Object.keys(p.projects).length : 0,
-          }))
+          })),
         );
       },
       (err) => {
         console.warn("[AppData] people listener error:", err.code, err.message);
         setWorkspacePeople([]);
-      }
+      },
     );
 
 
@@ -969,7 +1018,35 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         }, [uid, workspaceId, personalWorkspaceId, user?.email]);
 
 
-      return (
+       const effectivePersonalWorkspaceId =
+    personalWorkspaceId || (uid ? `personal_${uid}` : "");
+
+  /**
+   * GUEST-VIEW DETECTION (global, account-agnostic).
+   *
+   * The user is in guest view when:
+   *   1. They are signed in, AND
+   *   2. Their ACTIVE workspace is their OWN personal workspace, AND
+   *   3. They have at least one task that was shared with them
+   *      (isSharedTask / sharedWithMe), i.e. they only arrived here via a
+   *      task invite and are not a real member of any team workspace.
+   *
+   * In that situation the personal-workspace shell (Team, Workspace, Insights,
+   * Dashboard) is meaningless to them, so the app renders a scoped guest UI.
+   */
+  const isOnOwnPersonalWorkspace =
+    !!uid &&
+    !!workspaceId &&
+    (workspaceId === effectivePersonalWorkspaceId ||
+      workspaceId === `personal_${uid}`);
+
+  const hasSharedTasks = tasks.some(
+    (t: any) => t?.isSharedTask === true || t?.sharedWithMe === true
+  );
+
+  const isGuestView = isOnOwnPersonalWorkspace && hasSharedTasks;
+
+  return (
     <AppDataContext.Provider
       value={{
         tasks,
@@ -984,6 +1061,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         workspaceData,
         workspacePeople,
         cancelInvite,
+        isGuestView,
       }}
     >
       {children}

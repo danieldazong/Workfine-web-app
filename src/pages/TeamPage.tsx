@@ -30,6 +30,9 @@ import { db } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
 import InviteMemberModal from "../components/InviteMemberModal";
+import emailjs from "@emailjs/browser";
+import { resolveWorkspaceDisplayId } from "../lib/utils";
+
 
 // ─── Inline skeleton placeholder ──────────────────────────────────────────────
 // Tiny replacement for the missing Skeleton component.
@@ -229,6 +232,10 @@ export default function TeamPage() {
   const [roleMenuFor, setRoleMenuFor] = useState<string | null>(null);
   const [cancellingCode, setCancellingCode] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [resendingCode, setResendingCode] = useState<string | null>(null);
+  const [resendCooldowns, setResendCooldowns] = useState<Record<string, number>>({});
+  const [recentlyResentCode, setRecentlyResentCode] = useState<string | null>(null);
+  const [cooldownTick, setCooldownTick] = useState(0);
 
   const showToast = useCallback((msg: string) => setToast(msg), []);
 
@@ -246,6 +253,20 @@ export default function TeamPage() {
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [roleMenuFor]);
+
+    // Tick every second while any cooldown is active so the countdown re-renders.
+  useEffect(() => {
+    const hasActive = Object.values(resendCooldowns).some(
+      (ts) => Date.now() - ts < 30_000
+    );
+    if (!hasActive) return;
+
+    const interval = window.setInterval(() => {
+      setCooldownTick((t) => t + 1);
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [resendCooldowns, cooldownTick]);
 
 
   /**
@@ -302,12 +323,31 @@ export default function TeamPage() {
   // excludes private projects the owner isn't a collaborator on — but the guest
   // still has legitimate access to those projects. The People page should reflect
   // the guest's actual access, not the viewer's project visibility.
-  function getActiveGuestProjects(person: any) {
+   function getActiveGuestProjects(person: any) {
     const personProjects = person.projects ?? {};
     return Object.entries(personProjects)
       .filter(([, p]: [string, any]) => {
-        const status = String(p?.status ?? "active").toLowerCase();
-        return status === "active" || status === "pending";
+        const status = String(p?.status ?? "").toLowerCase();
+        const source = String(p?.source ?? "").toLowerCase();
+        const accepted =
+          p?.accepted === true ||
+          p?.acceptedAt != null ||
+          status === "accepted" ||
+          status === "active";
+
+        // FAANG rule: must be a real granted access (invite/share/member),
+        // not a passive assignee write. Assignee-only rows are excluded.
+        const isRealAccess =
+          source === "invite" ||
+          source === "share" ||
+          source === "member" ||
+          source === "collaborator" ||
+          p?.invitedAt != null ||
+          p?.sharedAt != null ||
+          p?.role != null;
+
+        if (source === "assignee" && !isRealAccess) return false;
+        return accepted && isRealAccess;
       })
       .map(([pid, p]: [string, any]) => ({
         ...(p as any),
@@ -316,12 +356,33 @@ export default function TeamPage() {
   }
 
 
-  function getActiveGuestTasks(person: any) {
+
+   function getActiveGuestTasks(person: any) {
     const personTasks = person.tasks ?? {};
     return Object.entries(personTasks)
       .filter(([, t]: [string, any]) => {
-        const status = String(t?.status ?? "active").toLowerCase();
-        return status === "active" || status === "pending";
+        const status = String(t?.status ?? "").toLowerCase();
+        const source = String(t?.source ?? "").toLowerCase();
+
+        // Must be an accepted task share — assignee-only rows are excluded.
+        const accepted =
+          t?.accepted === true ||
+          t?.acceptedAt != null ||
+          status === "accepted" ||
+          status === "active";
+
+        const isRealAccess =
+          source === "share" ||
+          source === "invite" ||
+          t?.shareId != null ||
+          t?.sharedAt != null ||
+          t?.invitedAt != null;
+
+        // Hard exclude pure assignee writes (the bug you saw with ctahighlight@gmail.com).
+        if (source === "assignee") return false;
+        if (!isRealAccess) return false;
+
+        return accepted;
       })
       .map(([tid, t]: [string, any]) => ({
         ...(t as any),
@@ -353,36 +414,143 @@ export default function TeamPage() {
       return false;
     }
 
-    if ((p.type ?? "guest") !== "guest") {
+        if ((p.type ?? "guest") !== "guest") {
       console.log("[TeamPage] guest skipped (type != guest):", personEmail, "type:", p.type);
       return false;
     }
 
-    // Show pending guests too so the user can see who was just invited.
-    const status = p.status ?? "active";
-    if (status !== "active" && status !== "pending") {
-      console.log("[TeamPage] guest skipped (status):", personEmail, "status:", status);
+    // FAANG rule: someone is only an "External Guest" if they have at least one
+    // real granted access (accepted invite or share). A user whose entire footprint
+    // is being typed into a task's assignee field is NOT a guest — they have no
+    // authenticated access. They are an "unregistered contact" and must not appear here.
+    const projectEntries = Object.values(p.projects ?? {}) as any[];
+    const taskEntries = Object.values(p.tasks ?? {}) as any[];
+    const allEntries = [...projectEntries, ...taskEntries];
+
+    const hasAnyRealAccess = allEntries.some((entry: any) => {
+      const source = String(entry?.source ?? "").toLowerCase();
+      if (source === "assignee") return false;
+      return (
+        source === "invite" ||
+        source === "share" ||
+        source === "member" ||
+        source === "collaborator" ||
+        entry?.shareId != null ||
+        entry?.invitedAt != null ||
+        entry?.sharedAt != null ||
+        entry?.accepted === true ||
+        entry?.acceptedAt != null
+      );
+    });
+
+    if (!hasAnyRealAccess) {
+      console.log(
+        "[TeamPage] guest skipped (assignee-only, no accepted invite/share):",
+        personEmail
+      );
+      return false;
+    }
+
+
+      // Reject only hard-revoked guests. Everyone else is included, and their
+    // Active/Pending badge is derived from their nested task/project entries
+    // below — this self-heals even if the root `status` field is stale.
+    const status = String(p.status ?? "active").toLowerCase();
+    if (status === "revoked" || status === "removed" || status === "suspended") {
+      console.log("[TeamPage] guest skipped (revoked):", personEmail, "status:", status);
       return false;
     }
 
     const projectCount = getActiveGuestProjects(p).length;
     const taskCount = getActiveGuestTasks(p).length;
 
-    if (projectCount === 0 && taskCount === 0) {
+    // Also count not-yet-accepted task entries so newly invited guests still
+    // appear under External Guests with a Pending badge.
+    const taskEntriesAll = Object.values(p.tasks ?? {}) as any[];
+    const projectEntriesAll = Object.values(p.projects ?? {}) as any[];
+
+    const hasAnyTaskOrProjectEntry =
+      taskEntriesAll.some((t: any) => {
+        const s = String(t?.source ?? "").toLowerCase();
+        return s === "invite" || s === "share" || t?.shareId != null;
+      }) ||
+      projectEntriesAll.some((pr: any) => {
+        const s = String(pr?.source ?? "").toLowerCase();
+        return (
+          s === "invite" ||
+          s === "share" ||
+          s === "member" ||
+          s === "collaborator"
+        );
+      });
+
+    if (projectCount === 0 && taskCount === 0 && !hasAnyTaskOrProjectEntry) {
       console.log(
-        "[TeamPage] guest skipped (no active projects/tasks):",
-        personEmail,
-        "projects raw:",
-        p.projects,
-        "tasks raw:",
-        p.tasks
+        "[TeamPage] guest skipped (no project/task entries at all):",
+        personEmail
       );
       return false;
     }
 
-    console.log("[TeamPage] guest INCLUDED:", personEmail, "projects:", projectCount, "tasks:", taskCount);
+    console.log(
+      "[TeamPage] guest INCLUDED:",
+      personEmail,
+      "active projects:",
+      projectCount,
+      "active tasks:",
+      taskCount
+    );
     return true;
   });
+  // FAANG-grade self-heal: if any guest doc has a stale root `status: "pending"`
+  // but actually has accepted task or project access, flip the root status to
+  // "active" so every downstream consumer (Team page, sidebar, search, etc.)
+  // converges in real time. This is idempotent and runs at most once per doc
+  // per session via a ref-guarded set.
+  const healedGuestIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!workspaceId) return;
+
+    externalGuests.forEach((p: any) => {
+      const personDocId = p.id || p.userId || p.uid;
+      if (!personDocId) return;
+      if (healedGuestIdsRef.current.has(personDocId)) return;
+
+      const rootStatus = String(p.status ?? "").toLowerCase();
+      const hasAccepted =
+        getActiveGuestProjects(p).length > 0 ||
+        getActiveGuestTasks(p).length > 0;
+
+      if (rootStatus === "pending" && hasAccepted) {
+        healedGuestIdsRef.current.add(personDocId);
+
+        updateDoc(
+          doc(db, "workspaces", workspaceId, "people", personDocId),
+          {
+            status: "active",
+            accepted: true,
+            acceptedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
+        )
+          .then(() => {
+            console.log(
+              "[TeamPage] 🛠️ self-healed stale guest status → active:",
+              personDocId
+            );
+          })
+          .catch((err) => {
+            console.warn(
+              "[TeamPage] self-heal guest status failed:",
+              personDocId,
+              err?.message || err
+            );
+          });
+      }
+    });
+  }, [externalGuests, workspaceId]);
+
   // Diagnostic — confirms TeamPage is seeing the people documents.
   useEffect(() => {
     console.log(
@@ -698,24 +866,39 @@ export default function TeamPage() {
 
 
     async function resendInvite(invite: any) {
-    if (!workspaceId) return;
+    if (!workspaceId || !invite?.code) return;
+
+    // Rate limit: 30s cooldown per invite (FAANG-grade — prevents spam)
+    const lastSentAt = resendCooldowns[invite.code] ?? 0;
+    const elapsed = Date.now() - lastSentAt;
+    const COOLDOWN_MS = 30_000;
+
+    if (elapsed < COOLDOWN_MS) {
+      const remaining = Math.ceil((COOLDOWN_MS - elapsed) / 1000);
+      showToast(`Please wait ${remaining}s before resending`);
+      return;
+    }
+
+    if (resendingCode) return;
+    setResendingCode(invite.code);
+
+    // Optimistic UI — mark as just-sent immediately
+    setResendCooldowns((prev) => ({ ...prev, [invite.code]: Date.now() }));
+    setRecentlyResentCode(invite.code);
+    window.setTimeout(() => {
+      setRecentlyResentCode((curr) => (curr === invite.code ? null : curr));
+    }, 2500);
+
+    const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const isTaskShare =
+      invite?.inviteType === "task" || Boolean(invite?.taskId);
+
+    const inviterName =
+      user?.displayName || user?.email?.split("@")[0] || "Someone";
 
     try {
-      const newExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-      console.log("[TeamPage] resend invite:", {
-        code: invite?.code,
-        inviteType: invite?.inviteType,
-        taskId: invite?.taskId,
-        workspaceId,
-        invite,
-      });
-
-      const isTaskShare =
-        invite?.inviteType === "task" ||
-        Boolean(invite?.taskId);
-
-      if (isTaskShare && invite?.taskId) {
+      // 1) Update the invite document (extend expiry)
+      if (isTaskShare && invite.taskId) {
         await updateDoc(
           doc(
             db,
@@ -729,26 +912,98 @@ export default function TeamPage() {
           {
             expiresAt: newExpiry,
             updatedAt: serverTimestamp(),
+            lastResentAt: serverTimestamp(),
+            lastResentBy: user?.uid ?? "",
           }
         );
-        console.log("[TeamPage] ✅ task share expiry extended:", invite.code);
       } else {
         await updateDoc(
           doc(db, "workspaces", workspaceId, "invites", invite.code),
           {
             expiresAt: newExpiry,
             updatedAt: serverTimestamp(),
+            lastResentAt: serverTimestamp(),
+            lastResentBy: user?.uid ?? "",
           }
         );
-        console.log("[TeamPage] ✅ workspace invite expiry extended:", invite.code);
       }
 
-      showToast(`Invite expiry extended for ${invite.email}`);
+      // 2) Re-send the email — dynamic, no hardcoded values
+      if (isTaskShare && invite.taskId) {
+        const taskInviteLink = `${window.location.origin}/accept-task-invite?workspaceId=${encodeURIComponent(
+          workspaceId
+        )}&taskId=${encodeURIComponent(invite.taskId)}&shareId=${encodeURIComponent(
+          invite.code
+        )}`;
+
+        await emailjs.send(
+          "service_mexk2nq",
+          "template_v6ojdzn",
+          {
+            to_email: invite.email,
+            to_name: String(invite.email || "").split("@")[0],
+            from_name: invite.invitedByName || inviterName,
+            from_email: invite.invitedByEmail || user?.email || "",
+            reply_to: invite.invitedByEmail || user?.email || "",
+            task_title: invite.taskTitle || "Shared task",
+            task_code: invite.taskCode || "",
+            task_status: "",
+            task_priority: "",
+            task_due_date: "",
+            project_name: invite.projectName || "",
+            workspace_id: workspaceId,
+            share_id: invite.code,
+            message: `${invite.invitedByName || inviterName} re-sent you a task invite on Workfine. Expires in 7 days.`,
+            invite_link: taskInviteLink,
+            task_link: taskInviteLink,
+            workspace_name: "Workfine Task Share",
+            invite_code: invite.code,
+            role: "Task viewer",
+            expires_in: "7 days",
+          },
+          { publicKey: "meHwiauyfE3xFWE66" }
+        );
+      } else {
+        const inviteLink = `${window.location.origin}/join/${invite.code}`;
+
+        await emailjs.send(
+          "service_mexk2nq",
+          "template_tbhiftp",
+          {
+            to_email: invite.email,
+            to_name: String(invite.email || "").split("@")[0],
+            from_name: invite.invitedByName || inviterName,
+            reply_to: invite.invitedByEmail || user?.email || "",
+            workspace_name:
+              invite.workspaceName ||
+              workspaceData?.name ||
+              "Workfine Workspace",
+            invite_link: inviteLink,
+            invite_code: invite.code,
+            expires_in: "7 days",
+            role: invite.role || "member",
+            message: `${invite.invitedByName || inviterName} re-sent you an invite to join their workspace on Workfine. This invite expires in 7 days.`,
+          },
+          { publicKey: "meHwiauyfE3xFWE66" }
+        );
+      }
+
+      showToast(`✓ Invite re-sent to ${invite.email}`);
     } catch (err) {
       console.error("[TeamPage] resendInvite error:", err);
-      showToast("Failed to resend invite.");
+      // Rollback cooldown on failure
+      setResendCooldowns((prev) => {
+        const next = { ...prev };
+        delete next[invite.code];
+        return next;
+      });
+      setRecentlyResentCode(null);
+      showToast("Failed to resend invite. Please try again.");
+    } finally {
+      setResendingCode(null);
     }
   }
+
 
 
   function copyWorkspaceId() {
@@ -1349,7 +1604,7 @@ export default function TeamPage() {
                 ) : (
                   <div className="space-y-3">
                     {filteredGuests.map((guest) => {
-                                            const guestId = guest.userId || guest.uid || guest.email;
+                                                            const guestId = guest.userId || guest.uid || guest.email;
                       const activeProjects = getActiveGuestProjects(guest);
                       const activeTasks = getActiveGuestTasks(guest);
                       const primaryProject = activeProjects[0] as any;
@@ -1359,8 +1614,22 @@ export default function TeamPage() {
                         primaryProject?.role ??
                         (activeTasks.length > 0 ? "Task guest" : "viewer");
 
-                      const guestStatus = guest.status ?? "active";
-                      const isPending = guestStatus === "pending";
+                      // FAANG-grade: derive Pending/Active from the nested
+                      // task/project entries themselves — this self-heals
+                      // even when the root `status` field is stale, and
+                      // updates in real time the instant a share doc flips
+                      // to "active" (because AppDataContext re-emits the
+                      // people doc on every nested change).
+                      const hasAnyAcceptedAccess =
+                        activeProjects.length > 0 || activeTasks.length > 0;
+
+                      const hasAcceptedFlag =
+                        guest.accepted === true ||
+                        guest.acceptedAt != null ||
+                        Boolean(guest.userId || guest.uid);
+
+                      const isPending = !(hasAnyAcceptedAccess || hasAcceptedFlag);
+
 
 
                       const initials = (
@@ -1373,6 +1642,13 @@ export default function TeamPage() {
                         guest.avatarColor || getAvatarColor(guestId || "guest");
 
                       const online = isOnline(guest.lastActive);
+                                            // Count assignee-only mentions (no accepted share) — shown as a soft hint, not as access.
+                      const assigneeOnlyCount = Object.values(
+                        (guest.tasks ?? {}) as Record<string, any>
+                      ).filter((t: any) => {
+                        const source = String(t?.source ?? "").toLowerCase();
+                        return source === "assignee";
+                      }).length;
 
                       return (
                         <div
@@ -1465,12 +1741,23 @@ export default function TeamPage() {
                               </span>
                             )}
 
-                            {activeProjects.length + activeTasks.length > 1 && (
+                                                        {activeProjects.length + activeTasks.length > 1 && (
                               <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-full">
                                 +{activeProjects.length + activeTasks.length - 1} more
                               </span>
                             )}
+
+                            {assigneeOnlyCount > 0 && (
+                              <span
+                                className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full"
+                                title="This person is mentioned as an assignee on tasks but has not been granted access. They cannot sign in to view these tasks until invited."
+                              >
+                                Mentioned on {assigneeOnlyCount} task
+                                {assigneeOnlyCount === 1 ? "" : "s"} (no access)
+                              </span>
+                            )}
                           </div>
+
 
 
                           <div className="flex items-center justify-between mt-2">
@@ -1624,15 +1911,96 @@ export default function TeamPage() {
                             </p>
 
 
-                            <div className="flex gap-2 mt-1">
-                              <button
-                                onClick={() => resendInvite(inv)}
-                                disabled={!!cancellingCode}
-                                className="flex-1 text-[10px] py-1.5 rounded-lg text-violet-600 hover:bg-violet-50 transition-colors font-medium disabled:opacity-50"
-                                title="Extends the invite expiry by 7 days. No new email is sent."
-                              >
-                                Extend Expiry
-                              </button>
+                                                        {(() => {
+                              const lastSent = resendCooldowns[inv.code] ?? 0;
+                              const remainingMs = 30_000 - (Date.now() - lastSent);
+                              const onCooldown = remainingMs > 0;
+                              const remainingSec = Math.ceil(remainingMs / 1000);
+                              const isResending = resendingCode === inv.code;
+                              const justSent = recentlyResentCode === inv.code;
+
+                              const expiryMs =
+                                typeof (inv.expiresAt as any)?.toMillis === "function"
+                                  ? (inv.expiresAt as any).toMillis()
+                                  : typeof (inv.expiresAt as any)?.seconds === "number"
+                                    ? (inv.expiresAt as any).seconds * 1000
+                                    : inv.expiresAt
+                                      ? new Date(inv.expiresAt as any).getTime()
+                                      : 0;
+
+                              const daysLeft = expiryMs
+                                ? Math.max(
+                                    0,
+                                    Math.ceil((expiryMs - Date.now()) / 86_400_000)
+                                  )
+                                : null;
+
+                              return (
+                                <>
+                                  {daysLeft !== null && !expired && (
+                                    <p className="text-[10px] text-slate-400 -mt-1 mb-0.5">
+                                      Expires in {daysLeft} day{daysLeft === 1 ? "" : "s"}
+                                    </p>
+                                  )}
+
+                                  <div className="flex gap-2 mt-1">
+                                    <button
+                                      onClick={() => resendInvite(inv)}
+                                      disabled={
+                                        !!cancellingCode ||
+                                        isResending ||
+                                        onCooldown ||
+                                        justSent
+                                      }
+                                      className={`flex-1 text-[10px] py-1.5 rounded-lg font-medium transition-colors flex items-center justify-center gap-1 ${
+                                        justSent
+                                          ? "bg-emerald-50 text-emerald-600"
+                                          : onCooldown
+                                            ? "text-slate-400 bg-slate-50 cursor-not-allowed"
+                                            : "text-violet-600 hover:bg-violet-50 disabled:opacity-50"
+                                      }`}
+                                      title={
+                                        onCooldown
+                                          ? `Please wait ${remainingSec}s`
+                                          : "Re-send the invite email and extend expiry by 7 days"
+                                      }
+                                    >
+                                      {isResending ? (
+                                        <>
+                                          <svg
+                                            className="animate-spin h-3 w-3"
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                          >
+                                            <circle
+                                              className="opacity-25"
+                                              cx="12"
+                                              cy="12"
+                                              r="10"
+                                              stroke="currentColor"
+                                              strokeWidth="4"
+                                            />
+                                            <path
+                                              className="opacity-75"
+                                              fill="currentColor"
+                                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                            />
+                                          </svg>
+                                          Sending...
+                                        </>
+                                      ) : justSent ? (
+                                        <>
+                                          <Check size={11} />
+                                          Sent
+                                        </>
+                                      ) : onCooldown ? (
+                                        `Resend in ${remainingSec}s`
+                                      ) : (
+                                        "Resend"
+                                      )}
+                                    </button>
+
 
                               <button
                                 onClick={() => handleCancelInvite(inv.code)}
@@ -1643,7 +2011,7 @@ export default function TeamPage() {
                                     : "border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-50"
                                 }`}
                               >
-                                {isCancelling ? (
+                                                              {isCancelling ? (
                                   <>
                                     <svg
                                       className="animate-spin h-3 w-3 text-slate-400"
@@ -1671,7 +2039,10 @@ export default function TeamPage() {
                                   "Cancel"
                                 )}
                               </button>
-                            </div>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
                         );
                       })}
@@ -1680,6 +2051,7 @@ export default function TeamPage() {
                 })()
               )}
             </div>
+
 
 
 
@@ -1697,8 +2069,8 @@ export default function TeamPage() {
                     {showSkeleton ? (
                       <SkeletonBox height={14} width={80} className="mt-1" />
                     ) : (
-                      <p className="text-sm font-mono font-bold text-violet-700">
-                        {workspaceId}
+                                                                                        <p className="text-sm font-mono font-bold text-violet-700">
+                        {resolveWorkspaceDisplayId(workspaceId, workspaceData, user?.uid)}
                       </p>
                     )}
                   </div>

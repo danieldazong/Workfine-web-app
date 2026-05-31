@@ -8,6 +8,8 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "./config";
+import { deriveWorkspaceDisplayId } from "./users";
+
 
 export type WorkspaceRole = "owner" | "admin" | "member" | "viewer";
 
@@ -21,23 +23,27 @@ export async function updateMemberRole(
 ): Promise<void> {
   const memberRef = doc(db, "workspaces", workspaceId, "members", userId);
 
-    const canEdit = true;
-  const canDelete = newRole === "owner" || newRole === "admin";
-  const canInvite = newRole === "owner" || newRole === "admin";
+    const isOwnerOrAdmin = newRole === "owner" || newRole === "admin";
+  const isMember = newRole === "member";
+  const isViewer = newRole === "viewer";
 
   await updateDoc(memberRef, {
     role: newRole,
     permissions: {
-      canEdit,
-      canDelete,
-      canInvite,
-      canCreateProjects: true,
-      canDeleteProjects: canDelete,
-      canInviteMembers: canInvite,
-      canManageTasks: true,
+      canView: true,
+      canComment: isOwnerOrAdmin || isMember,
+      canEdit: isOwnerOrAdmin,
+      canDelete: isOwnerOrAdmin,
+      canInvite: isOwnerOrAdmin,
+      canCreateProjects: isOwnerOrAdmin,
+      canDeleteProjects: isOwnerOrAdmin,
+      canInviteMembers: isOwnerOrAdmin,
+      canManageTasks: isOwnerOrAdmin,
+      canViewOnly: isViewer,
     },
     lastActive: serverTimestamp(),
   });
+
 
 
 }
@@ -49,20 +55,53 @@ export async function removeMember(
   workspaceId: string,
   userId: string
 ): Promise<void> {
-  // 1. Delete member document
+    // 1. Delete member document
   await deleteDoc(doc(db, "workspaces", workspaceId, "members", userId));
+
+  try {
+    const userSnapForEmail = await getDoc(doc(db, "users", userId));
+    const emailLower = String(
+      userSnapForEmail.exists()
+        ? userSnapForEmail.data().emailLower ||
+            userSnapForEmail.data().email_lowercase ||
+            userSnapForEmail.data().email ||
+            ""
+        : ""
+    )
+      .trim()
+      .toLowerCase();
+
+    if (emailLower) {
+      await deleteDoc(doc(db, "workspaces", workspaceId, "members", emailLower));
+    }
+  } catch (e) {
+    console.warn("[removeMember] could not remove legacy email member doc:", e);
+  }
+
 
   // 2. Reset user's workspaceId to a personal workspace ID
   try {
     const userRef  = doc(db, "users", userId);
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
-      const personalId = `WF-${userId.slice(0, 6)}`;
-      await setDoc(
+            const personalId =
+        (userSnap.data().personalWorkspaceId as string | undefined) ||
+        `personal_${userId}`;
+
+        await setDoc(
         userRef,
-        { workspaceId: personalId, updatedAt: serverTimestamp() },
+        {
+          workspaceId: personalId,
+          personalWorkspaceId: personalId,
+          workspaceDisplayId: deriveWorkspaceDisplayId(userId),
+          lastRemovedFromWorkspaceId: workspaceId,
+          removedFromWorkspaceAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
         { merge: true }
       );
+
+
     }
   } catch (e) {
     console.warn("[removeMember] could not reset user workspaceId:", e);
@@ -111,6 +150,8 @@ export async function transferOwnership(
   batch.update(currentOwnerRef, {
     role: "admin",
     permissions: {
+      canView: true,
+      canComment: true,
       canEdit: true,
       canDelete: true,
       canInvite: true,
@@ -118,14 +159,18 @@ export async function transferOwnership(
       canDeleteProjects: true,
       canInviteMembers: true,
       canManageTasks: true,
+      canViewOnly: false,
     },
+
     lastActive: serverTimestamp(),
   });
 
   // Promote new owner
   batch.update(newOwnerRef, {
     role: "owner",
-    permissions: {
+        permissions: {
+      canView: true,
+      canComment: true,
       canEdit: true,
       canDelete: true,
       canInvite: true,
@@ -133,7 +178,9 @@ export async function transferOwnership(
       canDeleteProjects: true,
       canInviteMembers: true,
       canManageTasks: true,
+      canViewOnly: false,
     },
+
     lastActive: serverTimestamp(),
   });
 
@@ -142,7 +189,11 @@ export async function transferOwnership(
     ownerId: newOwnerId,
     updatedAt: serverTimestamp(),
   };
-  if (newOwnerEmail) wsUpdate.ownerEmail = newOwnerEmail;
+    if (newOwnerEmail) {
+    wsUpdate.ownerEmail = newOwnerEmail;
+    wsUpdate.ownerEmailLower = String(newOwnerEmail).trim().toLowerCase();
+  }
+
 
   batch.update(workspaceRef, wsUpdate);
 

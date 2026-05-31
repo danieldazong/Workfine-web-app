@@ -110,8 +110,13 @@ function timeAgo(date: Date): string {
 
 export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const { projects = [], tasks: allTasks = [] } = useAppData() as any;
+    const { user, workspaceId } = useAuth();
+  const {
+    projects = [],
+    tasks: allTasks = [],
+    members = [],
+    workspaceData,
+  } = useAppData() as any;
 
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentText, setCommentText] = useState("");
@@ -130,7 +135,35 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
   const project = task.projectId
     ? projects.find((p: any) => p.id === task.projectId)
     : null;
+       const myMembership = Array.isArray(members)
+    ? members.find((member: any) => {
+        const memberUid = member.userId || member.uid || member.id;
+        return !!user?.uid && memberUid === user.uid;
+      })
+    : null;
 
+  const myRole = (
+    workspaceData?.ownerId === user?.uid
+      ? "owner"
+      : String(myMembership?.role || "viewer").toLowerCase()
+  ) as "owner" | "admin" | "member" | "viewer";
+
+  const isViewerOnly =
+    myRole === "viewer" ||
+    myMembership?.permissions?.canViewOnly === true;
+
+  const canEditTaskContent =
+    !isViewerOnly &&
+    (myRole === "owner" ||
+      myRole === "admin" ||
+      myMembership?.permissions?.canEdit === true ||
+      myMembership?.permissions?.canManageTasks === true);
+
+  const canCommentOnTask =
+    !isViewerOnly &&
+    (canEditTaskContent ||
+      myRole === "member" ||
+      myMembership?.permissions?.canComment === true);
   // Slide-in animation
   useEffect(() => {
     const t = requestAnimationFrame(() => setMounted(true));
@@ -183,7 +216,7 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
   }
 
   async function handleDescriptionBlur() {
-    if (!user?.uid) return;
+        if (!user?.uid || !canEditTaskContent) return;
     if ((task.description ?? "") === description) return;
     try {
       await updateDoc(doc(db, "users", user.uid, "tasks", task.id), {
@@ -197,6 +230,10 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
 
   async function handleSendComment() {
     if (!user?.uid || !commentText.trim() || sending) return;
+    if (!canCommentOnTask) {
+      console.warn("[TaskDetailModal] comment blocked: viewer access");
+      return;
+    }
     setSending(true);
     try {
       const text = commentText.trim();
@@ -505,10 +542,18 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
             </div>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+                            onChange={(e) => {
+                if (!canEditTaskContent) return;
+                setDescription(e.target.value);
+              }}
               onBlur={handleDescriptionBlur}
-              placeholder="Add a description..."
-              className="bg-slate-50 rounded-xl p-4 border border-slate-200 w-full min-h-[100px] text-sm text-slate-600 focus:outline-none focus:border-violet-400 resize-none"
+              placeholder={
+                canEditTaskContent
+                  ? "Add a description..."
+                  : "You do not have permission to edit this description."
+              }
+              disabled={!canEditTaskContent}
+              className="bg-slate-50 rounded-xl p-4 border border-slate-200 w-full min-h-[100px] text-sm text-slate-600 focus:outline-none focus:border-violet-400 resize-none disabled:cursor-not-allowed disabled:opacity-70"
             />
           </div>
 
@@ -606,20 +651,29 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
           )}
 
           <div className="flex items-end gap-2">
-            <textarea
+                                   <textarea
               ref={inputRef}
               value={commentText}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder="Add a comment... use #TSK-001 or #PRJ-001 to mention"
+              placeholder={
+                isViewerOnly
+                  ? "You have viewer access — commenting is disabled."
+                  : canCommentOnTask
+                    ? "Add a comment... use #TSK-001 or #PRJ-001 to mention"
+                    : "You only have view access."
+              }
               rows={2}
-              className="flex-1 bg-slate-50 rounded-xl px-3 py-2 border border-slate-200 text-sm text-slate-700 focus:outline-none focus:border-violet-400 resize-none"
+              disabled={!canCommentOnTask}
+              className="flex-1 bg-slate-50 rounded-xl px-3 py-2 border border-slate-200 text-sm text-slate-700 focus:outline-none focus:border-violet-400 resize-none disabled:cursor-not-allowed disabled:opacity-70"
             />
+
             <button
               onClick={handleSendComment}
-              disabled={!commentText.trim() || sending}
+              disabled={!commentText.trim() || sending || !canCommentOnTask}
               className="bg-violet-600 text-white rounded-xl px-4 py-2 text-sm font-medium hover:bg-violet-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
             >
+
               <Send size={14} />
               Send
             </button>

@@ -261,14 +261,20 @@ export async function upsertTaskGuestPerson(params: {
 export async function activateTaskGuestPerson(params: {
   workspaceId: string;
   invitedEmail: string;
+  taskId?: string;
+  shareId?: string;
   acceptedByUid?: string;
+  acceptedByEmail?: string;
   acceptedByName?: string;
   acceptedByPhotoURL?: string;
 }) {
   const {
     workspaceId,
     invitedEmail,
+    taskId = "",
+    shareId = "",
     acceptedByUid = "",
+    acceptedByEmail = "",
     acceptedByName = "",
     acceptedByPhotoURL = "",
   } = params;
@@ -278,20 +284,76 @@ export async function activateTaskGuestPerson(params: {
   const emailLower = String(invitedEmail).trim().toLowerCase();
   if (!emailLower) return;
 
+  // Canonical person id — MUST match upsertTaskGuestPerson() so we update
+  // the same doc the Team page is already listening to.
   const personId = `guest_${emailLower.replace(/[^a-z0-9]/g, "_")}`;
   const personRef = doc(db, "workspaces", workspaceId, "people", personId);
 
-  await setDoc(
-    personRef,
-    {
-      status: "active",
-      userId: acceptedByUid || undefined,
-      uid: acceptedByUid || undefined,
-      displayName: acceptedByName || emailLower.split("@")[0],
-      photoURL: acceptedByPhotoURL || "",
-      lastActive: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    },
-    { merge: true },
-  );
+  // Step 1 — flip ROOT fields to active. This is what the Team page badge reads.
+  // Step 1 — flip ROOT fields to active. This is what the Team page badge reads.
+  const rootPayload: Record<string, any> = {
+    id: personId,
+    workspaceId,
+    email: emailLower,
+    emailLower,
+    status: "active",
+    accepted: true,
+    acceptedAt: serverTimestamp(),
+    displayName:
+      acceptedByName ||
+      (acceptedByEmail ? acceptedByEmail.split("@")[0] : "") ||
+      emailLower.split("@")[0],
+    type: "guest",
+    lastActive: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  // Only write photoURL when we actually have one — never overwrite
+  // an existing good avatar with an empty string.
+  if (acceptedByPhotoURL && acceptedByPhotoURL.trim() !== "") {
+    rootPayload.photoURL = acceptedByPhotoURL;
+    rootPayload.avatarUrl = acceptedByPhotoURL;
+  }
+
+
+  if (acceptedByUid) {
+    rootPayload.userId = acceptedByUid;
+    rootPayload.uid = acceptedByUid;
+  }
+
+  if (acceptedByEmail) {
+    rootPayload.acceptedByEmail = acceptedByEmail;
+  }
+
+  await setDoc(personRef, rootPayload, { merge: true });
+
+  // Step 2 — flip the nested tasks.{taskId} entry to active.
+  // We do this as a merge setDoc (not updateDoc) because updateDoc fails the
+  // entire write if any precondition is off, which would silently leave the
+  // root active but the nested entry stale. setDoc({merge:true}) is safe.
+  if (taskId) {
+    await setDoc(
+      personRef,
+      {
+        tasks: {
+          [taskId]: {
+            taskId,
+            shareId: shareId || "",
+            status: "active",
+            accepted: true,
+            acceptedAt: serverTimestamp(),
+            acceptedByUid: acceptedByUid || "",
+            acceptedByEmail: acceptedByEmail || "",
+            acceptedByName: acceptedByName || "",
+            acceptedByPhotoURL: acceptedByPhotoURL || "",
+          },
+        },
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }
 }
+
+
+

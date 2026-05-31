@@ -11,7 +11,10 @@ import {
   signOut as firebaseSignOut,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
 } from "firebase/auth";
+
 import {
   collection,
   doc,
@@ -21,9 +24,11 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { auth, db } from "../lib/firebase/config";
+import { deriveWorkspaceDisplayId } from "../lib/firebase/users";
 
 interface AuthContextType {
   user: User | null;
@@ -467,12 +472,14 @@ async function ensureWorkspaceAndMembership(
    */
   if (isPersonalWorkspace) {
     try {
-      await setDoc(
+            await setDoc(
         wsRef,
         {
           id: workspaceId,
           workspaceId,
+          displayId: deriveWorkspaceDisplayId(uid),
           name: `${displayName}'s Workspace`,
+
 
           ownerId: uid,
           ownerEmail: email,
@@ -686,12 +693,14 @@ async function ensurePersonalWorkspace(firebaseUser: User): Promise<string> {
   );
   const userRef = doc(db, "users", firebaseUser.uid);
 
-  await setDoc(
+    await setDoc(
     wsRef,
     {
       id: personalWorkspaceId,
       workspaceId: personalWorkspaceId,
+      displayId: deriveWorkspaceDisplayId(firebaseUser.uid),
       name: `${profilePayload.displayName}'s Workspace`,
+
 
       ownerId: firebaseUser.uid,
       ownerEmail: profilePayload.email,
@@ -756,18 +765,20 @@ async function ensurePersonalWorkspace(firebaseUser: User): Promise<string> {
     { merge: true }
   );
 
-  await setDoc(
+    await setDoc(
     userRef,
     {
       ...profilePayload,
       plan: "free",
       workspaceId: personalWorkspaceId,
       personalWorkspaceId,
+      workspaceDisplayId: deriveWorkspaceDisplayId(firebaseUser.uid),
       updatedAt: serverTimestamp(),
       lastActive: serverTimestamp(),
     },
     { merge: true }
   );
+
 
   console.log("[Auth] ✅ Ensured personal workspace:", personalWorkspaceId);
 
@@ -796,7 +807,7 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
         existingWid
       );
 
-      if (hasValidWorkspaceAccess) {
+            if (hasValidWorkspaceAccess) {
         await setDoc(
           userRef,
           {
@@ -804,6 +815,9 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
             plan: snap.data().plan ?? "free",
             workspaceId: existingWid,
             personalWorkspaceId: personalWid ?? existingWid,
+            workspaceDisplayId:
+              (snap.data().workspaceDisplayId as string | undefined) ??
+              deriveWorkspaceDisplayId(firebaseUser.uid),
             updatedAt: serverTimestamp(),
             lastActive: serverTimestamp(),
           },
@@ -916,10 +930,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setWorkspaceIdState(id);
   };
 
-  useEffect(() => {
+    useEffect(() => {
     let hasResolvedOnce = false;
 
+    // If the user just came back from a signInWithRedirect() round-trip,
+    // complete it here. This is a no-op when there's no pending redirect,
+    // so it's safe to call on every app load.
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          console.log(
+            "[Auth] ✅ Completed redirect sign-in for:",
+            result.user.uid
+          );
+          // onAuthStateChanged below will fire and finish the flow,
+          // including restoring any pendingTaskInviteUrl / pendingInviteCode.
+        }
+      })
+      .catch((redirectErr) => {
+        const code = String(redirectErr?.code || "").toLowerCase();
+        // These are normal (no pending redirect) — don't spam the console.
+        if (
+          code !== "auth/no-auth-event" &&
+          code !== "auth/null-user"
+        ) {
+          console.warn("[Auth] getRedirectResult error:", redirectErr);
+        }
+      });
+
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+
       try {
         if (firebaseUser) {
           // 1) Immediately commit the user so the app renders without waiting
@@ -941,8 +981,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 ? freshUserSnap.data().personalWorkspaceId
                 : `personal_${firebaseUser.uid}`;
 
-            setWorkspaceIdState(wid || null);
-            setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
+                        // GLOBAL SELF-HEAL: a short display code (WF-XXXX) must never be the real
+// workspaceId. Old accounts have this stored from a previous build. If we
+// detect it, fall back to the personal workspace id AND write the corrected
+// value back to Firestore so the bad data is fixed permanently.
+// Use the user's real stored workspaceId as-is. Legacy accounts may have a
+// "WF-XXX" workspace id that IS a real workspace document — never rewrite it.
+setWorkspaceIdState(wid || null);
+setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
+
+
 
             console.log(
               "[Auth] ✅ Signed in:",
@@ -953,9 +1001,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               savedPersonalWorkspaceId
             );
 
+            // ============================================================
+            // PENDING TASK INVITE RESTORE
+            //
+            // If the user just signed up via a task invite link, we saved
+            // the original URL to localStorage as "pendingTaskInviteUrl"
+            // before kicking off Google OAuth. Now that sign-in is complete,
+            // redirect them back to /accept-task-invite?... so the
+            // AcceptTaskInvitePage can auto-fire the accept flow.
+            //
+            // Do NOT clear pendingTaskInviteUrl here — AcceptTaskInvitePage
+            // reads it to detect "this user just signed up via an invite,
+            // auto-accept now" and clears it itself after auto-accept fires.
+            // ============================================================
+            try {
+              const pendingTaskInvite = localStorage.getItem(
+                "pendingTaskInviteUrl"
+              );
+
+              if (
+                pendingTaskInvite &&
+                pendingTaskInvite.startsWith("/accept-task-invite") &&
+                !window.location.pathname.startsWith("/accept-task-invite")
+              ) {
+                console.log(
+                  "[Auth] 🔁 Restoring pending task invite after sign-in:",
+                  pendingTaskInvite
+                );
+
+                hasResolvedOnce = true;
+                setLoading(false);
+
+                // Hard navigation so the AcceptTaskInvitePage mounts fresh
+                // with the correct URL params.
+                window.location.replace(pendingTaskInvite);
+                return;
+              }
+            } catch (restoreErr) {
+              console.warn(
+                "[Auth] ⚠️ Failed to restore pending task invite:",
+                restoreErr
+              );
+            }
+
             hasResolvedOnce = true;
             setLoading(false);
           } else {
+
             // Subsequent revalidations (token refresh, tab focus, etc.):
             // refresh profile in the background WITHOUT flipping loading.
             // The app stays mounted — no white spinner flash.
@@ -973,7 +1065,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     : `personal_${firebaseUser.uid}`;
 
                 if (wid) setWorkspaceIdState(wid);
-                setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
+setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
+
               } catch (bgErr) {
                 console.warn(
                   "[Auth] background profile refresh failed:",
@@ -1018,8 +1111,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       prompt: "select_account",
     });
 
-    await signInWithPopup(auth, provider);
+    // Try popup first (better UX — keeps the current tab state intact).
+    // If the popup is blocked (common in incognito, on freshly-navigated
+    // pages, or when the browser hasn't seen enough user interaction),
+    // fall back automatically to a full-page redirect.
+    //
+    // This is how Gmail / Notion / Linear handle Google sign-in: the user
+    // never sees a "popup blocked" error — they just sign in.
+    try {
+      await signInWithPopup(auth, provider);
+      return;
+    } catch (popupErr: any) {
+      const code = String(popupErr?.code || "").toLowerCase();
+
+      const shouldFallbackToRedirect =
+        code === "auth/popup-blocked" ||
+        code === "auth/popup-closed-by-user" ||
+        code === "auth/cancelled-popup-request" ||
+        code === "auth/operation-not-supported-in-this-environment" ||
+        code === "auth/web-storage-unsupported";
+
+      if (!shouldFallbackToRedirect) {
+        // Real error (network, invalid config, etc.) — surface it.
+        console.error("[Auth] signInWithPopup failed:", popupErr);
+        throw popupErr;
+      }
+
+      console.warn(
+        "[Auth] Popup sign-in unavailable, falling back to redirect:",
+        code
+      );
+
+      // Persist any pending invite URL so the user lands back on it
+      // after the redirect completes.
+      const pendingTaskInvite = localStorage.getItem("pendingTaskInviteUrl");
+      const pendingWorkspaceInvite = localStorage.getItem("pendingInviteCode");
+
+      if (pendingTaskInvite) {
+        localStorage.setItem("pendingTaskInviteUrl", pendingTaskInvite);
+      }
+      if (pendingWorkspaceInvite) {
+        localStorage.setItem("pendingInviteCode", pendingWorkspaceInvite);
+      }
+
+      // This navigates the current tab to Google's sign-in page.
+      // On return, getRedirectResult() in the AuthProvider effect
+      // (added below) completes the sign-in and onAuthStateChanged fires.
+      await signInWithRedirect(auth, provider);
+    }
   }
+
 
   async function logout(): Promise<void> {
     await firebaseSignOut(auth);

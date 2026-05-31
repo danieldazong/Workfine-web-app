@@ -8,6 +8,7 @@ src\components\CreateProjectModal.tsx
 src\components\InviteMemberModal.tsx
 src\components\Navbar.tsx
 src\components\PageShell.tsx
+src\components\PendingTaskInviteGate.tsx
 src\components\Sidebar.tsx
 src\components\TaskDetailModal.tsx
 src\components\TaskDetailPanel.tsx
@@ -44,6 +45,7 @@ src\pages\InsightsPage.tsx
 src\pages\JoinWorkspacePage.tsx
 src\pages\LoginPage.tsx
 src\pages\MyTasksPage.tsx
+src\pages\MyTasksPage.tsx.backup
 src\pages\ProjectPage.tsx
 src\pages\ReportsPage.tsx
 src\pages\SettingsPage.tsx

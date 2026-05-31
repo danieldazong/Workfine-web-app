@@ -68,12 +68,18 @@ export default function LoginPage() {
 
   // ─── Sign-in ────────────────────────────────────────────────────────────────
 
-  function redirectAfterAuth() {
+function redirectAfterAuth() {
   const pendingTaskInviteUrl = localStorage.getItem('pendingTaskInviteUrl');
 
-  if (pendingTaskInviteUrl) {
-    localStorage.removeItem('pendingTaskInviteUrl');
-    navigate(pendingTaskInviteUrl, { replace: true });
+  if (
+    pendingTaskInviteUrl &&
+    pendingTaskInviteUrl.startsWith('/accept-task-invite')
+  ) {
+    // Hard navigation so AcceptTaskInvitePage mounts fresh with the URL params.
+    // (Do NOT remove the key here — AcceptTaskInvitePage clears it after it
+    // auto-accepts. The PendingTaskInviteGate is the universal fallback if this
+    // fast-path is interrupted by the Google popup/redirect round-trip.)
+    window.location.replace(pendingTaskInviteUrl);
     return;
   }
 
@@ -87,6 +93,7 @@ export default function LoginPage() {
 
   navigate('/', { replace: true });
 }
+
 
 const handleSignIn = async () => {
 

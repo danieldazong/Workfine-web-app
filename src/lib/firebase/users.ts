@@ -5,6 +5,28 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "./config";
+/**
+ * Deterministically derives a short, stable, unique workspace display code
+ * from a Firebase uid, e.g. "WF-354821".
+ *
+ * GLOBAL + PERMANENT:
+ *  - Same uid always produces the same code (never changes across logins).
+ *  - Different uids almost never collide.
+ *  - The Firestore document id stays personal_<uid>, so all existing
+ *    permission rules keep working. This is purely a display id.
+ */
+export function deriveWorkspaceDisplayId(uid: string): string {
+  const clean = String(uid || "").trim();
+  if (!clean) return "WF-000000";
+
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) {
+    hash = (clean.charCodeAt(i) + ((hash << 5) - hash)) | 0;
+  }
+
+  const code = Math.abs(hash) % 1000000;
+  return `WF-${String(code).padStart(6, "0")}`;
+}
 
 export interface UserProfile {
   uid: string;

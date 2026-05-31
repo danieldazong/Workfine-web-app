@@ -33,6 +33,59 @@ export interface Project {
 
   [key: string]: any;
 }
+export type WorkspacePersonType = "guest" | "member";
+export type WorkspacePersonStatus = "active" | "inactive" | "pending";
+export type WorkspacePersonInvitedVia = "task" | "project" | "workspace";
+
+export interface WorkspacePersonProjectAccess {
+  projectId?: string;
+  projectName?: string;
+  role?: "viewer" | "commenter" | "editor" | string;
+  status?: "active" | "removed" | string;
+  grantedAt?: any;
+  grantedBy?: string;
+}
+
+export interface WorkspacePersonTaskAccess {
+  taskId: string;
+  taskTitle?: string;
+  taskCode?: string;
+  projectId?: string;
+  projectName?: string;
+  shareId?: string;
+  status?: "active" | "revoked" | string;
+  grantedAt?: any;
+  grantedBy?: string;
+}
+
+export interface WorkspacePerson {
+  id?: string;
+  userId?: string;
+  uid?: string;
+  email?: string;
+  emailLower?: string;
+  displayName?: string;
+  photoURL?: string;
+  avatarColor?: string;
+
+  type?: WorkspacePersonType;
+  status?: WorkspacePersonStatus;
+  invitedVia?: WorkspacePersonInvitedVia;
+
+  workspaceId?: string;
+  invitedBy?: string;
+  invitedByName?: string;
+  invitedByEmail?: string;
+
+  lastActive?: any;
+  createdAt?: any;
+  updatedAt?: any;
+
+  projects?: Record<string, WorkspacePersonProjectAccess>;
+  tasks?: Record<string, WorkspacePersonTaskAccess>;
+
+  [key: string]: any;
+}
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 
 export type TaskStatus =
@@ -96,11 +149,19 @@ export interface AppNotification {
   sourceTaskId?: string;
   commentId?: string;
 
+  /**
+   * Required by Firestore rules for creating notifications:
+   * users/{recipientUid}/notifications/{notificationId}
+   */
+  senderUid?: string;
+  recipientUid?: string;
+
   title: string;
   message?: string;
 
   taskTitle?: string;
   projectName?: string;
+  commentPreview?: string;
 
   actorId: string;
   actorName: string;
@@ -114,3 +175,4 @@ export interface AppNotification {
 
   [key: string]: any;
 }
+

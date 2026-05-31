@@ -16,6 +16,8 @@ import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
 import { useNotifications } from "../hooks/useNotifications";
+import { resolveWorkspaceDisplayId } from "../lib/utils";
+
 
 
 
@@ -222,10 +224,12 @@ function getPageMeta(pathname: string, projects: any[]) {
 }
 
 export default function Navbar({ title }: NavbarProps) {
-  const { user, workspaceId } = useAuth();
+    const { user, workspaceId } = useAuth();
     const appData = useAppData() as any;
+  const workspaceData = appData?.workspaceData ?? null;
   const tasks = Array.isArray(appData?.tasks) ? appData.tasks : [];
   const projects = Array.isArray(appData?.projects) ? appData.projects : [];
+  const isGuestView = Boolean(appData?.isGuestView);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -369,26 +373,29 @@ export default function Navbar({ title }: NavbarProps) {
   };
 
 
-  return (
-    <header className="h-16 flex items-center justify-between px-8 bg-white border-b border-slate-200 sticky top-0 z-40">
-      <div className="flex items-center gap-6">
-        <div>
-          <h1 className="text-xl font-semibold text-slate-800">
+    return (
+    <header className="h-16 flex-shrink-0 flex items-center justify-between px-8 bg-white border-b border-slate-200 sticky top-0 z-40">
+      <div className="flex items-center gap-6 min-w-0">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold text-slate-800 leading-tight truncate">
             {navbarTitle}
           </h1>
 
-          <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span className="font-mono">{workspaceId || "WF-000"}</span>
+          <div className="flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap overflow-hidden">
+                        <span className="font-mono truncate max-w-[160px]">
+              {resolveWorkspaceDisplayId(workspaceId, workspaceData, user?.uid)}
+            </span>
 
             {pageMeta.breadcrumbs.map((part, i) => (
               <React.Fragment key={`${part}-${i}`}>
-                <span className="text-slate-300">/</span>
-                <span>{part}</span>
+                <span className="text-slate-300 flex-shrink-0">/</span>
+                <span className="truncate">{part}</span>
               </React.Fragment>
             ))}
           </div>
         </div>
       </div>
+
 
       <div className="flex items-center gap-6">
         <div ref={containerRef} className="hidden md:flex relative group w-64">

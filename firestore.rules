@@ -2,7 +2,6 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function isSignedIn() {
       return request.auth != null;
     }
@@ -17,20 +16,16 @@ service cloud.firestore {
         : "";
     }
 
-    function signedInEmailLower() {
-      return isSignedIn() && request.auth.token.email_lowercase is string
-        ? request.auth.token.email_lowercase
-        : signedInEmail();
+        function signedInEmailLower() {
+      return signedInEmail().lower();
     }
 
     function signedInEmailMatches(emailValue) {
       return isSignedIn()
         && emailValue is string
-        && (
-          emailValue == signedInEmail()
-          || emailValue == signedInEmailLower()
-        );
+        && emailValue.lower() == signedInEmailLower();
     }
+
 
     function changedKeys() {
       return request.resource.data.diff(resource.data).affectedKeys();
@@ -357,6 +352,47 @@ service cloud.firestore {
       allow create, update, delete: if isSignedIn();
     }
 
+        match /{path=**}/shares/{shareId} {
+      allow list, get: if isSignedIn()
+        && (
+          (resource.data.sharedByUid is string && resource.data.sharedByUid == request.auth.uid)
+          || (resource.data.invitedBy is string && resource.data.invitedBy == request.auth.uid)
+          || (resource.data.acceptedByUid is string && resource.data.acceptedByUid == request.auth.uid)
+          || (resource.data.acceptedBy is string && resource.data.acceptedBy == request.auth.uid)
+
+          || (
+            resource.data.sharedWithEmail is string
+            && signedInEmailMatches(resource.data.sharedWithEmail)
+          )
+          || (
+            resource.data.sharedWithEmailLower is string
+            && signedInEmailMatches(resource.data.sharedWithEmailLower)
+          )
+          || (
+            resource.data.invitedEmail is string
+            && signedInEmailMatches(resource.data.invitedEmail)
+          )
+          || (
+            resource.data.invitedEmailLower is string
+            && signedInEmailMatches(resource.data.invitedEmailLower)
+          )
+          || (
+            resource.data.acceptedByEmail is string
+            && signedInEmailMatches(resource.data.acceptedByEmail)
+          )
+          || (
+            resource.data.acceptedByEmailLower is string
+            && signedInEmailMatches(resource.data.acceptedByEmailLower)
+          )
+
+          || (
+            resource.data.workspaceId is string
+            && isActiveWorkspaceMember(resource.data.workspaceId, request.auth.uid)
+          )
+        );
+    }
+
+
     match /projects/{projectId} {
       allow get: if rootProjectVisibleToMe(resource.data, projectId);
 
@@ -645,17 +681,59 @@ service cloud.firestore {
       }
 
       match /people/{personId} {
+        function isGuestPersonId() {
+          return personId.matches("^guest_.*");
+        }
+
+        function incomingDocBelongsToSignedInUser() {
+          return isSignedIn()
+            && request.resource.data.emailLower is string
+            && signedInEmailMatches(request.resource.data.emailLower);
+        }
+
+        function existingDocBelongsToSignedInUser() {
+          return isSignedIn()
+            && resource.data.emailLower is string
+            && signedInEmailMatches(resource.data.emailLower);
+        }
+
         allow read: if isSignedIn()
           && (
             personId == request.auth.uid
             || isActiveWorkspaceMember(workspaceId, request.auth.uid)
             || isWorkspaceOwnerOrAdmin(workspaceId)
+            || existingDocBelongsToSignedInUser()
           );
 
-        allow write: if isSignedIn()
+        allow create: if isSignedIn()
           && (
             personId == request.auth.uid
             || isWorkspaceOwnerOrAdmin(workspaceId)
+            || (
+              isGuestPersonId()
+              && incomingDocBelongsToSignedInUser()
+            )
+          );
+
+        allow update: if isSignedIn()
+          && (
+            personId == request.auth.uid
+            || isWorkspaceOwnerOrAdmin(workspaceId)
+            || (
+              isGuestPersonId()
+              && existingDocBelongsToSignedInUser()
+              && incomingDocBelongsToSignedInUser()
+            )
+          );
+
+        allow delete: if isSignedIn()
+          && (
+            personId == request.auth.uid
+            || isWorkspaceOwnerOrAdmin(workspaceId)
+            || (
+              isGuestPersonId()
+              && existingDocBelongsToSignedInUser()
+            )
           );
       }
 
@@ -756,16 +834,32 @@ service cloud.firestore {
           );
         }
 
-        function shareBelongsToSignedInEmail(shareData) {
+        function currentTaskSharedWithSignedInEmail() {
+          return taskSharedWithSignedInEmail(
+            get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)).data
+          );
+        }
+
+        function canCommentOnCurrentTask() {
+          return canCommentInWorkspace(workspaceId)
+            || currentTaskSharedWithSignedInEmail();
+        }
+
+                function shareBelongsToSignedInEmail(shareData) {
           return isSignedIn()
-            && request.auth.token.email is string
+            && shareData != null
             && (
-              shareData.sharedWithEmail == request.auth.token.email
-              || shareData.invitedEmail == request.auth.token.email
-              || shareData.invitedEmailLower == request.auth.token.email
-              || shareData.invitedEmailLower == signedInEmailLower()
+              (shareData.sharedWithEmail is string && signedInEmailMatches(shareData.sharedWithEmail))
+              || (shareData.sharedWithEmailLower is string && signedInEmailMatches(shareData.sharedWithEmailLower))
+              || (shareData.invitedEmail is string && signedInEmailMatches(shareData.invitedEmail))
+              || (shareData.invitedEmailLower is string && signedInEmailMatches(shareData.invitedEmailLower))
+              || (shareData.acceptedByEmail is string && signedInEmailMatches(shareData.acceptedByEmail))
+              || (shareData.acceptedByEmailLower is string && signedInEmailMatches(shareData.acceptedByEmailLower))
+              || (shareData.acceptedByUid is string && shareData.acceptedByUid == request.auth.uid)
+              || (shareData.acceptedBy is string && shareData.acceptedBy == request.auth.uid)
             );
         }
+
 
         function shareOwnerIsSignedInUser(shareData) {
           return isSignedIn()
@@ -773,6 +867,20 @@ service cloud.firestore {
               shareData.sharedByUid == request.auth.uid
               || shareData.invitedBy == request.auth.uid
             );
+        }
+
+        function shareSelfRemovalAllowed() {
+          return isSignedIn()
+            && shareBelongsToSignedInEmail(resource.data)
+            && request.resource.data.status == "removed"
+            && onlyChanged([
+              "status",
+              "removedByUid",
+              "removedByEmail",
+              "removedByEmailLower",
+              "removedAt",
+              "updatedAt"
+            ]);
         }
 
         allow get: if canReadTaskData(resource.data);
@@ -812,18 +920,28 @@ service cloud.firestore {
           allow update: if isSignedIn()
             && (
               canEditWorkspaceContent(workspaceId)
+              || shareOwnerIsSignedInUser(resource.data)
+              || isWorkspaceOwnerByDoc(workspaceId, request.auth.uid)
+              || shareSelfRemovalAllowed()
               || (
                 shareBelongsToSignedInEmail(resource.data)
-                && resource.data.status == "pending"
+                && (resource.data.status == "pending" || resource.data.status == "active")
                 && request.resource.data.status == "active"
                 && request.resource.data.acceptedByUid == request.auth.uid
-                && request.resource.data.acceptedByEmail == request.auth.token.email
+                && (
+                  request.resource.data.acceptedByEmail == request.auth.token.email
+                  || request.resource.data.acceptedByEmailLower == signedInEmailLower()
+                )
                 && onlyChanged([
                   "status",
                   "acceptedBy",
                   "acceptedByUid",
                   "acceptedByEmail",
+                  "acceptedByEmailLower",
+                  "acceptedByName",
+                  "acceptedByPhotoURL",
                   "acceptedAt",
+                  "invitedEmailLower",
                   "updatedAt"
                 ])
               )
@@ -833,6 +951,8 @@ service cloud.firestore {
             && (
               canEditWorkspaceContent(workspaceId)
               || shareOwnerIsSignedInUser(resource.data)
+              || isWorkspaceOwnerByDoc(workspaceId, request.auth.uid)
+              || shareBelongsToSignedInEmail(resource.data)
             );
         }
 
@@ -840,20 +960,18 @@ service cloud.firestore {
           allow read: if canReadCurrentTask();
 
           allow create: if canReadCurrentTask()
-            && canCommentInWorkspace(workspaceId)
+            && canCommentOnCurrentTask()
             && request.resource.data.authorId == request.auth.uid
             && request.resource.data.workspaceId == workspaceId
             && request.resource.data.taskId == taskId;
 
           allow update: if canReadCurrentTask()
-            && canCommentInWorkspace(workspaceId)
             && (
               resource.data.authorId == request.auth.uid
               || canEditWorkspaceContent(workspaceId)
             );
 
           allow delete: if canReadCurrentTask()
-            && canCommentInWorkspace(workspaceId)
             && (
               resource.data.authorId == request.auth.uid
               || canEditWorkspaceContent(workspaceId)
@@ -864,7 +982,6 @@ service cloud.firestore {
           allow read: if canReadCurrentTask();
 
           allow create, update, delete: if canReadCurrentTask()
-            && canCommentInWorkspace(workspaceId)
             && request.auth.uid == likeId;
         }
 

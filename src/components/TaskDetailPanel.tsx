@@ -10,21 +10,27 @@
   import { useAppData } from "../context/AppDataContext";
   import { useAuth } from "../context/AuthContext";
   import { db } from "../lib/firebase/config";
-  import {
+       import {
     arrayRemove,
     arrayUnion,
     collection,
     getDocs,
     addDoc,
     deleteDoc,
+    deleteField,
     doc,
+    getDoc,
     onSnapshot,
     orderBy,
     query as firestoreQuery,
     serverTimestamp,
     updateDoc,
     setDoc,
+    writeBatch,
   } from "firebase/firestore";
+
+
+
 
   import {
     X,
@@ -173,7 +179,7 @@
     projectName?: string;
 
     message?: string;
-    status?: "pending" | "active" | "revoked" | "failed" | "accepted" | string;
+        status?: "pending" | "active" | "revoked" | "removed" | "failed" | "accepted" | string;
     accessType?: string;
     inviteLink?: string;
 
@@ -4817,16 +4823,20 @@ await notifyCommentRecipients({
 
       const unsub = onSnapshot(
         sharesQuery,
-        (snap) => {
+                (snap) => {
           const shares: TaskShare[] = snap.docs
             .map((d) => ({
               id: d.id,
               ...(d.data() as Omit<TaskShare, "id">),
             }))
-            .filter((share) => share.status !== "revoked");
+            .filter(
+              (share) =>
+                share.status !== "revoked" && share.status !== "removed",
+            );
 
           setTaskShares(shares);
         },
+
         (err) => {
           console.error("[TaskDetailPanel] shares listener:", err.message);
         },
@@ -5058,7 +5068,7 @@ await notifyCommentRecipients({
 
       if (!confirmRemove) return;
 
-      try {
+            try {
         await updateDoc(
           doc(
             db,
@@ -5086,6 +5096,55 @@ await notifyCommentRecipients({
           { merge: true },
         );
 
+                // FAANG-grade: remove the guest's task entry from the workspace people doc
+        // so the Team page External Guests card disappears in real time.
+        // IMPORTANT: personId must match upsertTaskGuestPerson()'s scheme: `guest_<sanitized>`
+        try {
+          const emailLower = String(shareEmail).toLowerCase().trim();
+          const personId = `guest_${emailLower.replace(/[^a-z0-9]/g, "_")}`;
+          const personRef = doc(
+            db,
+            "workspaces",
+            taskWorkspaceId,
+            "people",
+            personId,
+          );
+
+          const personSnap = await getDoc(personRef);
+
+          if (personSnap.exists()) {
+            const personData = personSnap.data() as any;
+
+            const remainingTasks = { ...(personData.tasks || {}) };
+            delete remainingTasks[sourceTaskId];
+
+            const remainingProjects = personData.projects || {};
+
+            const totalAccess =
+              Object.keys(remainingTasks).length +
+              Object.keys(remainingProjects).length;
+
+            if (totalAccess === 0) {
+              // No remaining access — hard-delete the guest doc so the
+              // External Guests card disappears immediately on the Team page.
+              await deleteDoc(personRef);
+            } else {
+              // Still has other tasks/projects — just remove this task entry.
+              await updateDoc(personRef, {
+                [`tasks.${sourceTaskId}`]: deleteField(),
+                status: "active",
+                updatedAt: serverTimestamp(),
+              });
+            }
+          }
+        } catch (personErr) {
+          console.warn(
+            "[TaskDetailPanel] revoke: failed to update workspace person doc:",
+            personErr,
+          );
+        }
+
+
         setToast("Access removed");
         window.setTimeout(() => setToast(null), 1800);
       } catch (error) {
@@ -5093,6 +5152,7 @@ await notifyCommentRecipients({
         setShareError("Could not remove access. Please try again.");
       }
     }
+
     async function handleCopyShareLink() {
       try {
         await navigator.clipboard.writeText(taskLink);
@@ -5205,7 +5265,7 @@ await notifyCommentRecipients({
           shareRef.id,
         )}`;
 
-        await setDoc(shareRef, {
+               const sharePayload = {
           taskId: sourceTaskId,
           taskTitle,
           taskCode: taskView.taskCode || task.taskCode || "",
@@ -5224,12 +5284,13 @@ await notifyCommentRecipients({
           sharedByName: senderName,
           sharedByEmail: safeCurrentUserEmail,
           sharedWithEmail: recipientEmail,
+          sharedWithEmailLower: recipientEmail,
 
           invitedBy: safeCurrentUserUid,
           invitedByName: senderName,
           invitedByEmail: safeCurrentUserEmail,
           invitedEmail: recipientEmail,
-          invitedEmailLower: recipientEmail.toLowerCase(),
+          invitedEmailLower: recipientEmail,
 
           message: shareMessage.trim(),
           status: "pending",
@@ -5237,16 +5298,65 @@ await notifyCommentRecipients({
 
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+        };
+
+        const sourceTaskRef = doc(
+          db,
+          "workspaces",
+          taskWorkspaceId,
+          "tasks",
+          sourceTaskId,
+        );
+
+        const sourceTaskRepairPayload = removeUndefinedFields({
+          id: sourceTaskId,
+          workspaceId: taskWorkspaceId,
+
+          title: taskTitle,
+          description: taskView.description || task.description || "",
+
+          status,
+          priority,
+          dueDate: dueDate === "No due date" ? "" : dueDate,
+
+          projectId: taskView.projectId || task.projectId || "",
+          projectName,
+
+          taskCode: taskView.taskCode || task.taskCode || "",
+
+          ownerId:
+            (taskView as any).ownerId ||
+            (task as any).ownerId ||
+            safeCurrentUserUid,
+
+          createdBy:
+            (taskView as any).createdBy ||
+            (task as any).createdBy ||
+            safeCurrentUserUid,
+
+          createdByEmail:
+            (taskView as any).createdByEmail ||
+            (task as any).createdByEmail ||
+            safeCurrentUserEmail,
+
+          sharedWithEmails: arrayUnion(recipientEmail),
+          accessUpdatedAt: serverTimestamp(),
+
+          createdAt: taskView.createdAt || task.createdAt || serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
 
-        await setDoc(
-          doc(db, "workspaces", taskWorkspaceId, "tasks", sourceTaskId),
-          {
-            sharedWithEmails: arrayUnion(recipientEmail),
-            accessUpdatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
+        const batch = writeBatch(db);
+
+        // Repair/create parent task doc first.
+        // This prevents ghost task paths where shares exist under a missing task doc.
+        batch.set(sourceTaskRef, sourceTaskRepairPayload, { merge: true });
+
+        // Create the share invite in the same atomic commit.
+        batch.set(shareRef, sharePayload);
+
+        await batch.commit();
+
                 // Register this email as an External Guest on the workspace people list.
         // This makes it appear under "External Guests" on the Team Page.
         try {

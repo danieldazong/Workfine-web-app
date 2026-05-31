@@ -25,8 +25,9 @@ import { deleteProject } from "../lib/firebase/projects";
 import CreateProjectModal from "./CreateProjectModal";
 
 export default function Sidebar() {
-  const { user, signOutUser, workspaceId, personalWorkspaceId } = useAuth();
-  const { projects, members, workspaceData } = useAppData();
+    const { user, signOutUser, workspaceId, personalWorkspaceId } = useAuth();
+  const { projects, members, workspaceData, isGuestView } = useAppData();
+
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -164,15 +165,22 @@ export default function Sidebar() {
     await deleteProject(projectWorkspaceId, project.id);
   };
 
-  const navItems = [
-    { name: "Dashboard", icon: LayoutDashboard, path: "/" },
-    { name: "Insights", icon: BarChart2, path: "/insights" },
-    { name: "Calendar", icon: Calendar, path: "/calendar" },
-    { name: "My Tasks", icon: CheckSquare, path: "/my-tasks" },
-    { name: "Team", icon: Users, path: "/team" },
-    { name: "Workspace", icon: Building2, path: "/workspace" },
-    { name: "Settings", icon: Settings, path: "/settings" },
-  ];
+    const navItems = isGuestView
+    ? [
+        // Scoped guest navigation: only the tasks shared with them.
+        { name: "My Tasks", icon: CheckSquare, path: "/my-tasks" },
+        { name: "Settings", icon: Settings, path: "/settings" },
+      ]
+    : [
+        { name: "Dashboard", icon: LayoutDashboard, path: "/" },
+        { name: "Insights", icon: BarChart2, path: "/insights" },
+        { name: "Calendar", icon: Calendar, path: "/calendar" },
+        { name: "My Tasks", icon: CheckSquare, path: "/my-tasks" },
+        { name: "Team", icon: Users, path: "/team" },
+        { name: "Workspace", icon: Building2, path: "/workspace" },
+        { name: "Settings", icon: Settings, path: "/settings" },
+      ];
+
 
   return (
     <>
@@ -192,6 +200,7 @@ export default function Sidebar() {
             canDeleteSharedProjects={canDeleteSharedProjects}
             isProjectOwner={isProjectOwner}
             isPrivateProject={isPrivateProject}
+            isGuestView={isGuestView}
             onClose={() => {}}
           />
         </aside>
@@ -240,6 +249,8 @@ export default function Sidebar() {
               canDeleteSharedProjects={canDeleteSharedProjects}
               isProjectOwner={isProjectOwner}
               isPrivateProject={isPrivateProject}
+              isGuestView={isGuestView}
+
               onClose={() => setIsMobileMenuOpen(false)}
               showCloseButton
             />
@@ -271,7 +282,9 @@ interface SidebarContentProps {
   isPrivateProject: (project: any) => boolean;
   onClose: () => void;
   showCloseButton?: boolean;
+  isGuestView?: boolean;
 }
+
 
 
 function SidebarContent({
@@ -290,7 +303,9 @@ function SidebarContent({
   isPrivateProject,
   onClose,
   showCloseButton = false,
+  isGuestView = false,
 }: SidebarContentProps) {
+
   function renderProject(project: any) {
     const privateProject = isPrivateProject(project);
 
@@ -392,62 +407,65 @@ function SidebarContent({
           </NavLink>
         ))}
 
-        <div className="mt-6 px-3">
-          <div className="mb-2 flex items-center justify-between px-2">
-            <NavLink
-              to="/projects"
-              onClick={onClose}
-              className={({ isActive }) =>
-                cn(
-                  "text-[10px] font-semibold uppercase tracking-widest transition-colors hover:text-blue-300",
-                  isActive ? "text-blue-300" : "text-gray-500"
-                )
-              }
-            >
-              MY PROJECTS
-            </NavLink>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (!canCreateProjects) {
-                  alert("Account is still loading. Please refresh and try again.");
-                  return;
+               {!isGuestView && (
+          <div className="mt-6 px-3">
+            <div className="mb-2 flex items-center justify-between px-2">
+              <NavLink
+                to="/projects"
+                onClick={onClose}
+                className={({ isActive }) =>
+                  cn(
+                    "text-[10px] font-semibold uppercase tracking-widest transition-colors hover:text-blue-300",
+                    isActive ? "text-blue-300" : "text-gray-500"
+                  )
                 }
+              >
+                MY PROJECTS
+              </NavLink>
 
-                setShowCreateProject(true);
-                onClose();
-              }}
-              className="flex h-5 w-5 items-center justify-center rounded text-lg leading-none text-gray-400 transition-colors hover:bg-blue-600 hover:text-white"
-              title="New Project"
-            >
-              +
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!canCreateProjects) {
+                    alert("Account is still loading. Please refresh and try again.");
+                    return;
+                  }
+
+                  setShowCreateProject(true);
+                  onClose();
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded text-lg leading-none text-gray-400 transition-colors hover:bg-blue-600 hover:text-white"
+                title="New Project"
+              >
+                +
+              </button>
+            </div>
+
+            {privateProjects.length === 0 ? (
+              <p className="px-2 py-2 text-xs italic text-gray-500">
+                No private projects yet
+              </p>
+            ) : (
+              privateProjects.map((project) => renderProject(project))
+            )}
+
+            <div className="mb-2 mt-5 flex items-center gap-2 px-2">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
+                SHARE PROJECT
+              </span>
+              <span className="h-px flex-1 bg-slate-700/80" />
+            </div>
+
+            {sharedProjects.length === 0 ? (
+              <p className="px-2 py-2 text-xs italic text-gray-500">
+                No shared projects yet
+              </p>
+            ) : (
+              sharedProjects.map((project) => renderProject(project))
+            )}
           </div>
+        )}
 
-          {privateProjects.length === 0 ? (
-            <p className="px-2 py-2 text-xs italic text-gray-500">
-              No private projects yet
-            </p>
-          ) : (
-            privateProjects.map((project) => renderProject(project))
-          )}
-
-          <div className="mb-2 mt-5 flex items-center gap-2 px-2">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
-              SHARE PROJECT
-            </span>
-            <span className="h-px flex-1 bg-slate-700/80" />
-          </div>
-
-          {sharedProjects.length === 0 ? (
-            <p className="px-2 py-2 text-xs italic text-gray-500">
-              No shared projects yet
-            </p>
-          ) : (
-            sharedProjects.map((project) => renderProject(project))
-          )}
-        </div>
       </nav>
 
       <div className="flex-shrink-0 border-t border-slate-800 p-4">

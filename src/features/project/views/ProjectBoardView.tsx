@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Task, TaskStatus } from '../../../types';
+import { Task } from '../../../types';
+
+type ProjectTaskStatus = "To Do" | "In Progress" | "In Review" | "Done";
 import { cn, formatDate } from '../../../lib/utils';
 import { 
   Plus, 
@@ -21,7 +23,7 @@ interface ProjectBoardViewProps {
 }
 
 export default function ProjectBoardView({ tasks, onTaskClick }: ProjectBoardViewProps) {
-  const columns: TaskStatus[] = ['To Do', 'In Progress', 'In Review', 'Done'];
+    const columns: ProjectTaskStatus[] = ['To Do', 'In Progress', 'In Review', 'Done'];
 
   return (
     <div className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide">

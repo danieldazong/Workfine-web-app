@@ -230,11 +230,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
                     <div className="flex shrink-0 items-start justify-between border-b border-slate-200 px-5 py-4">
             <div>
-              <Dialog.Title className="text-xl font-semibold text-slate-900">
+                            <Dialog.Title className="text-lg font-semibold text-slate-900">
                 Create New Project
               </Dialog.Title>
 
-              <Dialog.Description className="mt-1 text-sm text-slate-500">
+              <Dialog.Description className="mt-0.5 text-xs text-slate-500">
                 Set up a project for your workspace.
               </Dialog.Description>
             </div>
@@ -251,18 +251,19 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-            <div className="flex-1 overflow-y-auto px-6 py-6">
+                        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               {error && (
-                <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {error}
                 </div>
               )}
 
-              <div className="space-y-6">
+                            <div className="space-y-4">
                 <div>
                   <label
                     htmlFor="modal-project-name"
-                    className="mb-2 block text-sm font-medium text-slate-700"
+                                        className="mb-1.5 block text-xs font-semibold text-slate-600"
+
                   >
                     Project name <span className="text-red-500">*</span>
                   </label>
@@ -278,7 +279,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     placeholder="Example: Website Redesign"
                     disabled={isSubmitting}
                     autoFocus
-                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                        className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   />
                 </div>
 
@@ -295,25 +296,25 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     value={description}
                     onChange={(event) => setDescription(event.target.value)}
                     placeholder="Briefly describe what this project is about..."
-                    rows={4}
+                                      rows={2}
                     disabled={isSubmitting}
                     className="w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-3 block text-sm font-medium text-slate-700">
+                                    <label className="mb-2 block text-xs font-semibold text-slate-600">
                     Theme color
                   </label>
 
-                  <div className="flex flex-wrap gap-3">
+                                    <div className="flex flex-wrap gap-2">
                     {PROJECT_COLORS.map((projectColor) => (
                       <button
                         key={projectColor}
                         type="button"
                         onClick={() => setColor(projectColor)}
                         disabled={isSubmitting}
-                        className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition ${
+                                                className={`flex h-8 w-8 items-center justify-center rounded-full border-2 transition ${
                           color === projectColor
                             ? "border-slate-900 ring-4 ring-slate-200"
                             : "border-white hover:scale-105"
@@ -334,7 +335,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     Project access
                   </label>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="grid gap-2.5 sm:grid-cols-2">
                     <button
                       type="button"
                       onClick={() => {
@@ -342,7 +343,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         setPinnedToWorkspace(true);
                       }}
                       disabled={isSubmitting}
-                      className={`rounded-2xl border p-4 text-left transition ${
+                                           className={`rounded-xl border p-3 text-left transition ${
                         visibility === "workspace"
                           ? "border-indigo-500 bg-indigo-50 ring-4 ring-indigo-100"
                           : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
@@ -351,7 +352,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       <p className="font-semibold text-slate-900">
                         Workspace project
                       </p>
-                      <p className="mt-1 text-sm text-slate-500">
+                                            <p className="mt-1 text-xs leading-snug text-slate-500">
                         Workspace members can access this project.
                       </p>
                     </button>
@@ -363,7 +364,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         setPinnedToWorkspace(false);
                       }}
                       disabled={isSubmitting}
-                      className={`rounded-2xl border p-4 text-left transition ${
+                                           className={`rounded-xl border p-3 text-left transition ${
                         visibility === "private"
                           ? "border-indigo-500 bg-indigo-50 ring-4 ring-indigo-100"
                           : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
@@ -372,7 +373,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       <p className="font-semibold text-slate-900">
                         Private project
                       </p>
-                      <p className="mt-1 text-sm text-slate-500">
+                                            <p className="mt-1 text-xs leading-snug text-slate-500">
                         Only you and added project members can access it.
                       </p>
                     </button>
@@ -380,7 +381,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 </div>
 
                 {visibility === "workspace" && (
-                  <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+                                    <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-3">
                     <input
                       type="checkbox"
                       checked={pinnedToWorkspace}
@@ -395,7 +396,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       <span className="block text-sm font-medium text-slate-900">
                         Show in workspace curated work
                       </span>
-                      <span className="mt-1 block text-sm text-slate-500">
+                                            <span className="mt-1 block text-xs leading-snug text-slate-500">
                         This makes the project visible in the workspace project
                         area for members.
                       </span>
@@ -403,7 +404,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   </label>
                 )}
 
-                <div className="grid gap-4 sm:grid-cols-3">
+                                <div className="grid gap-3 sm:grid-cols-3">
                   <div>
                     <label
                       htmlFor="modal-project-status"
@@ -419,7 +420,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         setStatus(event.target.value as ProjectStatus)
                       }
                       disabled={isSubmitting}
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                     >
                       <option value="active">Active</option>
                       <option value="planning">Planning</option>
@@ -465,21 +466,22 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       value={dueDate}
                       onChange={(event) => setDueDate(event.target.value)}
                       disabled={isSubmitting}
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
+                                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                     />
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-3 text-sm font-medium text-slate-700">
                     Preview
                   </p>
 
                   <div className="flex items-center gap-3">
-                    <div
-                      className="h-11 w-11 rounded-xl"
+                                       <div
+                      className="h-9 w-9 rounded-xl"
                       style={{ backgroundColor: color }}
                     />
+
 
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-slate-900">
@@ -495,7 +497,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-slate-200 px-6 py-5">
+             <div className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">   
               <button
                 type="button"
                 onClick={closeModal}
