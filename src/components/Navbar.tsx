@@ -222,6 +222,62 @@ function getPageMeta(pathname: string, projects: any[]) {
     breadcrumbs: [fallbackTitle],
   };
 }
+function getAvatarInitial(
+  displayName?: string | null,
+  email?: string | null
+): string {
+  const name = String(displayName || "").trim();
+  if (name) return name[0]!.toUpperCase();
+
+  const mail = String(email || "").trim();
+  if (mail) return mail[0]!.toUpperCase();
+
+  return "U";
+}
+
+interface NavbarAvatarProps {
+  photoURL?: string | null;
+  displayName?: string | null;
+  email?: string | null;
+}
+
+/**
+ * Global avatar for every account.
+ * - Shows the photo if present AND it loads successfully.
+ * - Falls back to the colored letter avatar when there is no photo
+ *   OR when the photo URL fails to load (broken/blocked/blank).
+ * This guarantees a new account always shows its initial instead of
+ * an empty circle.
+ */
+function NavbarAvatar({ photoURL, displayName, email }: NavbarAvatarProps) {
+  const cleanPhoto = String(photoURL || "").trim();
+  const [imgFailed, setImgFailed] = useState(false);
+
+  // Reset the failure flag whenever the photo URL changes (e.g. after the
+  // profile listener updates the user with a real photo).
+  useEffect(() => {
+    setImgFailed(false);
+  }, [cleanPhoto]);
+
+  const showImage = cleanPhoto !== "" && !imgFailed;
+  const initial = getAvatarInitial(displayName, email);
+
+  return (
+    <div className="w-8 h-8 rounded-full bg-violet-100 border border-violet-200 flex items-center justify-center flex-none overflow-hidden">
+      {showImage ? (
+        <img
+          src={cleanPhoto}
+          alt={displayName || email || "User"}
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        <span className="text-xs text-violet-600 font-bold">{initial}</span>
+      )}
+    </div>
+  );
+}
 
 export default function Navbar({ title }: NavbarProps) {
     const { user, workspaceId } = useAuth();
@@ -664,24 +720,14 @@ export default function Navbar({ title }: NavbarProps) {
           </button>
         </div>
 
-        {user && (
-          <div className="w-8 h-8 rounded-full bg-violet-100 border border-violet-200 flex items-center justify-center flex-none overflow-hidden">
-            {user.photoURL ? (
-              <img
-                src={user.photoURL}
-                alt={user.displayName || user.email || "User"}
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <span className="text-xs text-violet-600 font-bold">
-                {user.displayName?.[0]?.toUpperCase() ||
-                  user.email?.[0]?.toUpperCase() ||
-                  "U"}
-              </span>
-            )}
-          </div>
+                {user && (
+          <NavbarAvatar
+            photoURL={user.photoURL}
+            displayName={user.displayName}
+            email={user.email}
+          />
         )}
+
       </div>
     </header>
   );

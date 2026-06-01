@@ -1288,6 +1288,44 @@ function normalizeEmail(email?: string | null): string {
 
     return gradients[hashString(key) % gradients.length];
   }
+    function monogramGradient(seed: string): string {
+    const s = String(seed || "?").trim().toLowerCase();
+
+    let h1 = 0;
+    let h2 = 0;
+    let h3 = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      h1 = (c + ((h1 << 5) - h1)) | 0;
+      h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+      h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+    }
+
+    const hue1 = Math.abs(h1) % 360;
+    const hueGap = 25 + (Math.abs(h2) % 90);
+    const hue2 = (hue1 + hueGap) % 360;
+
+    const sat1 = 58 + (Math.abs(h2) % 28);
+    const sat2 = 58 + (Math.abs(h3) % 28);
+    const light1 = 48 + (Math.abs(h3) % 16);
+    const light2 = 38 + (Math.abs(h1) % 14);
+    const angle = Math.abs(h2 ^ h3) % 360;
+
+    return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+  }
+
+
+  function monogramInitials(name?: string | null, email?: string | null): string {
+    const label = String(name || email || "?").trim();
+    if (!label || label === "?") return "?";
+    const initials = label
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase();
+    return initials || label[0]?.toUpperCase() || "?";
+  }
 
   function ModernAvatar({
     email,
@@ -1301,57 +1339,28 @@ function normalizeEmail(email?: string | null): string {
     photoURL?: string | null;
     size?: number;
     className?: string;
-  }) {
-    const [imageFailed, setImageFailed] = useState(false);
-
-    const safePhotoURL = getFirstRealPhotoURL(photoURL);
-    const showPhoto = Boolean(safePhotoURL) && !imageFailed;
-    const showGoogleBadge = showPhoto && isGoogleEmail(email);
-
-    useEffect(() => {
-      setImageFailed(false);
-    }, [safePhotoURL]);
-
+    }) {
     return (
       <div
         className={`relative flex-shrink-0 ${className}`}
         style={{ width: size, height: size }}
         title={String(name || email || "User")}
       >
-        {showPhoto ? (
-          <img
-            src={safePhotoURL}
-            alt={String(name || email || "User")}
-            referrerPolicy="no-referrer"
-            loading="lazy"
-            decoding="async"
-            onError={() => setImageFailed(true)}
-            className="w-full h-full rounded-full object-cover ring-1 ring-slate-200 bg-slate-100"
-          />
-        ) : (
-          <div className="w-full h-full rounded-full bg-slate-100 text-slate-400 flex items-center justify-center ring-1 ring-slate-200 shadow-sm">
-            <UserIcon size={Math.max(14, Math.floor(size * 0.5))} />
-          </div>
-        )}
+                <div
+          className="w-full h-full rounded-full flex items-center justify-center text-white font-semibold ring-1 ring-black/5 shadow-sm select-none"
+          style={{
+            background: monogramGradient(String(email || name || "?")),
+            fontSize: Math.max(11, Math.floor(size * 0.4)),
+            letterSpacing: "0.02em",
+          }}
+        >
 
-        {showGoogleBadge && (
-          <span
-            className="absolute -right-0.5 -bottom-0.5 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center font-black"
-            style={{
-              width: Math.max(12, Math.floor(size * 0.42)),
-              height: Math.max(12, Math.floor(size * 0.42)),
-              fontSize: Math.max(8, Math.floor(size * 0.24)),
-              color: "#4285F4",
-              lineHeight: 1,
-            }}
-            title="Google account"
-          >
-            G
-          </span>
-        )}
+          {monogramInitials(name, email)}
+        </div>
       </div>
     );
   }
+
 
   function formatAttachmentSize(size?: number): string {
     if (typeof size !== "number") return "Unknown size";
@@ -7983,11 +7992,12 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                         const acceptedEmail = share.acceptedByEmail || "";
 
                         const shareProfile = getResolvedUserProfile({
-                          uid: share.acceptedByUid || share.acceptedBy || "",
-                          email: acceptedEmail || shareEmail,
-                          name: acceptedEmail || shareEmail || "Shared user",
-                          photoURL: "",
-                        });
+  uid: share.acceptedByUid || share.acceptedBy || "",
+  email: shareEmail || acceptedEmail,
+  name: shareEmail || acceptedEmail || "Shared user",
+  photoURL: "",
+});
+
 
                         const statusClass =
                           shareStatus === "active" || shareStatus === "accepted"

@@ -16,7 +16,7 @@ service cloud.firestore {
         : "";
     }
 
-        function signedInEmailLower() {
+    function signedInEmailLower() {
       return signedInEmail().lower();
     }
 
@@ -25,7 +25,6 @@ service cloud.firestore {
         && emailValue is string
         && emailValue.lower() == signedInEmailLower();
     }
-
 
     function changedKeys() {
       return request.resource.data.diff(resource.data).affectedKeys();
@@ -352,7 +351,7 @@ service cloud.firestore {
       allow create, update, delete: if isSignedIn();
     }
 
-        match /{path=**}/shares/{shareId} {
+    match /{path=**}/shares/{shareId} {
       allow list, get: if isSignedIn()
         && (
           (resource.data.sharedByUid is string && resource.data.sharedByUid == request.auth.uid)
@@ -391,7 +390,6 @@ service cloud.firestore {
           )
         );
     }
-
 
     match /projects/{projectId} {
       allow get: if rootProjectVisibleToMe(resource.data, projectId);
@@ -722,7 +720,6 @@ service cloud.firestore {
             || (
               isGuestPersonId()
               && existingDocBelongsToSignedInUser()
-              && incomingDocBelongsToSignedInUser()
             )
           );
 
@@ -845,7 +842,7 @@ service cloud.firestore {
             || currentTaskSharedWithSignedInEmail();
         }
 
-                function shareBelongsToSignedInEmail(shareData) {
+        function shareBelongsToSignedInEmail(shareData) {
           return isSignedIn()
             && shareData != null
             && (
@@ -859,7 +856,6 @@ service cloud.firestore {
               || (shareData.acceptedBy is string && shareData.acceptedBy == request.auth.uid)
             );
         }
-
 
         function shareOwnerIsSignedInUser(shareData) {
           return isSignedIn()

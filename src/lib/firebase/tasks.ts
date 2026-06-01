@@ -279,15 +279,71 @@ export async function activateTaskGuestPerson(params: {
     acceptedByPhotoURL = "",
   } = params;
 
-  if (!workspaceId || !invitedEmail) return;
+  if (!workspaceId || !invitedEmail) {
+    console.warn(
+      "[activateTaskGuestPerson] Missing workspaceId or invitedEmail — skipping",
+      { workspaceId, invitedEmail }
+    );
+    return;
+  }
 
+  // Always normalize identically to upsertTaskGuestPerson() so the
+  // personId matches the existing guest doc for ALL guests (global).
   const emailLower = String(invitedEmail).trim().toLowerCase();
-  if (!emailLower) return;
+  if (!emailLower) {
+    console.warn("[activateTaskGuestPerson] Empty emailLower — skipping");
+    return;
+  }
+
+
+  console.log("[activateTaskGuestPerson] Activating guest", {
+    workspaceId,
+    emailLower,
+    hasPhoto: Boolean(acceptedByPhotoURL && acceptedByPhotoURL.trim()),
+  });
+   // ============================================================
+  // FALLBACK: the auth object's photoURL is often empty/stale right
+  // after Google sign-in, so activateTaskGuestPerson() can be called
+  // with an empty acceptedByPhotoURL. The reliable source of truth is
+  // the users/{uid} doc (the same one the Share modal reads). If we
+  // were not handed a photo, read it from there. Global for all guests.
+  // ============================================================
+  let resolvedPhotoURL = String(acceptedByPhotoURL || "").trim();
+  let resolvedName = String(acceptedByName || "").trim();
+
+  if (acceptedByUid && (!resolvedPhotoURL || !resolvedName)) {
+    try {
+      const userSnap = await getDoc(doc(db, "users", acceptedByUid));
+      if (userSnap.exists()) {
+        const u = userSnap.data() as any;
+        if (!resolvedPhotoURL) {
+          resolvedPhotoURL = String(
+            u.photoURL ||
+              u.googlePhotoURL ||
+              u.providerPhotoURL ||
+              u.authPhotoURL ||
+              u.avatarUrl ||
+              ""
+          ).trim();
+        }
+        if (!resolvedName) {
+          resolvedName = String(u.displayName || u.name || "").trim();
+        }
+      }
+    } catch (lookupErr) {
+      console.warn(
+        "[activateTaskGuestPerson] users/{uid} photo lookup failed (non-fatal):",
+        acceptedByUid,
+        (lookupErr as any)?.message || lookupErr
+      );
+    }
+  }
 
   // Canonical person id — MUST match upsertTaskGuestPerson() so we update
   // the same doc the Team page is already listening to.
   const personId = `guest_${emailLower.replace(/[^a-z0-9]/g, "_")}`;
   const personRef = doc(db, "workspaces", workspaceId, "people", personId);
+
 
   // Step 1 — flip ROOT fields to active. This is what the Team page badge reads.
   // Step 1 — flip ROOT fields to active. This is what the Team page badge reads.
@@ -299,8 +355,8 @@ export async function activateTaskGuestPerson(params: {
     status: "active",
     accepted: true,
     acceptedAt: serverTimestamp(),
-    displayName:
-      acceptedByName ||
+        displayName:
+      resolvedName ||
       (acceptedByEmail ? acceptedByEmail.split("@")[0] : "") ||
       emailLower.split("@")[0],
     type: "guest",
@@ -308,12 +364,14 @@ export async function activateTaskGuestPerson(params: {
     updatedAt: serverTimestamp(),
   };
 
+
   // Only write photoURL when we actually have one — never overwrite
   // an existing good avatar with an empty string.
-  if (acceptedByPhotoURL && acceptedByPhotoURL.trim() !== "") {
-    rootPayload.photoURL = acceptedByPhotoURL;
-    rootPayload.avatarUrl = acceptedByPhotoURL;
+    if (resolvedPhotoURL) {
+    rootPayload.photoURL = resolvedPhotoURL;
+    rootPayload.avatarUrl = resolvedPhotoURL;
   }
+
 
 
   if (acceptedByUid) {

@@ -8,6 +8,13 @@ import { createProject } from "../lib/firebase/projects";
 interface Props {
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * When opened from the Workspace page's Curated work / setup checklist,
+   * default the new project to a pinned workspace project so it shows up in
+   * Curated work and completes the setup step. Sidebar create stays private.
+   */
+  defaultVisibility?: "workspace" | "private";
+  defaultPinnedToWorkspace?: boolean;
 }
 
 const COLORS = [
@@ -21,9 +28,14 @@ const COLORS = [
   "#ec4899",
 ];
 
-export default function CreateProjectModal({ isOpen, onClose }: Props) {
+export default function CreateProjectModal({
+  isOpen,
+  onClose,
+  defaultVisibility = "private",
+  defaultPinnedToWorkspace = false,
+}: Props) {
   const navigate = useNavigate();
-    const { user, workspaceId, personalWorkspaceId } = useAuth();
+  const { user, workspaceId, personalWorkspaceId } = useAuth();
   const { members, workspaceData } = useAppData();
 
   const safeMembers = Array.isArray(members) ? members : [];
@@ -31,10 +43,12 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState(COLORS[0]);
-    const [visibility, setVisibility] = useState<"workspace" | "private">(
-    "private"
+  const [visibility, setVisibility] = useState<"workspace" | "private">(
+    defaultVisibility
   );
-  const [pinnedToWorkspace, setPinnedToWorkspace] = useState(false);
+  const [pinnedToWorkspace, setPinnedToWorkspace] = useState(
+    defaultPinnedToWorkspace
+  );
 
   const [priority, setPriority] = useState<"low" | "medium" | "high">("medium");
   const [dueDate, setDueDate] = useState("");
@@ -54,7 +68,7 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
   const isActiveWorkspaceMember =
     isWorkspaceOwner || myMembership?.status === "active";
 
-    const effectivePersonalWorkspaceId =
+  const effectivePersonalWorkspaceId =
     personalWorkspaceId || (user?.uid ? `personal_${user.uid}` : "");
 
   const targetWorkspaceId =
@@ -82,8 +96,6 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
       ? canCreatePrivateProject
       : canCreateWorkspaceProject);
 
-
-
   const projectCode = useMemo(() => {
     const base = trimmedName
       .toUpperCase()
@@ -97,14 +109,22 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
     return base ? `${base}-${Math.floor(Math.random() * 900 + 100)}` : "";
   }, [trimmedName]);
 
+  React.useEffect(() => {
+    if (isOpen) {
+      setVisibility(defaultVisibility);
+      setPinnedToWorkspace(defaultPinnedToWorkspace);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, defaultVisibility, defaultPinnedToWorkspace]);
+
   if (!isOpen) return null;
 
   function resetForm() {
     setName("");
     setDescription("");
     setColor(COLORS[0]);
-        setVisibility("private");
-    setPinnedToWorkspace(false);
+    setVisibility(defaultVisibility);
+    setPinnedToWorkspace(defaultPinnedToWorkspace);
     setPriority("medium");
     setDueDate("");
     setError("");
@@ -129,7 +149,7 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
       return;
     }
 
-            if (!targetWorkspaceId) {
+    if (!targetWorkspaceId) {
       setError("No workspace was found. Please sign out and sign back in.");
       return;
     }
@@ -143,8 +163,6 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
       return;
     }
 
-
-
     if (!trimmedName) {
       setError("Project name is required.");
       return;
@@ -153,7 +171,7 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
     setSaving(true);
 
     try {
-            const projectId = await createProject(
+      const projectId = await createProject(
         targetWorkspaceId,
         {
           name: trimmedName,
@@ -175,7 +193,6 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
         },
         user.uid
       );
-
 
       resetForm();
       onClose();
@@ -242,7 +259,7 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
             </div>
           )}
 
-                                                                               {!canCreateProjects && (
+          {!canCreateProjects && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
               {isViewerOnly
                 ? "You have viewer access. Viewers cannot create projects."
@@ -251,9 +268,6 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
                   : "Your workspace is still loading or your account is not an active member of this workspace."}
             </div>
           )}
-
-
-
 
           <div>
             <label
@@ -389,10 +403,9 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
                   Workspace
                 </p>
 
-                               <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
                   Visible to active shared workspace members.
                 </p>
-
               </button>
 
               <button
@@ -409,10 +422,9 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
 
                 <p className="text-xs font-semibold text-slate-800">Private</p>
 
-                                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
                   Saved only in your own private account sidebar.
                 </p>
-
               </button>
             </div>
           </div>
@@ -455,3 +467,4 @@ export default function CreateProjectModal({ isOpen, onClose }: Props) {
     </div>
   );
 }
+

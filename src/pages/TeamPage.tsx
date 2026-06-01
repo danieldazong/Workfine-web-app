@@ -25,7 +25,16 @@ import {
   serverTimestamp,
   setDoc,
   getDoc,
+  getDocs,
+  onSnapshot,
+  collection,
+  query,
+  where,
 } from "firebase/firestore";
+
+
+
+
 import { db } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
@@ -169,6 +178,232 @@ function Toast({ msg, onDone }: { msg: string; onDone: () => void }) {
     </div>
   );
 }
+// Deterministic gradient for the initials fallback. Same seed → same colors,
+// so each guest keeps a stable, premium-looking monogram.
+// IMPORTANT: This MUST stay byte-for-byte identical to monogramGradient() in
+// src/components/TaskDetailPanel.tsx so the External Guests avatar and the
+// Share-task modal avatar render the SAME gradient for the same email.
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
+// ─── Live guest avatar (mirrors TaskDetailPanel.ModernAvatar) ────────────────
+// Subscribes to users/{uid} directly — the SAME source the Task modal uses —
+// so when an invited user changes their photo in Settings, this updates in
+// real time. Falls back to a by-email listener when no uid is harvestable,
+// then to the accept-time photo, then to initials.
+// GLOBAL: one independent subscription per guest row, no account hardcoded.
+
+
+
+// ─── Live guest avatar — uses the EXACT same mechanism as the Task modal ─────
+// The Share modal updates avatars in real time via:
+//     onSnapshot(doc(db, "users", profileUid), ...)
+// We do the identical thing here. activateTaskGuestPerson() writes the
+// accepting user's uid to the people-doc root (userId/uid), and
+// harvestGuestUid() reads exactly those fields — so this listener subscribes
+// to the same users/{uid} document the modal watches. When the invited user
+// changes their photo in Settings, users/{uid}.photoURL changes, this
+// onSnapshot fires, and ONLY this guest's avatar re-renders. GLOBAL: one
+// independent subscription per guest row, no account hardcoded.
+interface GuestAvatarProps {
+  uid: string;
+  email: string;
+  initials: string;
+  bgColor: string;
+  displayName: string;
+  isGoogle: boolean;
+  shareRefs: { workspaceId: string; taskId: string; shareId: string }[];
+}
+
+
+function GuestAvatar({
+  uid,
+  email,
+  initials,
+  bgColor,
+  displayName,
+  isGoogle,
+  shareRefs,
+}: GuestAvatarProps) {
+  const [photoURL, setPhotoURL] = useState<string>("");
+  const [imgFailed, setImgFailed] = useState(false);
+  const [resolvedUid, setResolvedUid] = useState<string>(uid || "");
+
+  // Resolve the UID: 1) prop uid, 2) acceptedByUid from share doc,
+  // 3) lookup users/{uid} by emailLower. The email path is what makes this
+  // work when the people doc has no uid and the share doc is unreadable.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (uid) {
+      setResolvedUid(uid);
+      return;
+    }
+
+    (async () => {
+      // (a) Try the share doc(s).
+      if (shareRefs && shareRefs.length > 0) {
+        for (const ref of shareRefs) {
+          if (cancelled) return;
+          try {
+            const snap = await getDoc(
+              doc(
+                db,
+                "workspaces",
+                ref.workspaceId,
+                "tasks",
+                ref.taskId,
+                "shares",
+                ref.shareId,
+              ),
+            );
+            if (snap.exists()) {
+              const data = snap.data() as any;
+              const found = String(
+                data.acceptedByUid || data.acceptedBy || "",
+              ).trim();
+              if (found) {
+                if (!cancelled) setResolvedUid(found);
+                return;
+              }
+            }
+          } catch (err) {
+            console.warn("[GuestAvatar] share doc read failed:", ref, err);
+          }
+        }
+      }
+
+      // (b) Fall back to resolving the uid by email.
+      const clean = String(email || "").trim().toLowerCase();
+      if (!clean) return;
+      try {
+        const q = query(
+          collection(db, "users"),
+          where("emailLower", "==", clean),
+        );
+        const qs = await getDocs(q);
+        if (!cancelled && !qs.empty) {
+          setResolvedUid(qs.docs[0].id);
+        }
+      } catch (err) {
+        console.warn("[GuestAvatar] email→uid lookup failed:", clean, err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, email, shareRefs]);
+
+  // Watch users/{uid} live — identical mechanism to the modal.
+  useEffect(() => {
+    setImgFailed(false);
+
+    if (!resolvedUid) {
+      setPhotoURL("");
+      return;
+    }
+
+    const unsub = onSnapshot(
+      doc(db, "users", resolvedUid),
+      (snap) => {
+        const u = (snap.exists() ? snap.data() : {}) as any;
+        const real = String(
+          u.photoURL ||
+            u.googlePhotoURL ||
+            u.providerPhotoURL ||
+            u.authPhotoURL ||
+            u.avatarUrl ||
+            "",
+        ).trim();
+        setPhotoURL(real);
+      },
+      (err) => {
+        console.warn(
+          "[GuestAvatar] users/{uid} listener failed:",
+          resolvedUid,
+          err,
+        );
+        setPhotoURL("");
+      },
+    );
+
+    return () => unsub();
+  }, [resolvedUid]);
+
+  const showPhoto = Boolean(photoURL) && !imgFailed;
+
+  return (
+    <div className="relative w-10 h-10 flex-shrink-0">
+      {showPhoto ? (
+        <img
+          src={photoURL}
+          alt={displayName}
+          referrerPolicy="no-referrer"
+          loading="lazy"
+          decoding="async"
+          onError={() => setImgFailed(true)}
+          className="w-full h-full rounded-full object-cover ring-1 ring-slate-200 bg-slate-100"
+        />
+      ) : (
+        <div
+          className="w-full h-full rounded-full flex items-center justify-center text-white text-sm font-semibold ring-1 ring-black/5 select-none"
+          style={{
+            background: monogramGradient(
+              String(email || "").trim().toLowerCase() ||
+                displayName ||
+                initials,
+            ),
+            letterSpacing: "0.02em",
+          }}
+        >
+          {initials}
+        </div>
+      )}
+
+      {showPhoto && isGoogle && (
+        <span
+          className="absolute -right-0.5 -bottom-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-[9px] font-black leading-none"
+          style={{ color: "#4285F4" }}
+          title="Google account"
+        >
+          G
+        </span>
+      )}
+    </div>
+  );
+
+}
+
+
+
+
+
+
+
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -180,7 +415,6 @@ export default function TeamPage() {
   const pendingInvites = Array.isArray(appData.pendingInvites)
     ? appData.pendingInvites
     : [];
-  const projects = Array.isArray(appData.projects) ? appData.projects : [];
   const workspacePeople = Array.isArray(appData.workspacePeople)
     ? appData.workspacePeople
     : [];
@@ -492,7 +726,7 @@ export default function TeamPage() {
       return false;
     }
 
-    console.log(
+            console.log(
       "[TeamPage] guest INCLUDED:",
       personEmail,
       "active projects:",
@@ -502,6 +736,75 @@ export default function TeamPage() {
     );
     return true;
   });
+
+  // ── Guest avatar resolver — MIRRORS the Share-task modal exactly ──────────
+  // The modal resolves photos from users/{uid} using each share's
+  // acceptedByUid / acceptedByEmail. The people doc rarely stores a usable
+  // photoURL, which is why guests show initials here. We harvest the uid from
+  // every guest's task/project entries (acceptedByUid), subscribe to
+  // users/{uid} live, and resolve the real Google photo — identical to the
+  // modal. Global: runs for EVERY guest, no account hardcoded.
+   function harvestGuestUid(guest: any): string {
+    const direct = String(
+      guest.userId || guest.uid || guest.acceptedByUid || guest.acceptedBy || ""
+    ).trim();
+    if (direct) return direct;
+    const entries = [
+      ...Object.values(guest.tasks ?? {}),
+      ...Object.values(guest.projects ?? {}),
+    ] as any[];
+    for (const e of entries) {
+      const u = String(
+        e?.acceptedByUid ||
+          e?.acceptedBy ||
+          e?.userId ||
+          e?.uid ||
+          e?.invitedByUid ||
+          ""
+      ).trim();
+      if (u) return u;
+    }
+    return "";
+  }
+  // Collect every {workspaceId, taskId, shareId} from the guest's task entries
+  // so GuestAvatar can read acceptedByUid from the SAME share doc the modal uses.
+  function harvestGuestShareRefs(guest: any): {
+  workspaceId: string;
+  taskId: string;
+  shareId: string;
+}[] {
+  const tasks = (guest.tasks ?? {}) as Record<string, any>;
+  return Object.values(tasks)
+    .map((t: any) => ({
+      workspaceId: String(
+        t?.workspaceId || guest.workspaceId || workspaceId || ""
+      ).trim(),
+      taskId: String(t?.taskId || "").trim(),
+      shareId: String(t?.shareId || "").trim(),
+    }))
+    .filter((r) => r.workspaceId && r.taskId && r.shareId);
+}
+
+
+  // Harvest the guest's email so we can resolve their photo even before a uid
+  // is stamped on the people doc. Global — works for every guest.
+  function harvestGuestEmail(guest: any): string {
+    return String(guest.emailLower || guest.email || "")
+      .trim()
+      .toLowerCase();
+  }
+
+
+
+  // Detect whether a guest is a Google account (drives the "G" badge),
+  // mirroring isGoogleEmail() in TaskDetailPanel.
+  function isGuestGoogleAccount(guest: any): boolean {
+    const email = String(guest.emailLower || guest.email || "")
+      .trim()
+      .toLowerCase();
+    return email.endsWith("@gmail.com") || email.endsWith("@googlemail.com");
+  }
+
   // FAANG-grade self-heal: if any guest doc has a stale root `status: "pending"`
   // but actually has accepted task or project access, flip the root status to
   // "active" so every downstream consumer (Team page, sidebar, search, etc.)
@@ -1649,33 +1952,23 @@ export default function TeamPage() {
                         const source = String(t?.source ?? "").toLowerCase();
                         return source === "assignee";
                       }).length;
-
-                      return (
+                                            return (
                         <div
                           key={guestId}
                           className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition-all"
                         >
                           <div className="flex items-center gap-3">
                             <div className="relative flex-shrink-0">
-                              <div
-                                className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden"
-                                style={{ backgroundColor: bgColor }}
-                              >
-                                {guest.photoURL ? (
-                                  <img
-                                    src={guest.photoURL}
-                                    alt={guest.displayName || guest.email}
-                                    className="w-10 h-10 rounded-full object-cover"
-                                    onError={(e) => {
-                                      (
-                                        e.currentTarget as HTMLImageElement
-                                      ).style.display = "none";
-                                    }}
-                                  />
-                                ) : (
-                                  initials
-                                )}
-                              </div>
+                                                            <GuestAvatar
+                                uid={harvestGuestUid(guest)}
+                                email={harvestGuestEmail(guest)}
+                                initials={initials}
+                                bgColor={bgColor}
+                                displayName={guest.displayName || guest.email || "Guest"}
+                                isGoogle={isGuestGoogleAccount(guest)}
+                                shareRefs={harvestGuestShareRefs(guest)}
+                              />
+
 
                               {online && (
                                 <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
@@ -2213,3 +2506,4 @@ export default function TeamPage() {
     </div>
   );
 }
+

@@ -463,10 +463,13 @@ return (
 
 
 
-      <CreateProjectModal
+           <CreateProjectModal
   isOpen={showCreateProject}
   onClose={() => setShowCreateProject(false)}
+  defaultVisibility="workspace"
+  defaultPinnedToWorkspace={true}
 />
+
 <AddExistingProjectModal
   isOpen={showAddExistingProject}
   projects={availableProjectsToAdd}
@@ -504,6 +507,7 @@ function OverviewTab({
   onAddExistingProject,
   onOpenSettings,
 }: any) {
+  const navigate = useNavigate();
   const description = workspaceData?.description ?? "";
   const hasDescription = description.trim().length > 0;
     const curatedProjects = projects.filter(isProjectPinnedToWorkspace);
@@ -679,7 +683,7 @@ function OverviewTab({
             </div>
                       
                         <button
-              onClick={() => window.location.assign("/projects")}
+                           onClick={() => navigate("/projects")}
               className="text-xs text-violet-600 hover:underline font-medium flex items-center gap-1"
             >
 
@@ -691,19 +695,26 @@ function OverviewTab({
             <div className="text-center py-8">
               <FolderKanban className="mx-auto text-gray-300 mb-3" size={32} />
               <p className="text-sm text-gray-500 mb-3">No projects yet</p>
-                                                        {canCreateWorkspaceProjects ? (
-                <button
-                  onClick={onCreateProject}
-                  className="inline-flex items-center gap-2 px-3 py-2 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
-                >
-                  <Plus size={13} /> Create first project
-                </button>
+                                                                     {canCreateWorkspaceProjects ? (
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    onClick={onCreateProject}
+                    className="inline-flex items-center gap-2 px-3 py-2 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
+                  >
+                    <Plus size={13} /> Create first project
+                  </button>
+                  <button
+                    onClick={onAddExistingProject}
+                    className="inline-flex items-center gap-2 px-3 py-2 border border-violet-300 text-violet-700 text-xs font-medium rounded-lg hover:bg-violet-50 transition-colors"
+                  >
+                    <FolderKanban size={13} /> Add existing project
+                  </button>
+                </div>
               ) : (
                 <p className="text-xs text-gray-400">
                   Workspace is still loading. Refresh and try again.
                 </p>
               )}
-
 
             </div>
           ) : (
@@ -713,9 +724,9 @@ function OverviewTab({
                 const done = pt.filter((t: any) => t.status === "Done").length;
                 const pct  = pt.length > 0 ? Math.round((done / pt.length) * 100) : 0;
                 return (
-                  <div
+                                    <div
                     key={p.id}
-                                        onClick={() => window.location.assign(`/projects/${p.id}`)}
+                    onClick={() => navigate(`/projects/${p.id}`)}
                     className="border border-gray-200 rounded-xl p-3 cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all group"
                   >
                     <div className="flex items-center gap-2 mb-2">
@@ -750,15 +761,26 @@ function OverviewTab({
             </div>
           )}
 
-                                                           {curatedProjects.length > 0 && canCreateWorkspaceProjects && (
-                      <button
-                        type="button"
-                        onClick={onCreateProject}
-                        className="mt-3 w-full py-2 border border-dashed border-gray-300 text-gray-500 hover:text-violet-600 hover:border-violet-300 rounded-xl text-xs font-medium transition-colors flex items-center justify-center gap-1"
-                      >
-                        <Plus size={13} /> Create another project
-                      </button>
-                    )}
+                                                                   {canCreateWorkspaceProjects && (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onCreateProject}
+                className="w-full py-2 border border-dashed border-gray-300 text-gray-500 hover:text-violet-600 hover:border-violet-300 rounded-xl text-xs font-medium transition-colors flex items-center justify-center gap-1"
+              >
+                <Plus size={13} /> Create another project
+              </button>
+
+              <button
+                type="button"
+                onClick={onAddExistingProject}
+                className="w-full py-2 border border-dashed border-gray-300 text-gray-500 hover:text-violet-600 hover:border-violet-300 rounded-xl text-xs font-medium transition-colors flex items-center justify-center gap-1"
+              >
+                <FolderKanban size={13} /> Add existing project
+              </button>
+            </div>
+          )}
+
 
 
 
@@ -773,7 +795,7 @@ function OverviewTab({
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-gray-800">Members</h3>
                       <button
-              onClick={() => window.location.assign("/workspace/members")}
+                            onClick={() => navigate("/workspace/members")}
               className="text-xs text-violet-600 hover:underline font-medium"
             >
               View all {members.length}

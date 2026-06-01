@@ -175,9 +175,16 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
                        <UserIcon size={16} /> Assignee
                      </div>
                      <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl cursor-not-allowed">
-                        <div className="w-5 h-5 rounded-full bg-blue-600 text-[8px] flex items-center justify-center text-white font-bold">
-                          {user?.displayName?.[0]}
+                                                <div
+                          className="w-5 h-5 rounded-full text-[8px] flex items-center justify-center text-white font-bold ring-1 ring-black/5 select-none"
+                          style={{
+                                                        background: monogramGradient(user?.email || user?.displayName || "U"),
+                            letterSpacing: "0.02em",
+                          }}
+                        >
+                          {user?.displayName?.[0]?.toUpperCase()}
                         </div>
+
                         <span className="text-xs font-semibold dark:text-white">{user?.displayName}</span>
                      </div>
                    </div>
@@ -321,6 +328,32 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
     </Dialog.Root>
   );
 }
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
 
 function PlusIcon({ size }: { size: number }) {
   return (

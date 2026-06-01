@@ -19,7 +19,7 @@ export default function AppShell() {
     MEMBER_ONLY_PATHS.includes(location.pathname) ||
     location.pathname.startsWith('/workspace/');
 
-  if (isGuestView && isMemberOnlyPath) {
+    if (isGuestView && isMemberOnlyPath) {
     return <Navigate to="/my-tasks" replace />;
   }
 
@@ -32,3 +32,4 @@ export default function AppShell() {
     </div>
   );
 }
+

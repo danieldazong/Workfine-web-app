@@ -504,12 +504,19 @@ export default function AcceptTaskInvitePage() {
         console.warn("[AcceptTaskInvitePage] user.reload failed:", reloadErr);
       }
 
+         // CRITICAL: the guest people-doc ID is built from the SAME email that
+      // upsertTaskGuestPerson() used at invite time (the share doc's
+      // invitedEmailLower). We must reuse that exact value here, otherwise
+      // activateTaskGuestPerson() builds a DIFFERENT guest_<id> and writes a
+      // phantom doc the Team grid never shows. Prefer the lowercased invite
+      // email; fall back only if the share doc somehow lacks it.
       const inviteEmailForGuest =
+        invite.invitedEmailLower ||
         invite.invitedEmail ||
         invite.sharedWithEmail ||
-        invite.invitedEmailLower ||
         user.email ||
         "";
+
 
       const userEmailLower = String(user.email || "").toLowerCase();
       const invitedEmailLowerFinal = String(
@@ -581,12 +588,35 @@ export default function AcceptTaskInvitePage() {
       }
 
 
-      // ============================================================
+            // ============================================================
       // STEP 3 — Activate the External Guest (best-effort, non-blocking).
-      // If this fails (e.g. rules), the task is still in users/{uid}/tasks
-      // and the share is "active", so the task page still works.
+      // Writes the guest's real photoURL + active status into the
+      // workspaces/{wsId}/people/{guestId} doc, which is what the
+      // Team page "External Guests" grid reads. Global for all guests.
       // ============================================================
-            // Clear the pending-invite flag whether or not this was auto-fired.
+      try {
+        await activateTaskGuestPerson({
+          workspaceId,
+          invitedEmail: inviteEmailForGuest,
+          taskId,
+          shareId,
+          acceptedByUid: user.uid,
+          acceptedByEmail: user.email || "",
+          acceptedByName:
+            freshDisplayName ||
+            (user.email ? user.email.split("@")[0] : ""),
+          acceptedByPhotoURL: freshPhotoURL,
+        });
+
+        console.log("[AcceptTaskInvitePage] External guest activated with photo");
+      } catch (guestErr: any) {
+        console.warn(
+          "[AcceptTaskInvitePage] activateTaskGuestPerson failed (NON-FATAL):",
+          guestErr?.message || guestErr
+        );
+      }
+
+      // Clear the pending-invite flag whether or not this was auto-fired.
       try {
         localStorage.removeItem("pendingTaskInviteUrl");
       } catch {}

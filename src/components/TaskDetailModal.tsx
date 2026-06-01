@@ -107,6 +107,32 @@ function timeAgo(date: Date): string {
     year: "numeric",
   });
 }
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
 
 export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps) {
   const navigate = useNavigate();
@@ -497,12 +523,19 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
               <UserIcon size={14} className="text-slate-400" />
               <span className="text-xs text-slate-400">Assignee:</span>
               {task.assignee ? (
-                <div className="flex items-center gap-1.5">
-                  <div className="w-5 h-5 rounded-full bg-violet-500 flex items-center justify-center text-white text-[10px] font-bold">
+                                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold ring-1 ring-black/5 select-none"
+                    style={{
+                      background: monogramGradient(task.assignee),
+                      letterSpacing: "0.02em",
+                    }}
+                  >
                     {task.assignee[0]?.toUpperCase()}
                   </div>
                   <span className="font-medium truncate">{task.assignee}</span>
                 </div>
+
               ) : (
                 <span className="text-slate-400 italic">Unassigned</span>
               )}
@@ -580,9 +613,16 @@ export default function TaskDetailModal({ task, onClose }: TaskDetailModalProps)
                       key={c.id}
                       className="group flex items-start gap-3 p-3 rounded-xl bg-white border border-slate-100 hover:border-slate-200 transition-colors"
                     >
-                      <div className="w-8 h-8 rounded-full bg-violet-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                            <div
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 ring-1 ring-black/5 select-none"
+                        style={{
+                          background: monogramGradient(c.authorName || c.authorId || "U"),
+                          letterSpacing: "0.02em",
+                        }}
+                      >
                         {c.authorAvatar || "U"}
                       </div>
+
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-xs font-medium text-slate-600 truncate">

@@ -38,6 +38,31 @@ export interface UserProfile {
   updatedAt: any;
 }
 
+/**
+ * Resolves the best available photo for a user at sign-in/sign-up.
+ * Reads the Firebase Auth photoURL first, then falls back to the
+ * Google provider's photoURL. Global for every account/provider.
+ */
+function resolveSignInPhotoURL(user: {
+  photoURL?: string | null;
+  providerData?: Array<{ providerId?: string; photoURL?: string | null }>;
+}): string {
+  const direct = String(user?.photoURL || "").trim();
+  if (direct) return direct;
+
+  const providers = Array.isArray(user?.providerData) ? user.providerData : [];
+
+  const googlePhoto = providers.find(
+    (p) => p?.providerId === "google.com" && String(p?.photoURL || "").trim()
+  )?.photoURL;
+  if (googlePhoto) return String(googlePhoto).trim();
+
+  const anyProviderPhoto = providers.find((p) =>
+    String(p?.photoURL || "").trim()
+  )?.photoURL;
+  return String(anyProviderPhoto || "").trim();
+}
+
 // Called on every login and signup — creates or updates user doc
 export const createOrUpdateUserProfile = async (
   user: {
@@ -45,42 +70,64 @@ export const createOrUpdateUserProfile = async (
     displayName: string | null;
     email: string | null;
     photoURL: string | null;
+    providerData?: Array<{ providerId?: string; photoURL?: string | null }>;
   }
 ): Promise<void> => {
   try {
     const userRef = doc(db, "users", user.uid);
     const userSnap = await getDoc(userRef);
 
+    const resolvedPhotoURL = resolveSignInPhotoURL(user);
+    const emailLower = (user.email || "").toLowerCase();
+
     if (!userSnap.exists()) {
-      // First time — create full profile
+      // First time — create full profile.
       await setDoc(userRef, {
         uid: user.uid,
+        userId: user.uid,
         displayName:
           user.displayName ||
           user.email?.split("@")[0] ||
           "User",
         email: user.email || "",
-        photoURL: user.photoURL || null,
+        emailLower,
+        // Only stamp photo fields if we actually have a real photo.
+        ...(resolvedPhotoURL
+          ? { photoURL: resolvedPhotoURL, avatarUrl: resolvedPhotoURL }
+          : {}),
         plan: "free",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
       console.log("[Firebase] User profile created:", user.uid);
     } else {
-      // Returning user — update name/photo only
-      await setDoc(
-        userRef,
-        {
-          displayName:
-            user.displayName ||
-            user.email?.split("@")[0] ||
-            "User",
-          email: user.email || "",
-          photoURL: user.photoURL || null,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      // Returning user — never overwrite a saved photo with an empty value.
+      const existing = userSnap.data() as any;
+      const existingPhoto = String(existing?.photoURL || "").trim();
+
+      const payload: Record<string, any> = {
+        displayName:
+          user.displayName ||
+          user.email?.split("@")[0] ||
+          existing?.displayName ||
+          "User",
+        email: user.email || existing?.email || "",
+        emailLower: emailLower || existing?.emailLower || "",
+        userId: user.uid,
+        updatedAt: serverTimestamp(),
+      };
+
+      // Write the photo ONLY when we have a real one and none is stored yet,
+      // or to refresh an existing one. Empty values are intentionally skipped
+      // so an uploaded avatar is never wiped on the next login.
+      if (resolvedPhotoURL) {
+        payload.photoURL = resolvedPhotoURL;
+        payload.avatarUrl = resolvedPhotoURL;
+      } else if (!existingPhoto) {
+        // No new photo and none stored — leave field untouched.
+      }
+
+      await setDoc(userRef, payload, { merge: true });
       console.log("[Firebase] User profile updated:", user.uid);
     }
   } catch (error: any) {

@@ -76,8 +76,9 @@ function getAuthPhotoURL(firebaseUser: User): string {
       (provider) => provider.providerId === "google.com"
     )?.photoURL || "";
 
-  return googleProviderPhoto || firebaseUser.photoURL || "";
+  return firebaseUser.photoURL || googleProviderPhoto || "";
 }
+
 
 function getAuthEmail(firebaseUser: User): string {
   return firebaseUser.email || "";
@@ -92,9 +93,12 @@ function buildUserProfilePayload(firebaseUser: User) {
   const displayName = getAuthDisplayName(firebaseUser);
   const email = getAuthEmail(firebaseUser);
   const emailLower = normalizeEmail(email);
-  const photoURL = getAuthPhotoURL(firebaseUser);
+    const photoURL = getAuthPhotoURL(firebaseUser);
 
-  return {
+  // Build the base payload WITHOUT photo fields so a later merge never
+  // overwrites a previously-saved photo with an empty string (which happens
+  // during the auth-warmup race or for users whose auth photoURL is blank).
+  const payload: Record<string, any> = {
     uid: firebaseUser.uid,
     userId: firebaseUser.uid,
 
@@ -105,15 +109,11 @@ function buildUserProfilePayload(firebaseUser: User) {
     emailLower,
     email_lowercase: emailLower,
 
-    photoURL,
-    avatarUrl: photoURL,
-    avatarURL: photoURL,
-    googlePhotoURL: photoURL,
-
     avatar: getAvatarInitial(displayName, email),
     avatarColor: "#8b5cf6",
 
-    providerId:
+
+       providerId:
       firebaseUser.providerData.find(
         (provider) => provider.providerId === "google.com"
       )?.providerId ||
@@ -123,7 +123,19 @@ function buildUserProfilePayload(firebaseUser: User) {
     updatedAt: serverTimestamp(),
     lastActive: serverTimestamp(),
   };
+
+  // Only include photo fields when we actually have a non-empty URL.
+  // This guarantees we NEVER wipe an existing good photo on re-auth.
+  if (photoURL && photoURL.trim() !== "") {
+    payload.photoURL = photoURL;
+    payload.avatarUrl = photoURL;
+    payload.avatarURL = photoURL;
+    payload.googlePhotoURL = photoURL;
+  }
+
+  return payload;
 }
+
 
 /**
  * Ensures the workspace document AND the owner's member doc exist
