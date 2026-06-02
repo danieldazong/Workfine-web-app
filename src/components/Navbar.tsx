@@ -222,6 +222,56 @@ function getPageMeta(pathname: string, projects: any[]) {
     breadcrumbs: [fallbackTitle],
   };
 }
+
+// Deterministic gradient for the initials fallback.
+// IMPORTANT: This MUST stay byte-for-byte identical to monogramGradient() in
+// src/components/TaskDetailPanel.tsx and src/pages/TeamPage.tsx so the navbar
+// avatar renders the SAME gradient for the same email everywhere.
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
+function monogramInitials(name?: string | null, email?: string | null): string {
+  const label = String(name || email || "?").trim();
+  if (!label || label === "?") return "?";
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return initials || label[0]?.toUpperCase() || "?";
+}
+// Only Firebase Storage uploads are real user photos. Any other URL
+// (e.g. Google lh3.googleusercontent.com) is ignored so every account
+// shows its monogram gradient instead of the Gmail photo.
+function resolveAvatarPhoto(photoURL?: string | null): string {
+  const url = String(photoURL || "").trim();
+  return url.includes("firebasestorage") ? url : "";
+}
+
 function getAvatarInitial(
   displayName?: string | null,
   email?: string | null
@@ -250,7 +300,7 @@ interface NavbarAvatarProps {
  * an empty circle.
  */
 function NavbarAvatar({ photoURL, displayName, email }: NavbarAvatarProps) {
-  const cleanPhoto = String(photoURL || "").trim();
+    const cleanPhoto = resolveAvatarPhoto(photoURL);
   const [imgFailed, setImgFailed] = useState(false);
 
   // Reset the failure flag whenever the photo URL changes (e.g. after the
@@ -260,24 +310,39 @@ function NavbarAvatar({ photoURL, displayName, email }: NavbarAvatarProps) {
   }, [cleanPhoto]);
 
   const showImage = cleanPhoto !== "" && !imgFailed;
-  const initial = getAvatarInitial(displayName, email);
+
+  // Same seed as ModernAvatar / GuestAvatar: normalized lowercase email,
+  // falling back to the display name. This guarantees the navbar monogram
+  // matches the Task modal and External Guests monogram for the same account.
+  const seed =
+    String(email || "").trim().toLowerCase() ||
+    String(displayName || "?").trim().toLowerCase();
 
   return (
-    <div className="w-8 h-8 rounded-full bg-violet-100 border border-violet-200 flex items-center justify-center flex-none overflow-hidden">
+    <div className="w-8 h-8 rounded-full flex-none overflow-hidden">
       {showImage ? (
         <img
           src={cleanPhoto}
           alt={displayName || email || "User"}
-          className="w-full h-full object-cover"
+          className="w-full h-full rounded-full object-cover ring-1 ring-violet-200"
           referrerPolicy="no-referrer"
           onError={() => setImgFailed(true)}
         />
       ) : (
-        <span className="text-xs text-violet-600 font-bold">{initial}</span>
+        <div
+          className="w-full h-full rounded-full flex items-center justify-center text-white text-xs font-semibold ring-1 ring-black/5 select-none"
+          style={{
+            background: monogramGradient(seed),
+            letterSpacing: "0.02em",
+          }}
+        >
+          {monogramInitials(displayName, email)}
+        </div>
       )}
     </div>
   );
 }
+
 
 export default function Navbar({ title }: NavbarProps) {
     const { user, workspaceId } = useAuth();

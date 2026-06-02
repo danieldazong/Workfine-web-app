@@ -24,6 +24,55 @@ import { useAppData } from "../context/AppDataContext";
 import { deleteProject } from "../lib/firebase/projects";
 import CreateProjectModal from "./CreateProjectModal";
 
+// ─── Monogram Gradient (shared) ───────────────────────────────────────────────
+// IMPORTANT: This MUST stay byte-for-byte identical to monogramGradient() in
+// SettingsPage.tsx, TaskDetailPanel.tsx, TeamPage.tsx and Navbar.tsx so the
+// SAME email renders the SAME gradient everywhere.
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
+function monogramInitials(name?: string | null, email?: string | null): string {
+  const label = String(name || email || "?").trim();
+  if (!label || label === "?") return "?";
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return initials || label[0]?.toUpperCase() || "?";
+}
+// Only Firebase Storage uploads are real user photos. Any other URL
+// (e.g. Google lh3.googleusercontent.com) is ignored so every account
+// shows its monogram gradient instead of the Gmail photo.
+function resolveAvatarPhoto(photoURL?: string | null): string {
+  const url = String(photoURL || "").trim();
+  return url.includes("firebasestorage") ? url : "";
+}
+
 export default function Sidebar() {
     const { user, signOutUser, workspaceId, personalWorkspaceId } = useAuth();
   const { projects, members, workspaceData, isGuestView } = useAppData();
@@ -470,10 +519,10 @@ function SidebarContent({
 
       <div className="flex-shrink-0 border-t border-slate-800 p-4">
         <div className="flex items-center gap-3 rounded-xl bg-slate-800/30 p-2">
-          <div className="relative flex-shrink-0">
-            {user?.photoURL ? (
+                             <div className="relative flex-shrink-0">
+            {resolveAvatarPhoto(user?.photoURL) ? (
               <img
-                src={user.photoURL}
+                src={resolveAvatarPhoto(user?.photoURL)}
                 alt={user.displayName ?? user.email ?? "User"}
                 referrerPolicy="no-referrer"
                 className="h-10 w-10 rounded-full border border-indigo-400/30 object-cover"
@@ -489,14 +538,22 @@ function SidebarContent({
             <div
               className={cn(
                 "h-10 w-10 flex-shrink-0 items-center justify-center rounded-full",
-                "border border-indigo-400/30 text-xs font-bold text-white",
-                getAvatarColor(user?.email ?? user?.displayName ?? "user"),
-                user?.photoURL ? "hidden" : "flex"
+                "border border-indigo-400/30 text-xs font-semibold text-white select-none",
+                resolveAvatarPhoto(user?.photoURL) ? "hidden" : "flex"
               )}
+              style={{
+                background: monogramGradient(
+                  String(user?.email || "").trim().toLowerCase() ||
+                    String(user?.displayName || "?").trim().toLowerCase(),
+                ),
+                letterSpacing: "0.02em",
+              }}
             >
-              {getInitials(user?.displayName ?? user?.email ?? "User")}
+              {monogramInitials(user?.displayName, user?.email)}
             </div>
           </div>
+
+
 
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-white">

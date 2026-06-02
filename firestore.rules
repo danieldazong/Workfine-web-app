@@ -919,16 +919,16 @@ service cloud.firestore {
               || shareOwnerIsSignedInUser(resource.data)
               || isWorkspaceOwnerByDoc(workspaceId, request.auth.uid)
               || shareSelfRemovalAllowed()
-              || (
+                            || (
                 shareBelongsToSignedInEmail(resource.data)
                 && (resource.data.status == "pending" || resource.data.status == "active")
                 && request.resource.data.status == "active"
                 && request.resource.data.acceptedByUid == request.auth.uid
                 && (
-                  request.resource.data.acceptedByEmail == request.auth.token.email
-                  || request.resource.data.acceptedByEmailLower == signedInEmailLower()
+                  request.resource.data.acceptedByEmailLower == signedInEmailLower()
+                  || request.resource.data.acceptedByEmail.lower() == signedInEmailLower()
                 )
-                && onlyChanged([
+                && changedKeys().hasOnly([
                   "status",
                   "acceptedBy",
                   "acceptedByUid",
@@ -941,7 +941,6 @@ service cloud.firestore {
                   "updatedAt"
                 ])
               )
-            );
 
           allow delete: if isSignedIn()
             && (

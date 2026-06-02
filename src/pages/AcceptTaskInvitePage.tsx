@@ -204,11 +204,56 @@ export default function AcceptTaskInvitePage() {
           "Shared task"
         ),
 
-        description: firstText(taskData.description, ""),
+           description: firstText(taskData.description, ""),
+
+        // ============================================================
+        // GLOBAL OWNER PRESERVATION (account-agnostic).
+        // The invitee's personal copy MUST carry the REAL task owner so
+        // TaskDetailPanel shows the creator as "Owner" on every device.
+        // Prefer the canonical source task; fall back to the invite's
+        // sender fields, which always identify the task owner/inviter.
+        // NEVER fall back to the current (invited) user here.
+        // ============================================================
+        ownerId: firstText(
+          taskData.ownerId,
+          taskData.createdBy,
+          taskData.createdByUid,
+          inviteData.invitedBy,
+          inviteData.sharedByUid
+        ),
+
+        createdBy: firstText(
+          taskData.createdBy,
+          taskData.ownerId,
+          taskData.createdByUid,
+          inviteData.invitedBy,
+          inviteData.sharedByUid
+        ),
+
+        createdByEmail: firstText(
+          taskData.createdByEmail,
+          taskData.ownerEmail,
+          inviteData.invitedByEmail,
+          inviteData.sharedByEmail
+        ),
+
+        ownerEmail: firstText(
+          taskData.ownerEmail,
+          taskData.createdByEmail,
+          inviteData.invitedByEmail,
+          inviteData.sharedByEmail
+        ),
+
+        ownerName: firstText(
+          taskData.ownerName,
+          inviteData.invitedByName,
+          inviteData.sharedByName
+        ),
 
         isSharedTask: true,
         sharedWithMe: true,
         accessType: inviteData.accessType || "email_invite",
+
 
         sharedBy: inviteData.invitedBy || inviteData.sharedByUid || "",
         sharedByUid: inviteData.invitedBy || inviteData.sharedByUid || "",
@@ -571,12 +616,13 @@ export default function AcceptTaskInvitePage() {
         });
 
         console.log("[AcceptTaskInvitePage] Share doc updated to active");
-      } catch (shareErr: any) {
-        // CRITICAL: do NOT rethrow. The user's personal task is already
-        // written. Log it so we can audit which share docs needed
-        // reconciliation, but never block the user.
+            } catch (shareErr: any) {
+        // The personal task copy is already written, so we never block the
+        // user. But if the share doc did NOT flip to "active", the inviter's
+        // "Who has access" list will never show this person. Retry once with
+        // the minimal, rules-compliant field set before giving up.
         console.warn(
-          "[AcceptTaskInvitePage] Share doc update failed (NON-FATAL, task is already in My Tasks):",
+          "[AcceptTaskInvitePage] Share doc update failed, retrying minimal payload:",
           {
             code: shareErr?.code,
             message: shareErr?.message,
@@ -585,7 +631,38 @@ export default function AcceptTaskInvitePage() {
             shareId,
           }
         );
+
+        try {
+          const lowerAuthEmail = (user.email || "").toLowerCase();
+
+          await updateDoc(shareRef, {
+            status: "active",
+            acceptedBy: user.uid,
+            acceptedByUid: user.uid,
+            acceptedByEmail: user.email || "",
+            acceptedByEmailLower: lowerAuthEmail,
+            acceptedByName:
+              freshDisplayName ||
+              (user.email ? user.email.split("@")[0] : "") ||
+              "",
+            acceptedByPhotoURL: freshPhotoURL || "",
+            invitedEmailLower: invitedEmailLowerFinal,
+            updatedAt: serverTimestamp(),
+            acceptedAt: serverTimestamp(),
+          });
+
+          console.log(
+            "[AcceptTaskInvitePage] Share doc activated on retry"
+          );
+        } catch (retryErr: any) {
+          console.error(
+            "[AcceptTaskInvitePage] Share doc activation failed after retry (NON-FATAL):",
+            retryErr?.code,
+            retryErr?.message
+          );
+        }
       }
+
 
 
             // ============================================================

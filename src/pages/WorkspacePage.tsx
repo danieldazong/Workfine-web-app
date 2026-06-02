@@ -122,6 +122,63 @@ function dedupeWorkspaceMembers(list: any[]): any[] {
   });
 }
 
+// ─── Monogram Gradient (shared) ───────────────────────────────────────────────
+// IMPORTANT: Must stay byte-for-byte identical to monogramGradient() in
+// Sidebar.tsx, Navbar.tsx, SettingsPage.tsx, TaskDetailPanel.tsx and TeamPage.tsx
+// so the SAME email renders the SAME gradient everywhere.
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
+function monogramInitials(name?: string | null, email?: string | null): string {
+  const label = String(name || email || "?").trim();
+  if (!label || label === "?") return "?";
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return initials || label[0]?.toUpperCase() || "?";
+}
+
+// Only Firebase Storage uploads are real user photos. Any other URL
+// (e.g. Google lh3.googleusercontent.com) is ignored so every account
+// shows its monogram gradient instead of the Gmail photo.
+function resolveAvatarPhoto(photoURL?: string | null): string {
+  const url = String(photoURL || "").trim();
+  return url.includes("firebasestorage") ? url : "";
+}
+
+// Returns the email-based seed used for the gradient. Falls back to name.
+function avatarSeed(name?: string | null, email?: string | null): string {
+  return (
+    String(email || "").trim().toLowerCase() ||
+    String(name || "?").trim().toLowerCase()
+  );
+}
 
 export default function WorkspacePage() {
   const { tab } = useParams<{ tab?: string }>();
@@ -806,41 +863,31 @@ function OverviewTab({
             <p className="text-xs text-gray-400 italic">No members yet</p>
           ) : (
             <div className="flex flex-wrap gap-2 mb-3">
-                            {dedupeWorkspaceMembers(members).slice(0, 6).map((m: any) => {
-  const label =
-    m.displayName ||
-    m.email ||
-    "Member";
-
-  const initials =
-    m.avatar ||
-    label
-      .split(" ")
-      .map((part: string) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
+                                                        {dedupeWorkspaceMembers(members).slice(0, 6).map((m: any) => {
+  const label = m.displayName || m.email || "Member";
+  const photo = resolveAvatarPhoto(m.photoURL);
 
   return (
     <div
             key={getMemberUid(m) || getMemberEmail(m)}
       title={`${m.displayName || "Member"}${m.email ? ` • ${m.email}` : ""}`}
-      className="w-9 h-9 rounded-full border-2 border-white shadow-sm overflow-hidden flex items-center justify-center text-white text-xs font-bold bg-violet-500"
-      style={{ backgroundColor: m.photoURL ? undefined : m.avatarColor || "#8b5cf6" }}
+      className="w-9 h-9 rounded-full border-2 border-white shadow-sm overflow-hidden flex items-center justify-center text-white text-xs font-bold select-none"
+      style={photo ? undefined : { background: monogramGradient(avatarSeed(m.displayName, m.email)) }}
     >
-      {m.photoURL ? (
+      {photo ? (
         <img
-          src={m.photoURL}
+          src={photo}
           alt={label}
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
         />
       ) : (
-        initials
+        monogramInitials(m.displayName, m.email)
       )}
     </div>
   );
 })}
+
 
               {members.length > 6 && (
                 <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-xs text-gray-500 font-semibold border-2 border-white shadow-sm">
@@ -1359,27 +1406,22 @@ const removable =
             className="grid grid-cols-[1fr_140px_120px_36px] items-center gap-3 px-2 py-3 hover:bg-gray-50 transition-colors rounded-lg"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <div
-  className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden bg-violet-500"
-  style={{ backgroundColor: m.photoURL ? undefined : m.avatarColor || "#8b5cf6" }}
+                            <div
+  className="w-9 h-9 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden select-none"
+  style={resolveAvatarPhoto(m.photoURL) ? undefined : { background: monogramGradient(avatarSeed(m.displayName, m.email)) }}
 >
-  {m.photoURL ? (
+  {resolveAvatarPhoto(m.photoURL) ? (
     <img
-      src={m.photoURL}
+      src={resolveAvatarPhoto(m.photoURL)}
       alt={m.displayName || m.email || "Member"}
       className="w-full h-full object-cover"
       referrerPolicy="no-referrer"
     />
   ) : (
-    m.avatar ||
-    (m.displayName || m.email || "M")
-      .split(" ")
-      .map((part: string) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase()
+    monogramInitials(m.displayName, m.email)
   )}
 </div>
+
 
               <div className="min-w-0">
                 <p className="text-sm font-medium text-gray-800 truncate">
@@ -1901,27 +1943,22 @@ function TransferOwnershipDialog({
                         isSelected ? "bg-violet-50" : "hover:bg-gray-50"
                       }`}
                     >
-                      <div
-  className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden bg-violet-500"
-  style={{ backgroundColor: c.photoURL ? undefined : c.avatarColor || "#8b5cf6" }}
+                                            <div
+  className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden select-none"
+  style={resolveAvatarPhoto(c.photoURL) ? undefined : { background: monogramGradient(avatarSeed(c.displayName, c.email)) }}
 >
-  {c.photoURL ? (
+  {resolveAvatarPhoto(c.photoURL) ? (
     <img
-      src={c.photoURL}
+      src={resolveAvatarPhoto(c.photoURL)}
       alt={c.displayName || c.email || "Member"}
       className="w-full h-full object-cover"
       referrerPolicy="no-referrer"
     />
   ) : (
-    c.avatar ||
-    (c.displayName || c.email || "M")
-      .split(" ")
-      .map((part: string) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase()
+    monogramInitials(c.displayName, c.email)
   )}
 </div>
+
 
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800 truncate">{c.displayName}</p>

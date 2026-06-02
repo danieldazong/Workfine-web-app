@@ -71,12 +71,20 @@ function getAuthDisplayName(firebaseUser: User): string {
 }
 
 function getAuthPhotoURL(firebaseUser: User): string {
-  const googleProviderPhoto =
-    firebaseUser.providerData.find(
-      (provider) => provider.providerId === "google.com"
-    )?.photoURL || "";
+  // Avatar policy: default to the monogram gradient for every account.
+  // Never auto-pull the Google/Gmail photo. We only keep a photo that the
+  // user uploaded themselves (Firebase Storage URL written from Settings).
+  // Anything coming straight from the Google provider is ignored here.
+  const stored = String(firebaseUser.photoURL || "").trim();
 
-  return firebaseUser.photoURL || googleProviderPhoto || "";
+  // Only treat a Storage-hosted photo (uploaded via Settings) as a real photo.
+  // Google-hosted photos (lh3.googleusercontent.com, etc.) are ignored so new
+  // accounts always start on the gradient monogram.
+  if (stored && stored.includes("firebasestorage")) {
+    return stored;
+  }
+
+  return "";
 }
 
 
@@ -493,11 +501,12 @@ async function ensureWorkspaceAndMembership(
           name: `${displayName}'s Workspace`,
 
 
-          ownerId: uid,
+                  ownerId: uid,
           ownerEmail: email,
           ownerEmailLower: normalizeEmail(email),
-          ownerPhotoURL: profilePayload.photoURL,
-          ownerAvatarUrl: profilePayload.avatarUrl,
+          ownerPhotoURL: profilePayload.photoURL || "",
+          ownerAvatarUrl: profilePayload.avatarUrl || "",
+
 
           plan: "free",
           createdAt: serverTimestamp(),
@@ -641,11 +650,11 @@ async function ensureWorkspaceAndMembership(
 
     await setDoc(
       wsRef,
-      {
+            {
         ownerEmail: email,
         ownerEmailLower: normalizeEmail(email),
-        ownerPhotoURL: profilePayload.photoURL,
-        ownerAvatarUrl: profilePayload.avatarUrl,
+        ownerPhotoURL: profilePayload.photoURL || "",
+        ownerAvatarUrl: profilePayload.avatarUrl || "",
         updatedAt: serverTimestamp(),
       },
       { merge: true }
@@ -714,11 +723,12 @@ async function ensurePersonalWorkspace(firebaseUser: User): Promise<string> {
       name: `${profilePayload.displayName}'s Workspace`,
 
 
-      ownerId: firebaseUser.uid,
+         ownerId: firebaseUser.uid,
       ownerEmail: profilePayload.email,
       ownerEmailLower: profilePayload.emailLower,
-      ownerPhotoURL: profilePayload.photoURL,
-      ownerAvatarUrl: profilePayload.avatarUrl,
+      ownerPhotoURL: profilePayload.photoURL || "",
+      ownerAvatarUrl: profilePayload.avatarUrl || "",
+
 
       plan: "free",
       billingMode: "manual",

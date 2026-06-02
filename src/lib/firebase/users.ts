@@ -39,28 +39,19 @@ export interface UserProfile {
 }
 
 /**
- * Resolves the best available photo for a user at sign-in/sign-up.
- * Reads the Firebase Auth photoURL first, then falls back to the
- * Google provider's photoURL. Global for every account/provider.
+ * Avatar policy: every account defaults to its own deterministic monogram
+ * gradient (rendered client-side from the email). We deliberately DO NOT
+ * import the Google/Gmail profile photo at sign-in. A real photo is only
+ * ever stored when the user explicitly uploads one in Settings.
+ *
+ * Returning "" here guarantees no photoURL is auto-stamped from the provider,
+ * so the gradient monogram shows everywhere by default.
  */
-function resolveSignInPhotoURL(user: {
+function resolveSignInPhotoURL(_user: {
   photoURL?: string | null;
   providerData?: Array<{ providerId?: string; photoURL?: string | null }>;
 }): string {
-  const direct = String(user?.photoURL || "").trim();
-  if (direct) return direct;
-
-  const providers = Array.isArray(user?.providerData) ? user.providerData : [];
-
-  const googlePhoto = providers.find(
-    (p) => p?.providerId === "google.com" && String(p?.photoURL || "").trim()
-  )?.photoURL;
-  if (googlePhoto) return String(googlePhoto).trim();
-
-  const anyProviderPhoto = providers.find((p) =>
-    String(p?.photoURL || "").trim()
-  )?.photoURL;
-  return String(anyProviderPhoto || "").trim();
+  return "";
 }
 
 // Called on every login and signup — creates or updates user doc
@@ -153,3 +144,120 @@ export const getUserProfile = async (
     return null;
   }
 };
+// ─── GLOBAL AVATAR PROPAGATION ────────────────────────────────────────────────
+// When a user uploads or removes their profile photo, the new URL (or "") must
+// be written to EVERY document that stores a copy of their photoURL, so all
+// components that read those copies (Task comments, Task modal "Who has access",
+// member grids, invites sent to / received by other accounts) update in real
+// time. Fully global and account-agnostic.
+import {
+  collection,
+  collectionGroup,
+  getDocs,
+  query,
+  updateDoc,
+  where,
+  writeBatch,
+} from "firebase/firestore";
+
+export async function propagateUserPhotoURL(
+  uid: string,
+  email: string | null,
+  newPhotoURL: string
+): Promise<void> {
+  const cleanUid = String(uid || "").trim();
+  if (!cleanUid) return;
+
+  const emailLower = String(email || "").trim().toLowerCase();
+  const photo = String(newPhotoURL || "");
+
+  try {
+    const batch = writeBatch(db);
+    let writes = 0;
+
+    // 1. Master users/{uid} doc.
+    await updateDoc(doc(db, "users", cleanUid), {
+      photoURL: photo,
+      avatarUrl: photo,
+      updatedAt: serverTimestamp(),
+    }).catch(() => {});
+
+    // 2. Every workspace member doc for this uid (any workspace).
+    const memberDocs = await getDocs(
+      query(collectionGroup(db, "members"), where("userId", "==", cleanUid))
+    ).catch(() => null);
+
+    memberDocs?.forEach((d) => {
+      batch.set(
+        d.ref,
+        { photoURL: photo, avatarUrl: photo, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      writes++;
+    });
+
+    // 3. Every workspace people/guest doc for this uid.
+    const peopleDocs = await getDocs(
+      query(collectionGroup(db, "people"), where("userId", "==", cleanUid))
+    ).catch(() => null);
+
+    peopleDocs?.forEach((d) => {
+      batch.set(
+        d.ref,
+        { photoURL: photo, avatarUrl: photo, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      writes++;
+    });
+
+    // 4. Share docs where THIS user is the RECEIVER (they accepted the invite).
+    const shareDocsAsReceiver = await getDocs(
+      query(collectionGroup(db, "shares"), where("acceptedByUid", "==", cleanUid))
+    ).catch(() => null);
+
+    shareDocsAsReceiver?.forEach((d) => {
+      batch.set(
+        d.ref,
+        { acceptedByPhotoURL: photo, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      writes++;
+    });
+
+    // 5. Share docs where THIS user is the SENDER/OWNER.
+    const shareDocsAsOwner = await getDocs(
+      query(collectionGroup(db, "shares"), where("ownerId", "==", cleanUid))
+    ).catch(() => null);
+
+    shareDocsAsOwner?.forEach((d) => {
+      batch.set(
+        d.ref,
+        { ownerPhotoURL: photo, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      writes++;
+    });
+
+    // 6. Workspace owner-photo fields for any workspace this user owns.
+    const ownedWorkspaces = await getDocs(
+      query(collection(db, "workspaces"), where("ownerId", "==", cleanUid))
+    ).catch(() => null);
+
+    ownedWorkspaces?.forEach((d) => {
+      batch.set(
+        d.ref,
+        { ownerPhotoURL: photo, ownerAvatarUrl: photo, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      writes++;
+    });
+
+    if (writes > 0) {
+      await batch.commit();
+    }
+
+    console.log(`[propagateUserPhotoURL] ✅ Synced photo to ${writes} doc(s)`);
+  } catch (err) {
+    console.warn("[propagateUserPhotoURL] partial failure (non-fatal):", err);
+  }
+}

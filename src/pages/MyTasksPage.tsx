@@ -445,11 +445,54 @@
         await Promise.all(
           missing.map(async (c) => {
             try {
-              const srcSnap = await getDoc(
+                            const srcSnap = await getDoc(
                 doc(db, "workspaces", c.workspaceId, "tasks", c.taskId)
               );
               if (!srcSnap.exists()) return;
               const src = srcSnap.data() as any;
+
+              // Recover the REAL owner from the share doc if the source task
+              // doc happens to be missing owner fields (older tasks).
+              let shareOwner: any = {};
+              if (c.shareId) {
+                try {
+                  const shareSnap = await getDoc(
+                    doc(
+                      db,
+                      "workspaces",
+                      c.workspaceId,
+                      "tasks",
+                      c.taskId,
+                      "shares",
+                      c.shareId
+                    )
+                  );
+                  if (shareSnap.exists()) shareOwner = shareSnap.data() as any;
+                } catch {
+                  // ignore
+                }
+              }
+
+              const ownerId =
+                src.ownerId ||
+                src.createdBy ||
+                src.createdByUid ||
+                shareOwner.invitedBy ||
+                shareOwner.sharedByUid ||
+                "";
+
+              const ownerEmail =
+                src.ownerEmail ||
+                src.createdByEmail ||
+                shareOwner.invitedByEmail ||
+                shareOwner.sharedByEmail ||
+                "";
+
+              const ownerName =
+                src.ownerName ||
+                shareOwner.invitedByName ||
+                shareOwner.sharedByName ||
+                "";
 
               await setDoc(
                 doc(db, "users", user.uid!, "tasks", c.taskId),
@@ -460,6 +503,14 @@
                   sharedTaskId: c.taskId,
                   workspaceId: c.workspaceId,
                   shareId: c.shareId || "",
+
+                  // GLOBAL OWNER PRESERVATION — never the current user.
+                  ownerId,
+                  createdBy: src.createdBy || ownerId,
+                  createdByEmail: ownerEmail,
+                  ownerEmail,
+                  ownerName,
+
                   isSharedTask: true,
                   sharedWithMe: true,
                   accessType: "email_invite",
@@ -499,6 +550,148 @@
     };
   }, [user?.uid, user?.email]);
 
+
+  /**
+   * 2b. Owner-field backfill for ALREADY-ACCEPTED shared tasks.
+   *
+   * Existing invitees have a personal task copy that was written before the
+   * owner-preservation fix, so it may be missing ownerId/createdByEmail.
+   * Without those, TaskDetailPanel falls back to showing the VIEWER as Owner.
+   *
+   * This effect runs once whenever the user's shared tasks load. For each
+   * shared task missing owner fields, it recovers the real owner from the
+   * canonical share doc (invitedBy / invitedByEmail) or the source task,
+   * then merges the owner fields back into users/{uid}/tasks/{taskId}.
+   *
+   * Idempotent: any task that already has ownerId AND createdByEmail is
+   * skipped, so it never re-writes and never loops.
+   */
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    let cancelled = false;
+
+    const backfillOwners = async () => {
+      // Only look at the user's own copies that are shared and missing owner.
+      const needsRepair = (Array.isArray(userTaskIndex) ? userTaskIndex : [])
+        .filter((t: any) => isSharedTask(t))
+        .filter((t: any) => {
+          const hasOwnerId = String(t.ownerId || t.createdBy || "").trim();
+          const hasOwnerEmail = String(
+            t.ownerEmail || t.createdByEmail || ""
+          ).trim();
+          return !hasOwnerId || !hasOwnerEmail;
+        });
+
+      if (cancelled || needsRepair.length === 0) return;
+
+      console.log(
+        "[MyTasksPage] Owner backfill: repairing",
+        needsRepair.length,
+        "shared task(s) missing owner fields"
+      );
+
+      await Promise.all(
+        needsRepair.map(async (t: any) => {
+          const taskId = String(
+            t.originalTaskId || t.sharedTaskId || t.taskId || t.id || ""
+          ).trim();
+          const wsId = String(t.workspaceId || "").trim();
+          const shareId = String(t.shareId || "").trim();
+
+          if (!taskId || !wsId) return;
+
+          try {
+            // 1. Try the canonical source task first.
+            let ownerId = "";
+            let ownerEmail = "";
+            let ownerName = "";
+
+            try {
+              const srcSnap = await getDoc(
+                doc(db, "workspaces", wsId, "tasks", taskId)
+              );
+              if (srcSnap.exists()) {
+                const src = srcSnap.data() as any;
+                ownerId = src.ownerId || src.createdBy || src.createdByUid || "";
+                ownerEmail = src.ownerEmail || src.createdByEmail || "";
+                ownerName = src.ownerName || "";
+              }
+            } catch {
+              // ignore — fall through to share doc
+            }
+
+            // 2. Fall back to the share doc (always identifies the inviter).
+            if ((!ownerId || !ownerEmail) && shareId) {
+              try {
+                const shareSnap = await getDoc(
+                  doc(
+                    db,
+                    "workspaces",
+                    wsId,
+                    "tasks",
+                    taskId,
+                    "shares",
+                    shareId
+                  )
+                );
+                if (shareSnap.exists()) {
+                  const s = shareSnap.data() as any;
+                  ownerId =
+                    ownerId || s.invitedBy || s.sharedByUid || "";
+                  ownerEmail =
+                    ownerEmail || s.invitedByEmail || s.sharedByEmail || "";
+                  ownerName =
+                    ownerName || s.invitedByName || s.sharedByName || "";
+                }
+              } catch {
+                // ignore
+              }
+            }
+
+            // 3. Last resort: the personal copy may already carry sharedBy*.
+            ownerId =
+              ownerId || t.sharedByUid || t.sharedBy || "";
+            ownerEmail = ownerEmail || t.sharedByEmail || "";
+            ownerName = ownerName || t.sharedByName || "";
+
+            if (!ownerId && !ownerEmail) return; // nothing recoverable
+
+            await setDoc(
+              doc(db, "users", user.uid!, "tasks", t.id),
+              {
+                ownerId,
+                createdBy: ownerId,
+                createdByEmail: ownerEmail,
+                ownerEmail,
+                ownerName,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+
+            console.log("[MyTasksPage] Owner backfill repaired:", t.id, {
+              ownerId,
+              ownerEmail,
+            });
+          } catch (err) {
+            console.warn(
+              "[MyTasksPage] Owner backfill failed for",
+              taskId,
+              err
+            );
+          }
+        })
+      );
+    };
+
+    backfillOwners();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, userTaskIndex]);
 
     /**
      * 3. Sync filter/highlight/deep-link state from URL.

@@ -17,8 +17,83 @@ import {
 import { db, auth, storage } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
-import { resolveWorkspaceDisplayId } from "../lib/utils";
+import { propagateUserPhotoURL } from "../lib/firebase/users";
 
+
+
+// ─── Monogram Gradient (shared) ───────────────────────────────────────────────
+// IMPORTANT: This MUST stay byte-for-byte identical to monogramGradient() in
+// src/components/TaskDetailPanel.tsx, src/pages/TeamPage.tsx and
+// src/components/Navbar.tsx so the SAME email renders the SAME gradient
+// everywhere (Settings, Task modal, External Guests, Sidebar, Navbar).
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
+function monogramInitials(name?: string | null, email?: string | null): string {
+  const label = String(name || email || "?").trim();
+  if (!label || label === "?") return "?";
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return initials || label[0]?.toUpperCase() || "?";
+}
+
+// Only Firebase Storage uploads are real user photos. Any other URL
+// (e.g. Google lh3.googleusercontent.com) is ignored so every account
+// shows its monogram gradient instead of the Gmail photo.
+function resolveAvatarPhoto(photoURL?: string | null): string {
+  const url = String(photoURL || "").trim();
+  return url.includes("firebasestorage") ? url : "";
+}
+// Produces a clean, human-friendly workspace ID label.
+// Personal workspaces are stored as "personal_<uid>" or "WF-###";
+// this shows a tidy value instead of the raw internal ID.
+function resolveWorkspaceDisplayId(
+  workspaceId?: string | null,
+  workspaceData?: { displayId?: string; code?: string; name?: string } | null,
+  uid?: string | null
+): string {
+  // Prefer an explicit display code if the workspace doc carries one
+  if (workspaceData?.displayId) return workspaceData.displayId;
+  if (workspaceData?.code) return workspaceData.code;
+
+  const id = String(workspaceId || "").trim();
+  if (!id) return "—";
+
+  // Personal workspaces look like "personal_<uid>" — show a clean label
+  if (id.startsWith("personal_")) {
+    return uid && id === `personal_${uid}` ? "Personal" : "Personal";
+  }
+
+  // Otherwise return the ID as-is (e.g. "WF-138773")
+  return id;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,21 +155,25 @@ function Toast({
 // ─── Avatar Display ───────────────────────────────────────────────────────────
 
 function AvatarDisplay({
-  photoURL, displayName, size = 96, uploadProgress, onClick,
+  photoURL, displayName, email, size = 96, uploadProgress, onClick,
 }: {
   photoURL?: string | null;
   displayName?: string | null;
+  email?: string | null;
   size?: number;
   uploadProgress?: number | null;
   onClick?: () => void;
 }) {
-  const initials = (displayName || "U")[0].toUpperCase();
-  const colors = [
-    "#8b5cf6","#3b82f6","#10b981","#f59e0b",
-    "#ef4444","#ec4899","#06b6d4",
-  ];
-  const color = colors[(displayName?.charCodeAt(0) ?? 0) % colors.length];
+   // Same seed used everywhere: normalized lowercase email, then display name.
+  const seed =
+    String(email || "").trim().toLowerCase() ||
+    String(displayName || "?").trim().toLowerCase();
+  const initials = monogramInitials(displayName, email);
   const circumference = 2 * Math.PI * (size / 2 - 3);
+  // Ignore Google/Gmail photos; only honour Firebase Storage uploads.
+  const safePhoto = resolveAvatarPhoto(photoURL);
+
+
 
   return (
     <div
@@ -102,25 +181,28 @@ function AvatarDisplay({
       style={{ width: size, height: size }}
       onClick={onClick}
     >
-      <div
+                 <div
         className="w-full h-full rounded-full flex items-center justify-center
-          text-white font-bold overflow-hidden ring-4 ring-white shadow-md"
+          text-white font-semibold overflow-hidden ring-4 ring-white shadow-md select-none"
         style={{
-          backgroundColor: photoURL ? "transparent" : color,
+          background: safePhoto ? "transparent" : monogramGradient(seed),
           fontSize: size * 0.35,
+          letterSpacing: "0.02em",
         }}
       >
-        {photoURL ? (
+        {safePhoto ? (
           <img
-            src={photoURL}
+            src={safePhoto}
             alt="avatar"
             className="w-full h-full object-cover"
-            key={photoURL}
+            key={safePhoto}
           />
         ) : (
           initials
         )}
       </div>
+
+
 
       {uploadProgress !== null && uploadProgress !== undefined && (
         <svg
@@ -260,6 +342,61 @@ export default function SettingsPage() {
   // ── Avatar upload ─────────────────────────────────────────────────────────
   const handleAvatarClick = () => fileInputRef.current?.click();
 
+  // ── Remove avatar (reset to default monogram gradient) ──────────────────────
+  const handleRemoveAvatar = async () => {
+    if (!user) return;
+    if (uploadProgress !== null) return; // don't allow during an active upload
+
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      showToast("No authenticated user.", "error");
+      return;
+    }
+
+    const previousPhoto = localPhotoURL;
+    setLocalPhotoURL(null); // optimistic: show gradient immediately
+
+    try {
+      // 1. Clear Firebase Auth profile photo
+      await updateProfile(currentUser, { photoURL: "" });
+
+      // 2. Clear Firestore users doc
+      await updateDoc(doc(db, "users", currentUser.uid), {
+        photoURL: "",
+        avatarUrl: "",
+        updatedAt: serverTimestamp(),
+      });
+
+            // 3. Clear workspace member doc (non-critical)
+      if (workspaceId) {
+        await updateDoc(
+          doc(db, "workspaces", workspaceId, "members", currentUser.uid),
+          { photoURL: "", avatarUrl: "", updatedAt: serverTimestamp() }
+        ).catch((err) =>
+          console.warn("[Settings] member doc photo clear skipped:", err.code)
+        );
+      }
+
+      // 3b. GLOBAL: propagate the cleared photo everywhere so every account
+      // and every section (comments, task modal, grids, invites) reverts to
+      // the monogram gradient in real time.
+      await propagateUserPhotoURL(currentUser.uid, currentUser.email, "");
+
+
+      // 4. Delete the stored avatar file (ignore if missing)
+      await deleteObject(ref(storage, `avatars/${currentUser.uid}/profile.jpg`))
+        .catch((err) =>
+          console.warn("[Settings] avatar file delete skipped:", err.code)
+        );
+
+      showToast("Profile photo removed. Showing default avatar.");
+    } catch (err: any) {
+      console.error("[Settings] handleRemoveAvatar error:", err);
+      setLocalPhotoURL(previousPhoto ?? null); // revert on failure
+      showToast("Failed to remove photo. Please try again.", "error");
+    }
+  };
+
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -338,7 +475,7 @@ export default function SettingsPage() {
               updatedAt: serverTimestamp(),
             });
 
-            // 3. Update workspace member doc (non-critical)
+                        // 3. Update workspace member doc (non-critical)
             if (workspaceId) {
               await updateDoc(
                 doc(db, "workspaces", workspaceId, "members", currentUser.uid),
@@ -348,8 +485,19 @@ export default function SettingsPage() {
               );
             }
 
+            // 3b. GLOBAL: propagate the new photo to EVERY doc that stores a copy
+            // (all member docs, people/guest docs, task shares, owned workspaces)
+            // so Task comments, Task modal, member grids and sent invites update
+            // in real time for every account.
+            await propagateUserPhotoURL(
+              currentUser.uid,
+              currentUser.email,
+              downloadURL
+            );
+
             // 4. ✅ Update local state — UI updates instantly everywhere
             setLocalPhotoURL(downloadURL);
+
             setUploadProgress(null);
             showToast("Profile photo updated successfully!");
           } catch (err: any) {
@@ -622,11 +770,13 @@ export default function SettingsPage() {
             {/* Quick info card */}
             <div className="mt-4 bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
               <div className="flex items-center gap-3">
-                <AvatarDisplay
+                                <AvatarDisplay
                   photoURL={localPhotoURL}
                   displayName={user?.displayName}
+                  email={user?.email}
                   size={40}
                 />
+
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-slate-800 truncate">
                     {user?.displayName || "User"}
@@ -657,35 +807,52 @@ export default function SettingsPage() {
                     Profile Photo
                   </h2>
                   <div className="flex items-center gap-6">
-                    <AvatarDisplay
+                                        <AvatarDisplay
                       photoURL={localPhotoURL}
                       displayName={user?.displayName}
+                      email={user?.email}
                       size={96}
                       uploadProgress={uploadProgress}
                       onClick={handleAvatarClick}
                     />
-                    <div>
-                      <button
-                        onClick={handleAvatarClick}
-                        disabled={uploadProgress !== null}
-                        className="flex items-center gap-2 px-4 py-2 bg-violet-600
-                          hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed
-                          text-white text-sm font-medium rounded-xl transition-colors"
-                      >
-                        {uploadProgress !== null ? (
-                          <>
-                            <Loader2 size={14} className="animate-spin" />
-                            Uploading {uploadProgress}%
-                          </>
-                        ) : (
-                          <>
-                            <Upload size={14} />
-                            Upload Photo
-                          </>
+                                        <div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleAvatarClick}
+                          disabled={uploadProgress !== null}
+                          className="flex items-center gap-2 px-4 py-2 bg-violet-600
+                            hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed
+                            text-white text-sm font-medium rounded-xl transition-colors"
+                        >
+                          {uploadProgress !== null ? (
+                            <>
+                              <Loader2 size={14} className="animate-spin" />
+                              Uploading {uploadProgress}%
+                            </>
+                          ) : (
+                            <>
+                              <Upload size={14} />
+                              Upload Photo
+                            </>
+                          )}
+                        </button>
+
+                        {localPhotoURL && uploadProgress === null && (
+                          <button
+                            onClick={handleRemoveAvatar}
+                            className="flex items-center gap-2 px-4 py-2 bg-white
+                              border border-slate-200 hover:border-red-300 hover:bg-red-50
+                              text-slate-600 hover:text-red-600 text-sm font-medium
+                              rounded-xl transition-colors"
+                            title="Remove photo and use the default monogram avatar"
+                          >
+                            <Trash2 size={14} />
+                            Remove
+                          </button>
                         )}
-                      </button>
+                      </div>
                       <p className="text-xs text-slate-400 mt-2">
-                        JPG, PNG or WebP · Max 2MB
+                        JPG, PNG or WebP · Max 2MB · Removing resets to your default avatar
                       </p>
                     </div>
                   </div>

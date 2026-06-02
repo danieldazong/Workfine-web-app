@@ -208,6 +208,25 @@ function monogramGradient(seed: string): string {
 
   return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
 }
+function monogramInitials(name?: string | null, email?: string | null): string {
+  const label = String(name || email || "?").trim();
+  if (!label || label === "?") return "?";
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return initials || label[0]?.toUpperCase() || "?";
+}
+
+// Only Firebase Storage uploads are real user photos. Any other URL
+// (e.g. Google lh3.googleusercontent.com) is ignored so every account
+// shows its monogram gradient — identical to the sidebar/navbar policy.
+function resolveAvatarPhoto(photoURL?: string | null): string {
+  const url = String(photoURL || "").trim();
+  return url.includes("firebasestorage") ? url : "";
+}
 
 // ─── Live guest avatar (mirrors TaskDetailPanel.ModernAvatar) ────────────────
 // Subscribes to users/{uid} directly — the SAME source the Task modal uses —
@@ -250,7 +269,13 @@ function GuestAvatar({
 }: GuestAvatarProps) {
   const [photoURL, setPhotoURL] = useState<string>("");
   const [imgFailed, setImgFailed] = useState(false);
-  const [resolvedUid, setResolvedUid] = useState<string>(uid || "");
+    const isRealUidVal = (v?: string | null) =>
+    Boolean(v) && !String(v).trim().startsWith("guest_");
+
+  const [resolvedUid, setResolvedUid] = useState<string>(
+    isRealUidVal(uid) ? uid : "",
+  );
+
 
   // Resolve the UID: 1) prop uid, 2) acceptedByUid from share doc,
   // 3) lookup users/{uid} by emailLower. The email path is what makes this
@@ -258,10 +283,11 @@ function GuestAvatar({
   useEffect(() => {
     let cancelled = false;
 
-    if (uid) {
+       if (isRealUidVal(uid)) {
       setResolvedUid(uid);
       return;
     }
+
 
     (async () => {
       // (a) Try the share doc(s).
@@ -318,29 +344,43 @@ function GuestAvatar({
     };
   }, [uid, email, shareRefs]);
 
-  // Watch users/{uid} live — identical mechanism to the modal.
+    // Watch users/{uid} live — identical mechanism to the modal.
   useEffect(() => {
     setImgFailed(false);
 
+    console.log("[GuestAvatar] resolved →", {
+      email,
+      propUid: uid,
+      resolvedUid,
+      shareRefs,
+    });
+
     if (!resolvedUid) {
+      console.warn("[GuestAvatar] NO uid resolved for:", email);
       setPhotoURL("");
       return;
     }
 
+
     const unsub = onSnapshot(
       doc(db, "users", resolvedUid),
-      (snap) => {
+            (snap) => {
         const u = (snap.exists() ? snap.data() : {}) as any;
-        const real = String(
+        // GLOBAL POLICY: only Firebase Storage uploads count as a real photo —
+        // identical to resolveAvatarPhoto() used by the sidebar, navbar, member
+        // rows, and the Task modal "Who has access" row. Google/Gmail URLs are
+        // rejected so this surface shows the SAME thing as the modal.
+        const real = resolveAvatarPhoto(
           u.photoURL ||
+            u.avatarUrl ||
             u.googlePhotoURL ||
             u.providerPhotoURL ||
             u.authPhotoURL ||
-            u.avatarUrl ||
             "",
-        ).trim();
+        );
         setPhotoURL(real);
       },
+
       (err) => {
         console.warn(
           "[GuestAvatar] users/{uid} listener failed:",
@@ -384,15 +424,10 @@ function GuestAvatar({
         </div>
       )}
 
-      {showPhoto && isGoogle && (
-        <span
-          className="absolute -right-0.5 -bottom-0.5 w-4 h-4 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-[9px] font-black leading-none"
-          style={{ color: "#4285F4" }}
-          title="Google account"
-        >
-          G
-        </span>
-      )}
+            {/* Google "G" badge intentionally removed: under the global Firebase-only
+          policy, showPhoto is only ever true for an uploaded Storage photo, so
+          this badge could never render correctly. */}
+
     </div>
   );
 
@@ -736,6 +771,13 @@ export default function TeamPage() {
     );
     return true;
   });
+  // A real Firebase Auth uid never starts with "guest_" (that prefix is our
+  // people-doc id scheme). Reject doc-ids so we never subscribe to a
+  // non-existent users/{guest_...} document.
+  function isRealUid(value?: string | null): boolean {
+    const v = String(value || "").trim();
+    return v.length > 0 && !v.startsWith("guest_");
+  }
 
   // ── Guest avatar resolver — MIRRORS the Share-task modal exactly ──────────
   // The modal resolves photos from users/{uid} using each share's
@@ -748,7 +790,8 @@ export default function TeamPage() {
     const direct = String(
       guest.userId || guest.uid || guest.acceptedByUid || guest.acceptedBy || ""
     ).trim();
-    if (direct) return direct;
+    if (isRealUid(direct)) return direct; // ⬅️ only accept REAL uids
+
     const entries = [
       ...Object.values(guest.tasks ?? {}),
       ...Object.values(guest.projects ?? {}),
@@ -762,10 +805,11 @@ export default function TeamPage() {
           e?.invitedByUid ||
           ""
       ).trim();
-      if (u) return u;
+      if (isRealUid(u)) return u; // ⬅️ only accept REAL uids
     }
     return "";
   }
+
   // Collect every {workspaceId, taskId, shareId} from the guest's task entries
   // so GuestAvatar can read acceptedByUid from the SAME share doc the modal uses.
   function harvestGuestShareRefs(guest: any): {
@@ -853,6 +897,131 @@ export default function TeamPage() {
       }
     });
   }, [externalGuests, workspaceId]);
+   // ── Self-heal MISSING / BAD UID on guest people docs ────────────────────
+  // Older guest docs were written before the accept flow stamped a REAL uid,
+  // and some have a bogus userId equal to the "guest_..." doc id. Without a
+  // real uid, GuestAvatar can't subscribe to users/{uid} and shows a gradient
+  // even though the modal (which reads the share doc) shows the real photo.
+  //
+  // Repair order (as workspace owner, A can read all of these):
+  //   1) the share doc's acceptedByUid / acceptedBy
+  //   2) fallback: users query where emailLower == the guest's email
+  //
+  // Whichever yields a REAL uid (not "guest_...") is written back onto the
+  // people doc. Idempotent, ref-guarded, GLOBAL — runs for every guest.
+  const healedGuestUidRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!workspaceId) return;
+
+    externalGuests.forEach((p: any) => {
+      const personDocId = p.id || p.userId || p.uid;
+      if (!personDocId) return;
+
+      // Already has a REAL uid? nothing to do. ("guest_..." is the doc id,
+      // NOT a real uid, so it must NOT count as usable.)
+      const existing = String(p.userId || p.uid || "").trim();
+      if (isRealUid(existing)) return;
+
+      if (healedGuestUidRef.current.has(personDocId)) return;
+      healedGuestUidRef.current.add(personDocId);
+
+      (async () => {
+        let foundUid = "";
+
+        // (1) Try the share doc(s).
+        const refs = harvestGuestShareRefs(p);
+        for (const ref of refs) {
+          try {
+            const snap = await getDoc(
+              doc(
+                db,
+                "workspaces",
+                ref.workspaceId,
+                "tasks",
+                ref.taskId,
+                "shares",
+                ref.shareId,
+              ),
+            );
+            if (!snap.exists()) continue;
+            const s = snap.data() as any;
+            const u = String(s.acceptedByUid || s.acceptedBy || "").trim();
+            if (isRealUid(u)) {
+              foundUid = u;
+              break;
+            }
+          } catch (err) {
+            console.warn(
+              "[TeamPage] uid backfill share read failed:",
+              ref,
+              (err as any)?.message || err,
+            );
+          }
+        }
+
+        // (2) Fallback — resolve uid by email from the users collection.
+        if (!foundUid) {
+          const emailLower = String(p.emailLower || p.email || "")
+            .trim()
+            .toLowerCase();
+          if (emailLower) {
+            try {
+              const qs = await getDocs(
+                query(
+                  collection(db, "users"),
+                  where("emailLower", "==", emailLower),
+                ),
+              );
+              if (!qs.empty && isRealUid(qs.docs[0].id)) {
+                foundUid = qs.docs[0].id;
+              }
+            } catch (err) {
+              console.warn(
+                "[TeamPage] uid backfill email lookup failed:",
+                emailLower,
+                (err as any)?.message || err,
+              );
+            }
+          }
+        }
+
+        if (!foundUid) {
+          console.warn(
+            "[TeamPage] uid backfill: no real uid found for guest:",
+            personDocId,
+          );
+          return;
+        }
+
+        // Write the REAL uid back onto the people doc.
+        try {
+          await updateDoc(
+            doc(db, "workspaces", workspaceId, "people", personDocId),
+            {
+              userId: foundUid,
+              uid: foundUid,
+              updatedAt: serverTimestamp(),
+            },
+          );
+          console.log(
+            "[TeamPage] 🛠️ backfilled guest uid:",
+            personDocId,
+            "→",
+            foundUid,
+          );
+        } catch (err) {
+          console.warn(
+            "[TeamPage] uid backfill write failed:",
+            personDocId,
+            (err as any)?.message || err,
+          );
+        }
+      })();
+    });
+  }, [externalGuests, workspaceId]);
+
+
 
   // Diagnostic — confirms TeamPage is seeing the people documents.
   useEffect(() => {
@@ -1603,34 +1772,47 @@ export default function TeamPage() {
                 {ownerMember && !search.trim() && (
                   <div className="bg-white rounded-2xl border border-violet-100 shadow-sm p-4">
                     <div className="flex items-center gap-3">
-                      <div className="relative flex-shrink-0">
+                                            <div className="relative flex-shrink-0">
+                        {resolveAvatarPhoto((ownerMember as any).photoURL) ? (
+                          <img
+                            src={resolveAvatarPhoto((ownerMember as any).photoURL)}
+                            alt={ownerMember.displayName || ownerMember.email}
+                            referrerPolicy="no-referrer"
+                            className="w-10 h-10 rounded-full object-cover ring-1 ring-black/5"
+                            onError={(e) => {
+                              const img = e.currentTarget as HTMLImageElement;
+                              img.style.display = "none";
+                              const fb =
+                                img.nextElementSibling as HTMLElement | null;
+                              if (fb) fb.style.display = "flex";
+                            }}
+                          />
+                        ) : null}
+
                         <div
-                          className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden"
+                          className={`w-10 h-10 rounded-full items-center justify-center text-white font-semibold text-sm ring-1 ring-black/5 select-none ${
+                            resolveAvatarPhoto((ownerMember as any).photoURL)
+                              ? "hidden"
+                              : "flex"
+                          }`}
                           style={{
-                            backgroundColor: getAvatarColor(
-                              ownerMember.userId || "owner"
+                            background: monogramGradient(
+                              String(ownerMember.email || "")
+                                .trim()
+                                .toLowerCase() ||
+                                String(ownerMember.displayName || "?")
+                                  .trim()
+                                  .toLowerCase(),
                             ),
+                            letterSpacing: "0.02em",
                           }}
                         >
-                          {(ownerMember as any).photoURL ? (
-                            <img
-                              src={(ownerMember as any).photoURL}
-                              alt={ownerMember.displayName || ownerMember.email}
-                              referrerPolicy="no-referrer"
-                              className="w-10 h-10 rounded-full object-cover"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).style.display =
-                                  "none";
-                              }}
-                            />
-                          ) : (
-                            (
-                              ownerMember.displayName ||
-                              ownerMember.email ||
-                              "O"
-                            )[0].toUpperCase()
+                          {monogramInitials(
+                            ownerMember.displayName,
+                            ownerMember.email,
                           )}
                         </div>
+
                         {isOnline((ownerMember as any).lastActive) && (
                           <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
                         )}
@@ -1693,11 +1875,11 @@ export default function TeamPage() {
                     canManage(myRole, displayRole);
 
                   const online = isOnline(member.lastActive);
-                  const initials = (
-                    member.displayName ||
-                    member.email ||
-                    "?"
-                  )[0].toUpperCase();
+                                 const initials = monogramInitials(
+                    member.displayName,
+                    member.email,
+                  );
+
 
                   const bgColor =
                     member.avatarColor || getAvatarColor(member.userId || "x");
@@ -1710,31 +1892,49 @@ export default function TeamPage() {
                       className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition-all"
                     >
                       <div className="flex items-center gap-3">
-                                                <div className="relative flex-shrink-0">
+                                                              <div className="relative flex-shrink-0">
+                          {resolveAvatarPhoto((member as any).photoURL) ? (
+                            <img
+                              src={resolveAvatarPhoto((member as any).photoURL)}
+                              alt={member.displayName || member.email || "User"}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 rounded-full object-cover ring-1 ring-black/5"
+                              onError={(e) => {
+                                const img = e.currentTarget as HTMLImageElement;
+                                img.style.display = "none";
+                                const fb =
+                                  img.nextElementSibling as HTMLElement | null;
+                                if (fb) fb.style.display = "flex";
+                              }}
+                            />
+                          ) : null}
+
                           <div
-                            className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden"
-                            style={{ backgroundColor: bgColor }}
+                            className={`w-10 h-10 rounded-full items-center justify-center text-white font-semibold text-sm ring-1 ring-black/5 select-none ${
+                              resolveAvatarPhoto((member as any).photoURL)
+                                ? "hidden"
+                                : "flex"
+                            }`}
+                            style={{
+                              background: monogramGradient(
+                                String(member.email || "")
+                                  .trim()
+                                  .toLowerCase() ||
+                                  String(member.displayName || "?")
+                                    .trim()
+                                    .toLowerCase(),
+                              ),
+                              letterSpacing: "0.02em",
+                            }}
                           >
-                            {(member as any).photoURL ? (
-                              <img
-                                src={(member as any).photoURL}
-                                alt={member.displayName || member.email || "User"}
-                                referrerPolicy="no-referrer"
-                                className="w-10 h-10 rounded-full object-cover"
-                                onError={(e) => {
-                                  (e.currentTarget as HTMLImageElement).style.display =
-                                    "none";
-                                }}
-                              />
-                            ) : (
-                              initials
-                            )}
+                            {monogramInitials(member.displayName, member.email)}
                           </div>
 
                           {online && (
                             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
                           )}
                         </div>
+
 
 
                         <div className="flex-1 min-w-0">

@@ -211,7 +211,7 @@
     return String(providerWithPhoto?.photoURL || "").trim();
   }
 
-  function isGeneratedInitialAvatar(url?: string | null): boolean {
+   function isGeneratedInitialAvatar(url?: string | null): boolean {
     const clean = String(url || "")
       .trim()
       .toLowerCase();
@@ -227,6 +227,18 @@
     );
   }
 
+  // GLOBAL RULE (must match SettingsPage.resolveAvatarPhoto):
+  // Only Firebase Storage uploads count as a real user photo. Any other URL
+  // (Google lh3.googleusercontent.com, Gmail, providers, generated avatars)
+  // is ignored so every account falls back to its monogram gradient and the
+  // ONLY photo that ever shows is one the user uploaded in Settings.
+  function isRealUploadedPhoto(url?: string | null): boolean {
+    const clean = String(url || "").trim();
+    if (!clean) return false;
+    if (isGeneratedInitialAvatar(clean)) return false;
+    return clean.includes("firebasestorage");
+  }
+
   function getFirstRealPhotoURL(
     ...values: Array<string | null | undefined>
   ): string {
@@ -235,14 +247,18 @@
 
       if (!clean) continue;
 
-      // This prevents generated firstname/initial avatars from being used.
-      if (isGeneratedInitialAvatar(clean)) continue;
+      // Reject generated avatars AND any non-Firebase-Storage URL
+      // (e.g. Google/Gmail photos) so the result is always either a real
+      // uploaded photo or an empty string (→ monogram gradient).
+      if (!isRealUploadedPhoto(clean)) continue;
 
       return clean;
     }
 
     return "";
   }
+
+
 
   type TaskAccessMode = "task_project" | "invited_only" | "anyone_with_link";
 
@@ -1327,7 +1343,7 @@ function normalizeEmail(email?: string | null): string {
     return initials || label[0]?.toUpperCase() || "?";
   }
 
-  function ModernAvatar({
+   function ModernAvatar({
     email,
     name,
     photoURL,
@@ -1340,26 +1356,58 @@ function normalizeEmail(email?: string | null): string {
     size?: number;
     className?: string;
     }) {
+    // GLOBAL: only honour real Firebase Storage uploads. Everything else
+    // (Google/Gmail photos, generated avatars, empty) → monogram gradient.
+    const safePhoto = isRealUploadedPhoto(photoURL) ? String(photoURL).trim() : "";
+
+    // GLOBAL: a firebasestorage URL can still be DEAD (the user removed their
+    // photo, so the underlying object 404s). Track load failure per-URL and
+    // fall back to the monogram gradient instead of showing a broken image.
+    const [imgFailed, setImgFailed] = useState(false);
+
+    useEffect(() => {
+      setImgFailed(false);
+    }, [safePhoto]);
+
+    const showPhoto = Boolean(safePhoto) && !imgFailed;
+
     return (
       <div
         className={`relative flex-shrink-0 ${className}`}
         style={{ width: size, height: size }}
         title={String(name || email || "User")}
       >
-                <div
-          className="w-full h-full rounded-full flex items-center justify-center text-white font-semibold ring-1 ring-black/5 shadow-sm select-none"
+        <div
+          className="w-full h-full rounded-full flex items-center justify-center text-white font-semibold ring-1 ring-black/5 shadow-sm overflow-hidden select-none"
           style={{
-            background: monogramGradient(String(email || name || "?")),
+            background: showPhoto
+              ? "transparent"
+              : monogramGradient(
+                  String(email || "").trim().toLowerCase() ||
+                    String(name || "?").trim().toLowerCase(),
+                ),
             fontSize: Math.max(11, Math.floor(size * 0.4)),
             letterSpacing: "0.02em",
           }}
         >
-
-          {monogramInitials(name, email)}
+          {showPhoto ? (
+            <img
+              src={safePhoto}
+              alt={String(name || email || "User")}
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover"
+              key={safePhoto}
+              onError={() => setImgFailed(true)}
+            />
+          ) : (
+            monogramInitials(name, email)
+          )}
         </div>
       </div>
     );
   }
+
+
 
 
   function formatAttachmentSize(size?: number): string {
@@ -2481,13 +2529,27 @@ function formatFullLocalDateTime(timestamp: any): string {
 
         const matchedMember = memberByEmail || memberByUid;
 
-        const isCurrentUser =
-          Boolean(cleanUid && user?.uid && cleanUid === user.uid) ||
+               // Only treat this profile as the current user when we are NOT explicitly
+        // resolving a different identity. If a uid OR email is supplied that does
+        // not match the current user, this is someone else and must never fall
+        // back to the current user's name/email/photo.
+        const matchesCurrentUid =
+          Boolean(cleanUid && user?.uid && cleanUid === user.uid);
+        const matchesCurrentEmail =
           Boolean(
             cleanEmail &&
-            user?.email &&
-            cleanEmail === normalizeEmail(user.email),
+              user?.email &&
+              cleanEmail === normalizeEmail(user.email),
           );
+
+        const conflictsWithCurrentUser =
+          (Boolean(cleanUid) && Boolean(user?.uid) && cleanUid !== user.uid) ||
+          (Boolean(cleanEmail) &&
+            Boolean(user?.email) &&
+            cleanEmail !== normalizeEmail(user.email));
+
+        const isCurrentUser =
+          (matchesCurrentUid || matchesCurrentEmail) && !conflictsWithCurrentUser;
 
         const resolvedEmail =
           cleanEmail ||
@@ -4818,7 +4880,7 @@ await notifyCommentRecipients({
         return;
       }
 
-      const sharesQuery = firestoreQuery(
+         const sharesQuery = firestoreQuery(
         collection(
           db,
           "workspaces",
@@ -4827,7 +4889,6 @@ await notifyCommentRecipients({
           sourceTaskId,
           "shares",
         ),
-        orderBy("createdAt", "desc"),
       );
 
       const unsub = onSnapshot(
@@ -4841,10 +4902,15 @@ await notifyCommentRecipients({
             .filter(
               (share) =>
                 share.status !== "revoked" && share.status !== "removed",
+            )
+            .sort(
+              (a, b) =>
+                toMs((b as any).createdAt) - toMs((a as any).createdAt),
             );
 
           setTaskShares(shares);
         },
+
 
         (err) => {
           console.error("[TaskDetailPanel] shares listener:", err.message);
@@ -5295,11 +5361,42 @@ await notifyCommentRecipients({
           sharedWithEmail: recipientEmail,
           sharedWithEmailLower: recipientEmail,
 
-          invitedBy: safeCurrentUserUid,
+                invitedBy: safeCurrentUserUid,
           invitedByName: senderName,
           invitedByEmail: safeCurrentUserEmail,
           invitedEmail: recipientEmail,
           invitedEmailLower: recipientEmail,
+
+          // GLOBAL OWNER PRESERVATION — carry the REAL task owner on the
+          // share doc so every invitee's copy (and every backfill path)
+          // can resolve the creator on any account. The owner is the task's
+          // existing owner if present, otherwise the sender (who is creating
+          // this share and therefore owns the task in the current workspace).
+          ownerId: String(
+            (taskView as any).ownerId ||
+              (taskView as any).createdBy ||
+              (taskView as any).createdByUid ||
+              (task as any).ownerId ||
+              (task as any).createdBy ||
+              (task as any).createdByUid ||
+              safeCurrentUserUid ||
+              "",
+          ).trim(),
+          ownerEmail: normalizeEmail(
+            (taskView as any).ownerEmail ||
+              (taskView as any).createdByEmail ||
+              (task as any).ownerEmail ||
+              (task as any).createdByEmail ||
+              safeCurrentUserEmail ||
+              "",
+          ),
+          ownerName: String(
+            (taskView as any).ownerName ||
+              (task as any).ownerName ||
+              senderName ||
+              "",
+          ).trim(),
+
 
           message: shareMessage.trim(),
           status: "pending",
@@ -5343,12 +5440,27 @@ await notifyCommentRecipients({
             (task as any).createdBy ||
             safeCurrentUserUid,
 
-          createdByEmail:
+                createdByEmail:
             (taskView as any).createdByEmail ||
             (task as any).createdByEmail ||
             safeCurrentUserEmail,
 
+          // Write ownerEmail and ownerName onto the canonical task so the
+          // owner row resolves correctly for EVERY viewer, on every account.
+          ownerEmail:
+            (taskView as any).ownerEmail ||
+            (taskView as any).createdByEmail ||
+            (task as any).ownerEmail ||
+            (task as any).createdByEmail ||
+            safeCurrentUserEmail,
+
+          ownerName:
+            (taskView as any).ownerName ||
+            (task as any).ownerName ||
+            senderName,
+
           sharedWithEmails: arrayUnion(recipientEmail),
+
           accessUpdatedAt: serverTimestamp(),
 
           createdAt: taskView.createdAt || task.createdAt || serverTimestamp(),
@@ -7922,31 +8034,225 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                         </div>
                       )}
 
-                      {/* Current user */}
-                      <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors">
-                        <ModernAvatar
-                          name={safeCurrentUserDisplayName}
-                          email={safeCurrentUserEmail}
-                          photoURL={currentUserRealPhotoURL}
-                          size={32}
-                        />
+                                                                {/* Task owner (always the real creator, never the viewer) */}
+                      {(() => {
+                        // GLOBAL: resolve the owner from the task first, then
+                        // fall back to ANY share doc's owner/inviter fields.
+                        // This guarantees the real creator shows on every
+                        // account, even when the viewer's personal task copy
+                        // is stale and the canonical task is unreadable.
+                        const ownerFromShares = taskShares.find((s) =>
+                          String(
+                            (s as any).ownerId ||
+                              (s as any).sharedByUid ||
+                              (s as any).invitedBy ||
+                              "",
+                          ).trim(),
+                        );
 
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-slate-800 truncate leading-tight">
-                            {safeCurrentUserDisplayName}
-                          </p>
-                          <p className="text-[11px] text-slate-400 truncate">
-                            {safeCurrentUserEmail || "Current user"}
-                          </p>
-                        </div>
+                        const ownerUid = String(
+                          (taskView as any).ownerId ||
+                            (taskView as any).createdBy ||
+                            (taskView as any).createdByUid ||
+                            (task as any).ownerId ||
+                            (task as any).createdBy ||
+                            (task as any).createdByUid ||
+                            (ownerFromShares as any)?.ownerId ||
+                            (ownerFromShares as any)?.sharedByUid ||
+                            (ownerFromShares as any)?.invitedBy ||
+                            "",
+                        ).trim();
 
-                                                <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 flex-shrink-0 capitalize">
-                          {isWorkspaceOwner
-                            ? "Owner"
-                            : currentWorkspaceRole || "Member"}
-                        </span>
+                        const ownerEmail = normalizeEmail(
+                          (taskView as any).ownerEmail ||
+                            (taskView as any).createdByEmail ||
+                            (task as any).ownerEmail ||
+                            (task as any).createdByEmail ||
+                            (ownerFromShares as any)?.ownerEmail ||
+                            (ownerFromShares as any)?.sharedByEmail ||
+                            (ownerFromShares as any)?.invitedByEmail ||
+                            "",
+                        );
 
-                      </div>
+                                               const ownerName = String(
+                          (taskView as any).ownerName ||
+                            (task as any).ownerName ||
+                            (ownerFromShares as any)?.ownerName ||
+                            (ownerFromShares as any)?.sharedByName ||
+                            (ownerFromShares as any)?.invitedByName ||
+                            "",
+                        ).trim();
+
+                        // GLOBAL FIX: when the task data/shares haven't loaded
+                        // yet (e.g. before the first invite is sent), ownerUid
+                        // and ownerEmail can be empty, which previously seeded
+                        // the avatar from the literal string "Task owner" → "TO".
+                        // Detect "this viewer owns the task" using the existing
+                        // isTaskOwner flag (covers all owner id/email variants),
+                        // and fall back to the signed-in user's real identity so
+                        // the monogram always matches the sidebar.
+                        const viewerIsOwner =
+                          (Boolean(ownerUid) &&
+                            ownerUid === safeCurrentUserUid) ||
+                          (Boolean(ownerEmail) &&
+                            ownerEmail === normalizeEmail(safeCurrentUserEmail)) ||
+                          isTaskOwner ||
+                          ((!ownerUid && !ownerEmail) && Boolean(safeCurrentUserUid));
+
+                        const effectiveOwnerUid =
+                          ownerUid || (viewerIsOwner ? safeCurrentUserUid : "");
+
+                        const effectiveOwnerEmail =
+                          ownerEmail ||
+                          (viewerIsOwner
+                            ? normalizeEmail(safeCurrentUserEmail)
+                            : "");
+
+                        const effectiveOwnerName =
+                          ownerName ||
+                          (viewerIsOwner ? safeCurrentUserDisplayName : "") ||
+                          effectiveOwnerEmail;
+
+                        // Never pass the literal "Task owner" as the avatar seed.
+                        const ownerProfile = getResolvedUserProfile({
+                          uid: effectiveOwnerUid,
+                          email: effectiveOwnerEmail,
+                          name: effectiveOwnerName || effectiveOwnerEmail || "",
+                          photoURL: viewerIsOwner ? currentUserRealPhotoURL : "",
+                        });
+
+
+                        return (
+                          <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors">
+                            <ModernAvatar
+                              name={ownerProfile.name}
+                              email={ownerProfile.email}
+                              photoURL={ownerProfile.photoURL}
+                              size={32}
+                            />
+
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-slate-800 truncate leading-tight">
+                                {ownerProfile.name}
+                                {viewerIsOwner ? " (You)" : ""}
+                              </p>
+                              <p className="text-[11px] text-slate-400 truncate">
+                                {ownerProfile.email || "Task owner"}
+                              </p>
+                            </div>
+
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 flex-shrink-0 capitalize">
+                              Owner
+                            </span>
+                          </div>
+                        );
+                      })()}
+
+                                            {/* Current viewer — only show when the viewer is NOT the owner */}
+                      {(() => {
+                        const ownerFromShares = taskShares.find((s) =>
+                          String(
+                            (s as any).ownerId ||
+                              (s as any).sharedByUid ||
+                              (s as any).invitedBy ||
+                              "",
+                          ).trim(),
+                        );
+
+                        const ownerUid = String(
+                          (taskView as any).ownerId ||
+                            (taskView as any).createdBy ||
+                            (taskView as any).createdByUid ||
+                            (task as any).ownerId ||
+                            (task as any).createdBy ||
+                            (task as any).createdByUid ||
+                            (ownerFromShares as any)?.ownerId ||
+                            (ownerFromShares as any)?.sharedByUid ||
+                            (ownerFromShares as any)?.invitedBy ||
+                            "",
+                        ).trim();
+
+                        const ownerEmail = normalizeEmail(
+                          (taskView as any).ownerEmail ||
+                            (taskView as any).createdByEmail ||
+                            (task as any).ownerEmail ||
+                            (task as any).createdByEmail ||
+                            (ownerFromShares as any)?.ownerEmail ||
+                            (ownerFromShares as any)?.sharedByEmail ||
+                            (ownerFromShares as any)?.invitedByEmail ||
+                            "",
+                        );
+
+                        const viewerIsOwner =
+                          (Boolean(ownerUid) &&
+                            ownerUid === safeCurrentUserUid) ||
+                          (Boolean(ownerEmail) &&
+                            ownerEmail === normalizeEmail(safeCurrentUserEmail));
+                                                   // Mirror the owner row's fallback so the owner is never
+                        // duplicated as a separate "viewer" row when the task's
+                        // owner fields are still empty.
+                        const viewerIsOwnerEffective =
+                          viewerIsOwner ||
+                          isTaskOwner ||
+                          ((!ownerUid && !ownerEmail) && Boolean(safeCurrentUserUid));
+ 
+
+                        // The owner row already covers the viewer; don't duplicate.
+                                                if (viewerIsOwnerEffective || !safeCurrentUserUid) return null;
+
+                        // Avoid duplicating a row that's already shown as an
+                        // email share (the invited user appears in taskShares).
+                        const viewerEmailLower =
+                          normalizeEmail(safeCurrentUserEmail);
+
+                        const alreadyInShares = taskShares.some((share) => {
+                          const shareE = normalizeEmail(
+                            share.sharedWithEmail ||
+                              share.invitedEmail ||
+                              share.invitedEmailLower ||
+                              share.acceptedByEmail,
+                          );
+                          const shareUid = String(
+                            share.acceptedByUid || share.acceptedBy || "",
+                          ).trim();
+
+                          return (
+                            (Boolean(viewerEmailLower) &&
+                              shareE === viewerEmailLower) ||
+                            (Boolean(safeCurrentUserUid) &&
+                              shareUid === safeCurrentUserUid)
+                          );
+                        });
+
+                        if (alreadyInShares) return null;
+
+                        return (
+                          <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors">
+                            <ModernAvatar
+                              name={safeCurrentUserDisplayName}
+                              email={safeCurrentUserEmail}
+                              photoURL={currentUserRealPhotoURL}
+                              size={32}
+                            />
+
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-slate-800 truncate leading-tight">
+                                {safeCurrentUserDisplayName} (You)
+                              </p>
+                              <p className="text-[11px] text-slate-400 truncate">
+                                {safeCurrentUserEmail || "Current user"}
+                              </p>
+                            </div>
+
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 flex-shrink-0 capitalize">
+                              {currentWorkspaceRole === "owner"
+                                ? "Member"
+                                : currentWorkspaceRole || "Guest"}
+                            </span>
+                          </div>
+                        );
+                      })()}
+
 
                       {/* Assignee */}
                                             {(taskView.assignee || task.assignee) &&
@@ -7991,14 +8297,44 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
 
                         const acceptedEmail = share.acceptedByEmail || "";
 
+                                                // Identify who SENT/OWNS this share (the inviter).
+                        const ownerUid =
+                          share.sharedByUid || share.invitedBy || "";
+                        const ownerEmail = normalizeEmail(
+                          share.sharedByEmail || share.invitedByEmail,
+                        );
+                        const ownerName =
+                          share.sharedByName ||
+                          share.invitedByName ||
+                          ownerEmail ||
+                          "";
+
+                        // The invited person (the recipient row identity).
+                        const inviteeUid =
+                          share.acceptedByUid || share.acceptedBy || "";
+                        const inviteeEmail = shareEmail || acceptedEmail;
+
+                        // The "Who has access" list shows the INVITED person row,
+                        // so resolve that person's own identity using the invited
+                        // email + accepted uid. We explicitly pass a non-empty
+                        // name/email so the monogram seed is always the invited
+                        // person — never a blind fallback to the current user.
                         const shareProfile = getResolvedUserProfile({
-  uid: share.acceptedByUid || share.acceptedBy || "",
-  email: shareEmail || acceptedEmail,
-  name: shareEmail || acceptedEmail || "Shared user",
-  photoURL: "",
-});
+                          uid: inviteeUid,
+                          email: inviteeEmail,
+                          name: inviteeEmail || "Shared user",
+                          photoURL: "",
+                        });
 
-
+                        // Resolve the OWNER/inviter identity separately so the
+                        // "Invited by ..." line shows the real sender on every
+                        // device, including the invited user's view.
+                        const ownerProfile = getResolvedUserProfile({
+                          uid: ownerUid,
+                          email: ownerEmail,
+                          name: ownerName,
+                          photoURL: "",
+                        });
                         const statusClass =
                           shareStatus === "active" || shareStatus === "accepted"
                             ? "bg-emerald-50 text-emerald-600 border-emerald-100"
