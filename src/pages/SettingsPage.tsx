@@ -1225,11 +1225,6 @@ export default function SettingsPage() {
                         desc:  "Get notified when your role in a workspace changes",
                       },
                       {
-                        key:   "taskEmails" as const,
-                        label: "Task Assignments",
-                        desc:  "Get notified when a task is assigned to you",
-                      },
-                      {
                         key:   "weeklyDigest" as const,
                         label: "Weekly Digest",
                         desc:  "Receive a weekly summary of workspace activity",

@@ -461,8 +461,10 @@ export default function Navbar({ title }: NavbarProps) {
     // GLOBAL: route non-task notifications to the right page.
     // role_change → Team page (where the user's role lives).
     // Future types can be added here as needed.
-    if (notification.type === "role_change") {
-      navigate("/team");
+     if (notification.type === "role_change") {
+      // Role-change notifications are informational only.
+      // Mark-as-read already happened above; don't navigate anywhere
+      // (guests can't open /team, and there's nothing task-specific to open).
       return;
     }
 

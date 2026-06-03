@@ -250,6 +250,106 @@ export async function createRoleChangeNotification({
 
   await setDoc(notificationRef, payload);
 }
+type CreateTaskAssignmentNotificationParams = {
+  workspaceId: string;
+  recipientUid: string;
+  taskId: string;
+  taskTitle?: string;
+  projectId?: string;
+  projectName?: string;
+  actorId: string;
+  actorName?: string;
+  actorPhotoURL?: string;
+};
+
+// GLOBAL: notifies a user when a task is assigned to them.
+// Gated by the recipient's notifPrefs.taskEmails preference (checked by caller).
+export async function createTaskAssignmentNotification({
+  workspaceId,
+  recipientUid,
+  taskId,
+  taskTitle,
+  projectId,
+  projectName,
+  actorId,
+  actorName,
+  actorPhotoURL,
+}: CreateTaskAssignmentNotificationParams) {
+  const safeWorkspaceId = cleanId(workspaceId);
+  const safeRecipientUid = cleanId(recipientUid);
+  const safeTaskId = cleanId(taskId);
+  const safeActorId = cleanId(actorId);
+
+  if (!safeWorkspaceId || !safeRecipientUid || !safeTaskId || !safeActorId) {
+    return;
+  }
+
+  // Don't notify someone about assigning a task to themselves.
+  if (safeRecipientUid === safeActorId) return;
+
+  // Respect the recipient's Task Assignments preference (global, per-user).
+  try {
+    const recipientSnap = await getDoc(doc(db, "users", safeRecipientUid));
+    if (recipientSnap.exists()) {
+      const prefs = (recipientSnap.data() as any)?.notifPrefs;
+      // Default OFF to match the SettingsPage default (taskEmails: false).
+      if (!prefs || prefs.taskEmails !== true) {
+        return;
+      }
+    } else {
+      return;
+    }
+  } catch (err) {
+    console.warn(
+      "[createTaskAssignmentNotification] pref lookup failed (skipping):",
+      (err as any)?.message || err,
+    );
+    return;
+  }
+
+  const safeTaskTitle = String(taskTitle || "a task").trim();
+  const wsProjectLabel = String(projectName || "").trim();
+
+  const notificationRef = doc(
+    collection(db, "users", safeRecipientUid, "notifications"),
+  );
+
+  const payload = {
+    type: "task_assignment",
+
+    senderUid: safeActorId,
+    recipientUid: safeRecipientUid,
+
+    workspaceId: safeWorkspaceId,
+    projectId: cleanId(projectId),
+    taskId: safeTaskId,
+    sourceTaskId: safeTaskId,
+    commentId: "",
+
+    title: `You were assigned to ${safeTaskTitle}`,
+    message: `${actorName || "Someone"} assigned you to ${safeTaskTitle}${
+      wsProjectLabel ? ` in ${wsProjectLabel}` : ""
+    }.`,
+
+    taskTitle: safeTaskTitle,
+    projectName: wsProjectLabel,
+
+    actorId: safeActorId,
+    actorName: actorName || "User",
+    actorPhotoURL: actorPhotoURL || "",
+
+    commentPreview: "",
+
+    read: false,
+    readAt: null,
+
+    createdAt: serverTimestamp(),
+    createdAtMs: Date.now(),
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(notificationRef, payload);
+}
 
 export async function markNotificationAsRead(
   userId: string,
