@@ -137,7 +137,13 @@ export interface Task {
 
   [key: string]: any;
 }
-export type AppNotificationType = "mention" | "task_comment";
+export type AppNotificationType =
+  | "mention"
+  | "task_comment"
+  | "role_change"
+  | "task_assignment"
+  | "weekly_digest";
+
 
 export interface AppNotification {
   id: string;

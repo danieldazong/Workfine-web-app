@@ -41,6 +41,8 @@ import { useAppData } from "../context/AppDataContext";
 import InviteMemberModal from "../components/InviteMemberModal";
 import emailjs from "@emailjs/browser";
 import { resolveWorkspaceDisplayId } from "../lib/utils";
+import { createRoleChangeNotification } from "../lib/firebase/notifications";
+
 
 
 // ─── Inline skeleton placeholder ──────────────────────────────────────────────
@@ -1097,11 +1099,39 @@ export default function TeamPage() {
       showToast(
         `${name} is now a${/^[aeiou]/i.test(newRole) ? "n" : ""} ${newRole}`
       );
+
+      // GLOBAL: notify the affected member, only if they opted in.
+      try {
+        const actorUid = String(user?.uid || "").trim();
+        if (actorUid && actorUid !== userId) {
+          const recipientSnap = await getDoc(doc(db, "users", userId));
+          const prefs = recipientSnap.exists()
+            ? (recipientSnap.data().notifPrefs as Record<string, boolean> | undefined)
+            : undefined;
+          const wantsRoleChange = prefs ? prefs.roleChangeEmails !== false : true;
+
+          if (wantsRoleChange) {
+            await createRoleChangeNotification({
+              workspaceId,
+              recipientUid: userId,
+              newRole,
+              workspaceName: workspaceData?.name || "",
+              actorId: actorUid,
+              actorName:
+                user?.displayName || user?.email || "An admin",
+              actorPhotoURL: user?.photoURL || "",
+            });
+          }
+        }
+      } catch (notifErr) {
+        console.warn("[TeamPage] role-change notification skipped:", notifErr);
+      }
     } catch (err) {
       console.error("[TeamPage] changeRole error:", err);
       showToast("Failed to update role.");
     }
   }
+
 
   async function removeMember(memberId: string, name: string) {
     if (!workspaceId || !memberId) return;

@@ -1165,10 +1165,17 @@ function MembersTab({
   onCancelInvite: (code: string) => Promise<void>;
 }) {
 
-  const [subTab, setSubTab] = useState<"active" | "pending">("active");
+    const [subTab, setSubTab] = useState<"active" | "pending">("active");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  // Actor identity for role-change notifications (GLOBAL).
+  const actorUid = myUid;
+  const actorSelf = members.find((m: any) => getMemberUid(m) === myUid);
+  const actorName = String(actorSelf?.displayName || actorSelf?.email || "An admin");
+  const actorPhotoURL = String(actorSelf?.photoURL || "");
+
 
   const activeMembers = members.filter(isActiveWorkspaceMember);
   const pendingList   = pendingInvites.filter((i) => i.status === "pending");
@@ -1198,12 +1205,16 @@ function MembersTab({
       )
     : pendingList;
 
-  async function handleRoleChange(userId: string, newRole: WorkspaceRole) {
+    async function handleRoleChange(userId: string, newRole: WorkspaceRole) {
     if (!workspaceId) return;
     setError("");
     setBusyId(userId);
     try {
-      await updateMemberRole(workspaceId, userId, newRole);
+      await updateMemberRole(workspaceId, userId, newRole, {
+        uid: actorUid,
+        name: actorName,
+        photoURL: actorPhotoURL,
+      });
     } catch (e: any) {
       console.error("[MembersTab] role change failed:", e);
       setError(e?.message || "Failed to update role.");

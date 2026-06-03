@@ -43,8 +43,9 @@ export function useNotifications(userId?: string | null) {
           };
 
           return {
-            id: notificationDoc.id,
-            type: raw.type === "mention" ? "mention" : "task_comment",
+                     id: notificationDoc.id,
+            type: (raw.type as AppNotification["type"]) || "task_comment",
+
 
             workspaceId: String(raw.workspaceId || ""),
             projectId: String(raw.projectId || ""),

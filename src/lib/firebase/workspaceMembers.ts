@@ -9,6 +9,8 @@ import {
 } from "firebase/firestore";
 import { db } from "./config";
 import { deriveWorkspaceDisplayId } from "./users";
+import { createRoleChangeNotification } from "./notifications";
+
 
 
 export type WorkspaceRole = "owner" | "admin" | "member" | "viewer";
@@ -19,11 +21,12 @@ export type WorkspaceRole = "owner" | "admin" | "member" | "viewer";
 export async function updateMemberRole(
   workspaceId: string,
   userId: string,
-  newRole: WorkspaceRole
+  newRole: WorkspaceRole,
+  actor?: { uid?: string; name?: string; photoURL?: string }
 ): Promise<void> {
   const memberRef = doc(db, "workspaces", workspaceId, "members", userId);
 
-    const isOwnerOrAdmin = newRole === "owner" || newRole === "admin";
+  const isOwnerOrAdmin = newRole === "owner" || newRole === "admin";
   const isMember = newRole === "member";
   const isViewer = newRole === "viewer";
 
@@ -44,9 +47,40 @@ export async function updateMemberRole(
     lastActive: serverTimestamp(),
   });
 
+  // GLOBAL: notify the affected member, but only if they opted in.
+  try {
+    const actorUid = String(actor?.uid || "").trim();
+    if (actorUid && actorUid !== userId) {
+      // Respect the recipient's notification preference.
+      const recipientSnap = await getDoc(doc(db, "users", userId));
+      const prefs = recipientSnap.exists()
+        ? (recipientSnap.data().notifPrefs as Record<string, boolean> | undefined)
+        : undefined;
+      const wantsRoleChange = prefs ? prefs.roleChangeEmails !== false : true;
 
+      if (wantsRoleChange) {
+        let workspaceName = "";
+        try {
+          const wsSnap = await getDoc(doc(db, "workspaces", workspaceId));
+          if (wsSnap.exists()) workspaceName = String(wsSnap.data().name || "");
+        } catch {}
 
+        await createRoleChangeNotification({
+          workspaceId,
+          recipientUid: userId,
+          newRole,
+          workspaceName,
+          actorId: actorUid,
+          actorName: actor?.name,
+          actorPhotoURL: actor?.photoURL,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn("[updateMemberRole] role-change notification skipped:", e);
+  }
 }
+
 
 /**
  * Remove a member from a workspace and reset their workspaceId to a personal one.

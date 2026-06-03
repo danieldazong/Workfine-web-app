@@ -66,16 +66,19 @@ export function canUserEditProject(
 ): boolean {
   if (!project || !userId) return false;
 
-  if (role === "viewer") return false;
+  // Role is the source of truth. Viewer = view only, Member = no edit.
+  if (role === "viewer" || role === "member") return false;
 
   if (isWorkspaceManager(role)) return true;
 
+  // Owner of the project document (only relevant if no managing role above).
   return (
     project.createdBy === userId ||
     project.ownerId === userId ||
     project.uid === userId
   );
 }
+
 
 export function canUserCommentOnProject(
   project: AccessProjectLike,

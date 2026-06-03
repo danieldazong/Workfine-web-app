@@ -56,6 +56,8 @@ import { taskService } from '../../lib/firebase/tasks';
 import { storageService } from '../../lib/firebase/storage';
 import { useAuth } from '../../context/AuthContext';
 import { cn, formatDate } from '../../lib/utils';
+import { useAppData } from '../../context/AppDataContext';
+
 
 interface TaskModalProps {
   task?: Task | null;
@@ -66,6 +68,28 @@ interface TaskModalProps {
 
 export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModalProps) {
   const { user, workspaceId } = useAuth();
+    const appData = useAppData() as any;
+  const members = Array.isArray(appData?.members) ? appData.members : [];
+  const workspaceData = appData?.workspaceData;
+
+  // GLOBAL role resolution — identical logic for every account.
+  const myMembership = members.find((m: any) => {
+    const memberUid = m?.userId || m?.uid || m?.id;
+    return !!user?.uid && memberUid === user.uid;
+  });
+
+  const myRole = (
+    workspaceData?.ownerId === user?.uid
+      ? "owner"
+      : String(myMembership?.role || "viewer").toLowerCase()
+  ) as "owner" | "admin" | "member" | "viewer";
+
+  // Members and viewers cannot create, edit, or delete tasks.
+  const canEditTasks =
+    myRole === "owner" ||
+    myRole === "admin" ||
+    myMembership?.permissions?.canEdit === true ||
+    myMembership?.permissions?.canManageTasks === true;
   const [title, setTitle] = useState(task?.title || '');
   const [description, setDescription] = useState(task?.description || '');
   const [priority, setPriority] = useState<TaskPriority>(task?.priority || 'Medium');
@@ -75,9 +99,15 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSave = async () => {
+   const handleSave = async () => {
     if (!title.trim() || !user || !workspaceId) return;
+    if (!canEditTasks) {
+      console.warn("[TaskModal] save blocked: insufficient role", myRole);
+      onClose();
+      return;
+    }
     setSaving(true);
+
     try {
       if (task) {
         await taskService.updateTask(task.id, {
@@ -295,17 +325,19 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
           </div>
 
           <div className="p-6 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-border-dark flex items-center justify-between">
-            <button
-   onClick={() => {
-     if (task && workspaceId) {
-       taskService.deleteTask(task.id, workspaceId).then(() => onClose());
-     }
-   }} 
-   className="p-2 text-slate-400 hover:text-danger hover:bg-danger/5 rounded-xl transition-all"
->
+                       {canEditTasks && (
+              <button
+                onClick={() => {
+                  if (task && workspaceId) {
+                    taskService.deleteTask(task.id, workspaceId).then(() => onClose());
+                  }
+                }}
+                className="p-2 text-slate-400 hover:text-danger hover:bg-danger/5 rounded-xl transition-all"
+              >
+                <Trash2 size={20} />
+              </button>
+            )}
 
-              <Trash2 size={20} />
-            </button>
             <div className="flex items-center gap-3">
               <button 
                 onClick={onClose}
@@ -313,14 +345,16 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
               >
                 Cancel
               </button>
-              <button 
+                            <button 
                 onClick={handleSave}
-                disabled={saving || !title.trim()}
-                className="px-8 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 flex items-center gap-2"
+                disabled={saving || !title.trim() || !canEditTasks}
+                title={!canEditTasks ? "Your role does not permit editing tasks" : undefined}
+                className="px-8 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-blue-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {saving && <Loader2 className="animate-spin" size={16} />}
                 {task ? 'Update Task' : 'Create Task'}
               </button>
+
             </div>
           </div>
         </Dialog.Content>

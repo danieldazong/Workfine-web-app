@@ -89,41 +89,14 @@ service cloud.firestore {
         );
     }
 
-    function memberDocMatchesUserAndWorkspace(workspaceId, uid) {
+    function isTrustedActiveWorkspaceMemberDoc(workspaceId, uid) {
       return hasWorkspaceMemberDoc(workspaceId, uid)
         && memberData(workspaceId, uid).status == "active"
+        && memberData(workspaceId, uid).role in ["owner", "admin", "member", "viewer"]
         && (
           !("workspaceId" in memberData(workspaceId, uid))
           || memberData(workspaceId, uid).workspaceId == workspaceId
-        )
-        && (
-          !("uid" in memberData(workspaceId, uid))
-          || memberData(workspaceId, uid).uid == uid
-        )
-        && (
-          !("userId" in memberData(workspaceId, uid))
-          || memberData(workspaceId, uid).userId == uid
         );
-    }
-
-    function memberDocHasTrustedSource(workspaceId, uid) {
-      return hasWorkspaceMemberDoc(workspaceId, uid)
-        && (
-          isWorkspaceOwnerByDoc(workspaceId, uid)
-          || memberData(workspaceId, uid).role == "owner"
-          || "inviteCode" in memberData(workspaceId, uid)
-          || "acceptedInviteCode" in memberData(workspaceId, uid)
-          || "code" in memberData(workspaceId, uid)
-          || "invitedBy" in memberData(workspaceId, uid)
-          || "invitedByUid" in memberData(workspaceId, uid)
-          || "addedBy" in memberData(workspaceId, uid)
-          || "createdBy" in memberData(workspaceId, uid)
-        );
-    }
-
-    function isTrustedActiveWorkspaceMemberDoc(workspaceId, uid) {
-      return memberDocMatchesUserAndWorkspace(workspaceId, uid)
-        && memberDocHasTrustedSource(workspaceId, uid);
     }
 
     function isActiveWorkspaceMember(workspaceId, uid) {
@@ -919,16 +892,16 @@ service cloud.firestore {
               || shareOwnerIsSignedInUser(resource.data)
               || isWorkspaceOwnerByDoc(workspaceId, request.auth.uid)
               || shareSelfRemovalAllowed()
-                            || (
+              || (
                 shareBelongsToSignedInEmail(resource.data)
                 && (resource.data.status == "pending" || resource.data.status == "active")
                 && request.resource.data.status == "active"
                 && request.resource.data.acceptedByUid == request.auth.uid
                 && (
-                  request.resource.data.acceptedByEmailLower == signedInEmailLower()
-                  || request.resource.data.acceptedByEmail.lower() == signedInEmailLower()
+                  request.resource.data.acceptedByEmail == request.auth.token.email
+                  || request.resource.data.acceptedByEmailLower == signedInEmailLower()
                 )
-                && changedKeys().hasOnly([
+                && onlyChanged([
                   "status",
                   "acceptedBy",
                   "acceptedByUid",
@@ -941,6 +914,7 @@ service cloud.firestore {
                   "updatedAt"
                 ])
               )
+            );
 
           allow delete: if isSignedIn()
             && (
@@ -955,7 +929,13 @@ service cloud.firestore {
           allow read: if canReadCurrentTask();
 
           allow create: if canReadCurrentTask()
-            && canCommentOnCurrentTask()
+            && (
+              canEditWorkspaceContent(workspaceId)
+              || (
+                isTrustedActiveWorkspaceMemberDoc(workspaceId, request.auth.uid)
+                && memberData(workspaceId, request.auth.uid).role == "member"
+              )
+            )
             && request.resource.data.authorId == request.auth.uid
             && request.resource.data.workspaceId == workspaceId
             && request.resource.data.taskId == taskId;

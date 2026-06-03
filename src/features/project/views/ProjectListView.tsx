@@ -4,7 +4,10 @@
  */
 
 import { Task } from '../../../types';
+import { useAuth } from '../../../context/AuthContext';
+import { useAppData } from '../../../context/AppDataContext';
 import { cn, formatDate } from '../../../lib/utils';
+
 import { 
   CheckCircle2, 
   Clock, 
@@ -20,7 +23,30 @@ interface ProjectListViewProps {
 }
 
 export default function ProjectListView({ tasks, onTaskClick }: ProjectListViewProps) {
-    const sections: Array<"To Do" | "In Progress" | "In Review" | "Done"> = [
+  const { user } = useAuth();
+  const appData = useAppData() as any;
+  const members = Array.isArray(appData?.members) ? appData.members : [];
+  const workspaceData = appData?.workspaceData;
+
+  const myMembership = members.find((m: any) => {
+    const memberUid = m?.userId || m?.uid || m?.id;
+    return !!user?.uid && memberUid === user.uid;
+  });
+
+  const myRole = (
+    workspaceData?.ownerId === user?.uid
+      ? "owner"
+      : String(myMembership?.role || "viewer").toLowerCase()
+  ) as "owner" | "admin" | "member" | "viewer";
+
+  // Members and viewers cannot add tasks.
+  const canEditTasks =
+    myRole === "owner" ||
+    myRole === "admin" ||
+    myMembership?.permissions?.canEdit === true ||
+    myMembership?.permissions?.canManageTasks === true;
+
+  const sections: Array<"To Do" | "In Progress" | "In Review" | "Done"> = [
     "To Do",
     "In Progress",
     "In Review",
@@ -108,10 +134,13 @@ export default function ProjectListView({ tasks, onTaskClick }: ProjectListViewP
                 </div>
               ))}
               
-              <button className="w-full p-3 text-left pl-12 text-sm text-muted-text hover:text-primary transition-colors flex items-center gap-2">
-                <Plus size={16} />
-                Add Task
-              </button>
+                            {canEditTasks && (
+                <button className="w-full p-3 text-left pl-12 text-sm text-muted-text hover:text-primary transition-colors flex items-center gap-2">
+                  <Plus size={16} />
+                  Add Task
+                </button>
+              )}
+
             </div>
           </div>
         );

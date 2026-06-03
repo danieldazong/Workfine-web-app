@@ -11,6 +11,7 @@ import {
   MessageCircle,
   AtSign,
   CheckCheck,
+  Shield,
 } from "lucide-react";
 import { matchPath, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -457,6 +458,14 @@ export default function Navbar({ title }: NavbarProps) {
 
     setNotificationsOpen(false);
 
+    // GLOBAL: route non-task notifications to the right page.
+    // role_change → Team page (where the user's role lives).
+    // Future types can be added here as needed.
+    if (notification.type === "role_change") {
+      navigate("/team");
+      return;
+    }
+
     const taskId = String(
       notification.sourceTaskId || notification.taskId || ""
     ).trim();
@@ -492,6 +501,7 @@ export default function Navbar({ title }: NavbarProps) {
      */
     navigate(`/my-tasks?${params.toString()}`);
   };
+
 
 
     return (
@@ -699,10 +709,12 @@ export default function Navbar({ title }: NavbarProps) {
                       </p>
                     </div>
                   ) : (
-                    notifications.map((notification: any) => {
+                                        notifications.map((notification: any) => {
                       const isMention = notification.type === "mention";
+                      const isRoleChange = notification.type === "role_change";
 
                       return (
+
                         <button
                           key={notification.id}
                           type="button"
@@ -712,19 +724,24 @@ export default function Navbar({ title }: NavbarProps) {
                           }`}
                         >
                           <div className="flex gap-3">
-                            <div
+                                                        <div
                               className={`mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full ${
                                 isMention
                                   ? "bg-violet-100 text-violet-600"
-                                  : "bg-blue-100 text-blue-600"
+                                  : isRoleChange
+                                    ? "bg-emerald-100 text-emerald-600"
+                                    : "bg-blue-100 text-blue-600"
                               }`}
                             >
                               {isMention ? (
                                 <AtSign size={17} />
+                              ) : isRoleChange ? (
+                                <Shield size={17} />
                               ) : (
                                 <MessageCircle size={17} />
                               )}
                             </div>
+
 
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start gap-2">

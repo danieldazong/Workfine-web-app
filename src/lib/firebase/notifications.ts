@@ -1,10 +1,13 @@
 import {
   collection,
   doc,
+  getDoc,
   serverTimestamp,
+  setDoc,
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
+
 import { db } from "./config";
 import type { AppNotification, AppNotificationType } from "../../types";
 
@@ -172,6 +175,80 @@ export async function createCommentNotifications({
   });
 
   await batch.commit();
+}
+type CreateRoleChangeNotificationParams = {
+  workspaceId: string;
+  recipientUid: string;
+  newRole: string;
+  workspaceName?: string;
+  actorId: string;
+  actorName?: string;
+  actorPhotoURL?: string;
+};
+
+// GLOBAL: notifies a member when their workspace role changes.
+// Respects the recipient's "roleChangeEmails" preference handled by the caller.
+export async function createRoleChangeNotification({
+  workspaceId,
+  recipientUid,
+  newRole,
+  workspaceName,
+  actorId,
+  actorName,
+  actorPhotoURL,
+}: CreateRoleChangeNotificationParams) {
+  const safeWorkspaceId = cleanId(workspaceId);
+  const safeRecipientUid = cleanId(recipientUid);
+  const safeActorId = cleanId(actorId);
+  const safeRole = cleanId(newRole);
+
+  if (!safeWorkspaceId || !safeRecipientUid || !safeActorId || !safeRole) {
+    return;
+  }
+
+  // Don't notify someone about changing their own role.
+  if (safeRecipientUid === safeActorId) return;
+
+  const notificationRef = doc(
+    collection(db, "users", safeRecipientUid, "notifications"),
+  );
+
+  const roleLabel = safeRole.charAt(0).toUpperCase() + safeRole.slice(1);
+  const wsLabel = String(workspaceName || "your workspace").trim();
+
+  const payload = {
+    type: "role_change",
+
+    senderUid: safeActorId,
+    recipientUid: safeRecipientUid,
+
+    workspaceId: safeWorkspaceId,
+    projectId: "",
+    taskId: "",
+    sourceTaskId: "",
+    commentId: "",
+
+    title: `Your role changed to ${roleLabel}`,
+    message: `${actorName || "An admin"} changed your role to ${roleLabel} in ${wsLabel}.`,
+
+    taskTitle: "",
+    projectName: "",
+
+    actorId: safeActorId,
+    actorName: actorName || "An admin",
+    actorPhotoURL: actorPhotoURL || "",
+
+    commentPreview: "",
+
+    read: false,
+    readAt: null,
+
+    createdAt: serverTimestamp(),
+    createdAtMs: Date.now(),
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(notificationRef, payload);
 }
 
 export async function markNotificationAsRead(

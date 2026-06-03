@@ -4,6 +4,8 @@
  */
 
 import { Task } from '../../../types';
+import { useAuth } from '../../../context/AuthContext';
+import { useAppData } from '../../../context/AppDataContext';
 
 type ProjectTaskStatus = "To Do" | "In Progress" | "In Review" | "Done";
 import { cn, formatDate } from '../../../lib/utils';
@@ -23,7 +25,31 @@ interface ProjectBoardViewProps {
 }
 
 export default function ProjectBoardView({ tasks, onTaskClick }: ProjectBoardViewProps) {
-    const columns: ProjectTaskStatus[] = ['To Do', 'In Progress', 'In Review', 'Done'];
+  const { user } = useAuth();
+  const appData = useAppData() as any;
+  const members = Array.isArray(appData?.members) ? appData.members : [];
+  const workspaceData = appData?.workspaceData;
+
+  const myMembership = members.find((m: any) => {
+    const memberUid = m?.userId || m?.uid || m?.id;
+    return !!user?.uid && memberUid === user.uid;
+  });
+
+  const myRole = (
+    workspaceData?.ownerId === user?.uid
+      ? "owner"
+      : String(myMembership?.role || "viewer").toLowerCase()
+  ) as "owner" | "admin" | "member" | "viewer";
+
+  // Members and viewers cannot add tasks.
+  const canEditTasks =
+    myRole === "owner" ||
+    myRole === "admin" ||
+    myMembership?.permissions?.canEdit === true ||
+    myMembership?.permissions?.canManageTasks === true;
+
+  const columns: ProjectTaskStatus[] = ['To Do', 'In Progress', 'In Review', 'Done'];
+
 
   return (
     <div className="flex gap-6 overflow-x-auto pb-6 scrollbar-hide">
@@ -39,14 +65,17 @@ export default function ProjectBoardView({ tasks, onTaskClick }: ProjectBoardVie
                   {columnTasks.length}
                 </span>
               </div>
-              <div className="flex items-center gap-1">
-                <button className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-500 transition-colors">
-                  <Plus size={16} />
-                </button>
+                            <div className="flex items-center gap-1">
+                {canEditTasks && (
+                  <button className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-500 transition-colors">
+                    <Plus size={16} />
+                  </button>
+                )}
                 <button className="p-1 hover:bg-slate-200 dark:hover:bg-slate-800 rounded text-slate-500 transition-colors">
                   <MoreHorizontal size={16} />
                 </button>
               </div>
+
             </div>
 
             <div className="flex-1 space-y-4 min-h-[300px]">
@@ -114,10 +143,13 @@ export default function ProjectBoardView({ tasks, onTaskClick }: ProjectBoardVie
                 </motion.div>
               ))}
 
-              <button className="w-full p-4 border-2 border-dashed border-slate-200 dark:border-border-dark rounded-xl text-slate-400 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2">
-                <Plus size={18} />
-                Add Task
-              </button>
+                            {canEditTasks && (
+                <button className="w-full p-4 border-2 border-dashed border-slate-200 dark:border-border-dark rounded-xl text-slate-400 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-all flex items-center justify-center gap-2">
+                  <Plus size={18} />
+                  Add Task
+                </button>
+              )}
+
             </div>
           </div>
         );
