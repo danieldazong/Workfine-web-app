@@ -702,7 +702,7 @@ export default function SettingsPage() {
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="ml-0 bg-[#f4f5f7] min-h-screen overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 pt-10 pb-10">
+            <div className="max-w-6xl mx-auto px-6 pt-14 pb-10">
 
         {/* Page header */}
         <div className="mb-8">
@@ -817,13 +817,15 @@ export default function SettingsPage() {
                     />
                                         <div>
                       <div className="flex items-center gap-2">
-                        <button
+                                                <button
                           onClick={handleAvatarClick}
                           disabled={uploadProgress !== null}
-                          className="flex items-center gap-2 px-4 py-2 bg-violet-600
-                            hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed
+                          style={{ backgroundColor: "#4C28EE" }}
+                          className="flex items-center gap-2 px-4 py-2
+                            hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed
                             text-white text-sm font-medium rounded-xl transition-colors"
                         >
+
                           {uploadProgress !== null ? (
                             <>
                               <Loader2 size={14} className="animate-spin" />
@@ -955,11 +957,12 @@ export default function SettingsPage() {
                     <p className="text-xs text-slate-400">
                       Changes sync across the entire app in real time
                     </p>
-                    <button
+                                        <button
                       onClick={saveProfile}
                       disabled={profileSaving || !unsaved}
-                      className="flex items-center gap-2 px-5 py-2.5 bg-violet-600
-                        hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed
+                      style={{ backgroundColor: "#4C28EE" }}
+                      className="flex items-center gap-2 px-5 py-2.5
+                        hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed
                         text-white text-sm font-semibold rounded-xl transition-colors"
                     >
                       {profileSaving ? (

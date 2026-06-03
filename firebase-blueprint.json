@@ -58,11 +58,12 @@
         "status": { "type": "string", "enum": ["To Do", "In Progress", "In Review", "Done"] },
         "sectionId": { "type": "string" },
         "attachments": {
-          "type": "array",
-          "items": { $ref: "Attachment" }
-        },
+  "type": "array",
+  "items": { "$ref": "#/definitions/Attachment" },
+  "description": "Attachment list"
+},
         "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "updatedAt": { "type": "string", "format": "date-time" } 
       },
       "required": ["title", "projectId", "workspaceId"]
     },

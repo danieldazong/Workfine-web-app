@@ -609,18 +609,20 @@ const ProjectPage = () => {
                 {projectStatus}
               </span>
 
-                            {canEditProjectContent && (
+                                                       {canEditProjectContent && (
                 <button
                   onClick={() => {
                     setEditTask(null);
                     setForm(emptyTask());
                     setShowModal(true);
                   }}
-                  className="ml-2 flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+                  style={{ backgroundColor: "#4C28EE" }}
+                  className="ml-2 flex items-center gap-1.5 px-4 py-2 text-white text-sm font-medium rounded-xl transition-colors shadow-sm hover:opacity-90"
                 >
                   + New Task
                 </button>
               )}
+
 
             </div>
           </div>
@@ -715,19 +717,21 @@ const ProjectPage = () => {
                   tasks.filter((t) => t.priority === "High").length
                 })`,
               },
-            ].map((f) => (
+                        ].map((f) => (
               <button
                 key={f.id}
                 onClick={() => setFilter(f.id as any)}
+                style={filter === f.id ? { backgroundColor: "#4C28EE" } : undefined}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                   filter === f.id
-                    ? "bg-blue-600 text-white"
+                    ? "text-white"
                     : "bg-white border border-gray-200 text-gray-500 hover:bg-gray-50"
                 }`}
               >
                 {f.label}
               </button>
             ))}
+
           </div>
 
           <div className="flex items-center gap-2">
@@ -740,19 +744,21 @@ const ProjectPage = () => {
             />
 
             <div className="flex border border-gray-200 rounded-lg overflow-hidden bg-white">
-              {(["list", "board"] as const).map((v) => (
+                            {(["list", "board"] as const).map((v) => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
+                  style={view === v ? { backgroundColor: "#4C28EE" } : undefined}
                   className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
                     view === v
-                      ? "bg-blue-600 text-white"
+                      ? "text-white"
                       : "text-gray-500 hover:bg-gray-50"
                   }`}
                 >
                   {v === "list" ? "☰ List" : "⊞ Board"}
                 </button>
               ))}
+
             </div>
           </div>
         </div>
@@ -863,14 +869,14 @@ const ProjectPage = () => {
 
                   <div className="flex items-center gap-1.5">
                     {task.assignee && task.assignee !== "Unassigned" ? (
-                      <>
+                                            <>
                         <div
-                          className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 ${
-                            assignedToMe(task) ? "bg-violet-500" : "bg-blue-500"
-                          }`}
+                          style={{ backgroundColor: "#4C28EE" }}
+                          className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
                         >
                           {task.assignee.charAt(0).toUpperCase()}
                         </div>
+
 
                         <span className="text-xs text-gray-600 truncate max-w-[140px]">
                           {assignedToMe(task) ? (
@@ -1032,10 +1038,14 @@ const ProjectPage = () => {
                         </div>
 
                         {task.assignee && (
-                          <div className="flex items-center gap-1.5 mt-2">
-                            <div className="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">
+                                                    <div className="flex items-center gap-1.5 mt-2">
+                            <div
+                              style={{ backgroundColor: "#4C28EE" }}
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold"
+                            >
                               {task.assignee.charAt(0).toUpperCase()}
                             </div>
+
 
                             <span className="text-xs text-gray-500">
                               {task.assignee}

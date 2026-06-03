@@ -1264,7 +1264,7 @@
               const isOverdueTab = f === "Overdue";
               const isSharedTab = f === "Shared with me";
 
-              const className = isOverdueTab
+                            const className = isOverdueTab
                 ? `px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     isActive
                       ? "bg-red-500 text-white"
@@ -1273,19 +1273,26 @@
                 : isSharedTab
                   ? `px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                       isActive
-                        ? "bg-violet-600 text-white"
+                        ? "text-white"
                         : "bg-violet-50 text-violet-600 border border-violet-100 hover:bg-violet-100"
                     }`
                   : `px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                       isActive
-                        ? "bg-blue-600 text-white"
+                        ? "text-white"
                         : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
                     }`;
+
+              // Active non-overdue tab → exact  "#4C28EE" .
+              const activeStyle =
+                isActive && !isOverdueTab
+                  ? { backgroundColor:   "#4C28EE"  }
+                  : undefined;
 
               return (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
+                  style={activeStyle}
                   className={className}
                 >
                   {f}

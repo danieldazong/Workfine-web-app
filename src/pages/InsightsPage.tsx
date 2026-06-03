@@ -240,17 +240,23 @@ export default function InsightsPage() {
             { label: "Last 90 Days", value: "90d" },
             { label: "All Time", value: "all" },
           ].map((option) => (
-            <button
+                       <button
               key={option.value}
               onClick={() => setTimeRange(option.value as any)}
+              style={
+                timeRange === option.value
+                  ? { backgroundColor:  "#4C28EE", borderColor: "#4C28EE" }
+                  : undefined
+              }
               className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
                 timeRange === option.value
-                  ? "bg-blue-600 text-white border-blue-600"
+                  ? "text-white"
                   : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
               }`}
             >
               {option.label}
             </button>
+
           ))}
         </div>
 

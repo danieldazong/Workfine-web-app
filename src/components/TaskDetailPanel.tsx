@@ -3114,16 +3114,38 @@ function formatFullLocalDateTime(timestamp: any): string {
         addUidArray((project as any).collaboratorUids);
       }
 
-      taskShares.forEach((share: any) => {
+            taskShares.forEach((share: any) => {
         const status = String(share?.status || "").toLowerCase();
 
         if (status && !["active", "accepted"].includes(status)) return;
 
         addUid(share?.acceptedByUid);
         addUid(share?.acceptedBy);
+        addUid(share?.sharedByUid);
+        addUid(share?.invitedBy);
+      });
+
+      // GLOBAL: every active workspace member is a participant of this task's
+      // workspace and must receive a task_comment notification for any comment.
+      // Older tasks don't stamp member UIDs on the task doc, so resolve them
+      // from the workspace member list here. This is what makes "every member
+      // of a task gets notified" work for normal (never-shared) tasks too.
+      workspaceMembers.forEach((member: any) => {
+        const status = String(member?.status || "").toLowerCase();
+
+        if (status && !["active", "accepted", "owner", "admin", "member"].includes(status)) {
+          return;
+        }
+
+        addUid(member?.uid);
+        addUid(member?.userId);
+        addUid(member?.id);
+        addUid(member?.memberId);
+        addUid(member?.acceptedByUid);
       });
 
       const assigneeNameOrEmail = normalizeEmail(taskView.assignee || task.assignee);
+
 
       if (assigneeNameOrEmail) {
         workspaceMembers.forEach((member: any) => {
@@ -5683,16 +5705,37 @@ await notifyCommentRecipients({
       });
     }, [comments]);
 
+        // Run the deep-link highlight EXACTLY ONCE per highlightCommentId.
+    // Previously this effect depended on `visibleComments`, so it re-fired on
+    // every new incoming comment and re-scrolled/re-highlighted the old target.
+    // Highlight + scroll must only happen on initial open (or an explicit Reply
+    // jump via scrollToComment), never when a teammate posts a new comment.
+    const didHighlightCommentRef = useRef<string>("");
+
     useEffect(() => {
       const cleanHighlightCommentId = String(highlightCommentId || "").trim();
 
-      if (!cleanHighlightCommentId || visibleComments.length === 0) return;
+      // Reset the guard when the deep-link target changes (or is cleared)
+      // so a new highlightCommentId can fire once.
+      if (didHighlightCommentRef.current !== cleanHighlightCommentId) {
+        didHighlightCommentRef.current = "";
+      }
+
+      if (!cleanHighlightCommentId) return;
+
+      // Already highlighted this target — do NOT re-run on new comments.
+      if (didHighlightCommentRef.current === cleanHighlightCommentId) return;
+
+      if (visibleComments.length === 0) return;
 
       const exists = visibleComments.some(
-        (comment) => String(comment?.id || "") === cleanHighlightCommentId
+        (comment) => String(comment?.id || "") === cleanHighlightCommentId,
       );
 
       if (!exists) return;
+
+      // Mark as done BEFORE scrolling so subsequent comment updates are ignored.
+      didHighlightCommentRef.current = cleanHighlightCommentId;
 
       const timeoutId = window.setTimeout(() => {
         scrollToComment(cleanHighlightCommentId);
@@ -5700,6 +5743,7 @@ await notifyCommentRecipients({
 
       return () => window.clearTimeout(timeoutId);
     }, [highlightCommentId, visibleComments, scrollToComment]);
+
 
     const latestVisibleCommentId =
       visibleComments.length > 0
@@ -6895,16 +6939,19 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                           </div>
                         )}
 
-                        {/* Message row */}
+                                                {/* Message row */}
                         <div
-                          className={`group flex items-end gap-2 ${
+                          className={`group flex items-start gap-2 ${
                             isMine ? "justify-end" : "justify-start"
                           } ${sameAuthorAsPrev ? "mt-0.5" : "mt-3"}`}
                         >
-                          {/* Left avatar (incoming only, last in a group) */}
+                          {/* Left avatar (incoming only) — WhatsApp-style:
+                              top-aligned next to the sender name, shown once
+                              at the START of each group. Spacer keeps grouped
+                              messages aligned under the name. */}
                           {!isMine && (
-                            <div className="w-7 flex-shrink-0">
-                              {!sameAuthorAsNext &&
+                            <div className="w-7 flex-shrink-0 self-start">
+                              {!sameAuthorAsPrev &&
                                 (() => {
                                   const profile = getResolvedUserProfile({
                                     uid: c.authorId,
@@ -6925,13 +6972,15 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                             </div>
                           )}
 
+
                           {/* Bubble + meta column */}
                           <div
                             className={`relative flex flex-col max-w-[82%] ${
                               isMine ? "items-end" : "items-start"
                             }`}
                           >
-                            {/* Sender name — incoming only, first in a group */}
+                                                        {/* Sender name — incoming only, first in a group.
+                                Sits level with the top-aligned avatar (WhatsApp). */}
                             {!isMine &&
                               !sameAuthorAsPrev &&
                               (() => {
@@ -6943,11 +6992,12 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                 });
 
                                 return (
-                                  <span className="text-xs font-semibold text-slate-700 mb-1 px-1">
+                                  <span className="text-xs font-semibold text-violet-700 mb-0.5 px-1 leading-tight">
                                     {profile.name}
                                   </span>
                                 );
                               })()}
+
                             {c.pinned && (
                               <div className="mb-1 flex items-center gap-1 rounded-full bg-amber-50 border border-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-600">
                                 <Pin size={10} />
@@ -7103,9 +7153,8 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
 
                               {!isMine && messageActions}
                             </div>
-
-                            {/* Timestamp — WhatsApp-style local user time */}
-{!sameAuthorAsNext && timeLabel && (
+                            {/* Timestamp — every message carries its own sent time. */}
+{timeLabel && (
   <span
     title={fullTimeLabel}
     className={`text-[10px] mt-1 px-1 ${

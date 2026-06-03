@@ -3,7 +3,6 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   Settings as SettingsIcon,
   UserPlus,
-  Star,
   CheckCircle2,
   Circle,
   Plus,
@@ -179,8 +178,35 @@ function avatarSeed(name?: string | null, email?: string | null): string {
     String(name || "?").trim().toLowerCase()
   );
 }
+// Converts the raw internal workspace ID into the clean short UI label.
+// Personal workspaces are stored as "personal_<uid>" but should display as
+// the short "WF-######" code. Falls back to an explicit display code if the
+// workspace doc carries one. GLOBAL — same logic for every account.
+function resolveWorkspaceDisplayId(
+  workspaceId?: string | null,
+    workspaceData?: { displayId?: string; code?: string; [key: string]: any } | null
+): string {
+  if (workspaceData?.displayId) return workspaceData.displayId;
+  if (workspaceData?.code) return workspaceData.code;
+
+  const id = String(workspaceId || "").trim();
+  if (!id) return "—";
+
+  // Already a clean WF-style code → show as-is.
+  if (/^WF-/i.test(id)) return id;
+
+  // Personal/raw IDs → derive a stable short "WF-######" from the id so the
+  // SAME account always shows the SAME short code.
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (id.charCodeAt(i) + ((hash << 5) - hash)) | 0;
+  }
+    const sixDigits = String(Math.abs(hash) % 1_000_000).padStart(6, "0");
+  return `WF-${sixDigits}`;
+}
 
 export default function WorkspacePage() {
+
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
  const { user, workspaceId: authWorkspaceId } = useAuth();
@@ -200,7 +226,7 @@ const [addProjectError, setAddProjectError] = useState("");
   const wsId = workspaceData?.id ?? workspaceData?.workspaceId ?? authWorkspaceId ?? "";
 const wsName = workspaceData?.name ?? "My Workspace";
 const wsInitial = (wsName?.[0] ?? "W").toUpperCase();
-const wsColor = "#8b5cf6";
+const wsColor = "#4C28EE";
 
 const isOwnerFromWorkspaceDoc =
   !!user?.uid && workspaceData?.ownerId === user.uid;
@@ -401,32 +427,32 @@ return (
                 >
                   <SettingsIcon size={16} />
                 </button>
-                <button
-                  type="button"
-                  className="p-1.5 text-gray-500 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-colors"
-                  title="Star workspace"
-                >
-                  <Star size={16} />
-                </button>
+              
               </div>
 
-              <p className="text-xs text-gray-400 mt-0.5">
-                {workspaceData?.id ?? ""}
+                                          <p className="text-xs text-gray-400 mt-0.5">
+                {resolveWorkspaceDisplayId(
+                  workspaceData?.id ?? authWorkspaceId,
+                  workspaceData
+                )}
                 {activeMembers.length > 0 && ` · ${activeMembers.length} member${activeMembers.length === 1 ? "" : "s"}`}
               </p>
+
             </div>
           </div>
 
-                    {canInviteWorkspaceMembers && (
+                                        {canInviteWorkspaceMembers && (
             <button
               type="button"
               onClick={handleOpenInvite}
-              className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-xl hover:bg-violet-700 transition-colors shadow-sm"
+              style={{ backgroundColor: "#4C28EE" }}
+              className="flex items-center gap-2 px-4 py-2 text-white text-sm font-medium rounded-xl hover:opacity-90 transition-colors shadow-sm"
             >
               <UserPlus size={15} />
               Invite
             </button>
           )}
+
 
         </div>
 
@@ -690,10 +716,14 @@ function OverviewTab({
                 {Math.round((completedSteps / totalSteps) * 100)}%
               </div>
             </div>
-            <div className="w-full h-1.5 bg-gray-100 rounded-full mb-4 overflow-hidden">
+                        <div className="w-full h-1.5 bg-gray-100 rounded-full mb-4 overflow-hidden">
               <div
-                className="h-full bg-violet-500 rounded-full transition-all duration-500"
-                style={{ width: `${(completedSteps / totalSteps) * 100}%` }}
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${(completedSteps / totalSteps) * 100}%`,
+                  background:
+                    "linear-gradient(90deg, #4C28EE 0%, #7C3AED 55%, #A78BFA 100%)",
+                }}
               />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -939,7 +969,7 @@ function OverviewTab({
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-violet-600 to-violet-800 rounded-2xl shadow-sm p-5 text-white">
+                <div style={{ backgroundColor: "#4C28EE" }} className="rounded-2xl shadow-sm p-5 text-white">
           <p className="text-xs uppercase tracking-wider opacity-80 mb-1">Current plan</p>
           <p className="text-lg font-bold mb-2 capitalize">{workspaceData?.plan ?? "Free"}</p>
           <p className="text-xs opacity-80 leading-relaxed">
@@ -1221,15 +1251,8 @@ function MembersTab({
               Manage who has access to this workspace and what they can do
             </p>
           </div>
-          {canManage && (
-            <button
-              onClick={onInvite}
-              className="flex items-center gap-2 px-3 py-2 bg-violet-600 text-white rounded-lg text-xs font-semibold hover:bg-violet-700 transition-colors flex-shrink-0"
-            >
-              <UserPlus size={13} />
-              Invite Member
-            </button>
-          )}
+                            
+
         </div>
 
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -1502,14 +1525,16 @@ function PendingInvitesList({
         <p className="text-xs text-gray-400 mb-4">
           Invite teammates to start collaborating in this workspace.
         </p>
-        {canManage && (
+                {canManage && (
           <button
             onClick={onInvite}
-            className="inline-flex items-center gap-2 px-3 py-2 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700 transition-colors"
+            style={{ backgroundColor: "#4C28EE" }}
+            className="inline-flex items-center gap-2 px-3 py-2 text-white text-xs font-semibold rounded-lg hover:opacity-90 transition-colors"
           >
             <UserPlus size={12} /> Invite a teammate
           </button>
         )}
+
       </div>
     );
   }
@@ -1730,13 +1755,15 @@ function SettingsTab({
               >
                 Reset
               </button>
-              <button
+                            <button
                 onClick={saveGeneral}
                 disabled={!dirty || savingGeneral}
-                className="px-4 py-1.5 bg-violet-600 text-white text-xs font-semibold rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                style={{ backgroundColor: "#4C28EE" }}
+                className="px-4 py-1.5 text-white text-xs font-semibold rounded-lg hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {savingGeneral ? "Saving..." : "Save changes"}
               </button>
+
             </div>
           )}
         </div>

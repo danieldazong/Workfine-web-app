@@ -216,10 +216,11 @@ const DashboardPage = () => {
               Here's your productivity overview for today.
             </p>
           </div>
-          <button
+                   <button
             type="button"
             onClick={() => setShowCreateProject(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
+            style={{ backgroundColor:  "#4C28EE" }}
+            className="flex items-center gap-2 px-4 py-2 text-white text-sm font-medium rounded-xl transition-colors shadow-sm hover:opacity-90"
           >
             + Create Project
           </button>
@@ -763,9 +764,10 @@ const DashboardPage = () => {
       </div>
 
       {/* ══ ADD TASK FLOATING BUTTON ══════════════════════════════════════ */}
-      <button
+            <button
         onClick={() => setShowTask(true)}
-        className="fixed bottom-6 right-6 flex items-center gap-2 px-4 py-3 bg-blue-600 text-white text-sm font-medium rounded-full shadow-lg hover:bg-blue-700 transition-all hover:shadow-xl z-40"
+        style={{ backgroundColor:  "#4C28EE" }}
+        className="fixed bottom-6 right-6 flex items-center gap-2 px-4 py-3 text-white text-sm font-medium rounded-full shadow-lg transition-all hover:shadow-xl hover:opacity-90 z-40"
       >
         + Add Task
       </button>

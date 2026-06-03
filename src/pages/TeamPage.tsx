@@ -155,11 +155,12 @@ function canManage(currentRole: string, targetRole: string): boolean {
 }
 
 const ROLE_BADGE: Record<string, string> = {
-  owner: "bg-violet-600 text-white",
+  owner: "text-white",
   admin: "bg-blue-100 text-blue-700",
   member: "bg-slate-100 text-slate-600",
   viewer: "bg-gray-100 text-gray-600",
 };
+
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -1563,17 +1564,19 @@ export default function TeamPage() {
             </p>
           </div>
 
-          {canInviteWorkspaceMembers && (
+                    {canInviteWorkspaceMembers && (
             <button
               type="button"
               onClick={() => setShowInvite(true)}
               disabled={!workspaceId || showSkeleton}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ backgroundColor: "#4C28EE" }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <UserPlus size={16} />
               Invite Workspace Member
             </button>
           )}
+
         </div>
 
         {/* Educational Banner */}
@@ -1833,11 +1836,13 @@ export default function TeamPage() {
                         </p>
                       </div>
 
-                      <span
+                                            <span
+                        style={{ backgroundColor: "#4C28EE" }}
                         className={`text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize flex-shrink-0 ${ROLE_BADGE.owner}`}
                       >
                         owner
                       </span>
+
                     </div>
 
                     <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
@@ -1952,13 +1957,15 @@ export default function TeamPage() {
                           </p>
                         </div>
 
-                        <span
+                                                <span
+                          style={displayRole === "owner" ? { backgroundColor: "#4C28EE" } : undefined}
                           className={`text-[10px] px-2 py-0.5 rounded-full font-semibold capitalize flex-shrink-0 ${
                             ROLE_BADGE[displayRole] ?? ROLE_BADGE.member
                           }`}
                         >
                           {displayRole}
                         </span>
+
                       </div>
 
                       <div className="flex items-center gap-4 mt-2 text-xs text-slate-400">
@@ -2627,17 +2634,18 @@ export default function TeamPage() {
 
                 </div>
 
-                                {!showSkeleton && plan !== "pro" && (
+                                               {!showSkeleton && plan !== "pro" && (
                   <button
                     onClick={() => setShowUpgrade(true)}
                     className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-colors hover:opacity-90 active:scale-[0.98]"
                     style={{
-                      background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+                      backgroundColor: "#4C28EE",
                     }}
                   >
                     ✨ Upgrade to Pro
                   </button>
                 )}
+
 
               </div>
             </div>

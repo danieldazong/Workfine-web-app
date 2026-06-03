@@ -240,14 +240,19 @@ export default function CalendarPage() {
         <div className="mb-4 flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-400 font-medium mr-1">Status:</span>
           {["all","todo","active","completed","overdue"].map((s) => (
-            <button
+                        <button
               key={s}
               onClick={() => setFilterStatus(s)}
+              style={
+                filterStatus === s && s !== "overdue"
+                  ? { backgroundColor:  "#4C28EE" }
+                  : undefined
+              }
               className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors capitalize ${
                 filterStatus === s
                   ? s === "overdue"
                     ? "bg-red-500 text-white shadow-sm"
-                    : "bg-violet-600 text-white shadow-sm"
+                    : "text-white shadow-sm"
                   : "bg-white border border-slate-200 text-slate-500 hover:bg-slate-50"
               }`}
             >
