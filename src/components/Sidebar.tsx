@@ -16,6 +16,7 @@ import {
   Users,
   Settings,
   Building2,
+  ChevronRight,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../context/AuthContext";
@@ -456,9 +457,19 @@ function SidebarContent({
           </NavLink>
         ))}
 
-               {!isGuestView && (
+                                             {!isGuestView && (
           <div className="mt-6 px-3">
-            <div className="mb-2 flex items-center justify-between px-2">
+            {/* Section divider — separates Workspace nav from My Projects */}
+            <div className="mx-2 mb-4 h-px bg-slate-700/60" />
+
+                                   <div
+              className={cn(
+                "mb-2 flex items-center justify-between rounded-xl px-3 py-2 transition-all",
+                location.pathname === "/projects" ? "bg-blue-600/20" : ""
+              )}
+            >
+
+
               <NavLink
                 to="/projects"
                 onClick={onClose}
@@ -483,35 +494,79 @@ function SidebarContent({
                   setShowCreateProject(true);
                   onClose();
                 }}
-                className="flex h-5 w-5 items-center justify-center rounded text-lg leading-none text-gray-400 transition-colors hover:bg-blue-600 hover:text-white"
+                className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded text-lg leading-none transition-colors hover:bg-blue-600 hover:text-white",
+                  location.pathname === "/projects" ? "text-blue-300" : "text-gray-400"
+                )}
                 title="New Project"
               >
                 +
               </button>
             </div>
 
-            {privateProjects.length === 0 ? (
+                        {privateProjects.length === 0 ? (
               <p className="px-2 py-2 text-xs italic text-gray-500">
                 No private projects yet
               </p>
             ) : (
-              privateProjects.map((project) => renderProject(project))
+              <>
+                {privateProjects.slice(0, 5).map((project) => renderProject(project))}
+                {privateProjects.length > 5 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate("/projects");
+                      onClose();
+                    }}
+                    className="group mt-0.5 flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-blue-400 transition-colors hover:bg-white/5 hover:text-blue-300"
+                  >
+                    View more
+                    <ChevronRight
+                      size={13}
+                      className="transition-transform group-hover:translate-x-0.5"
+                    />
+                  </button>
+                )}
+              </>
             )}
 
-            <div className="mb-2 mt-5 flex items-center gap-2 px-2">
+
+                        {/* Section divider — separates My Projects from Shared Projects */}
+            <div className="mx-2 mb-4 mt-5 h-px bg-slate-700/60" />
+
+            <div className="mb-2 px-2">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-500">
                 SHARE PROJECT
               </span>
-              <span className="h-px flex-1 bg-slate-700/80" />
             </div>
 
-            {sharedProjects.length === 0 ? (
+
+                        {sharedProjects.length === 0 ? (
               <p className="px-2 py-2 text-xs italic text-gray-500">
                 No shared projects yet
               </p>
             ) : (
-              sharedProjects.map((project) => renderProject(project))
+              <>
+                {sharedProjects.slice(0, 5).map((project) => renderProject(project))}
+                {sharedProjects.length > 5 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate("/projects");
+                      onClose();
+                    }}
+                    className="group mt-0.5 flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-blue-400 transition-colors hover:bg-white/5 hover:text-blue-300"
+                  >
+                    View more
+                    <ChevronRight
+                      size={13}
+                      className="transition-transform group-hover:translate-x-0.5"
+                    />
+                  </button>
+                )}
+              </>
             )}
+
           </div>
         )}
 

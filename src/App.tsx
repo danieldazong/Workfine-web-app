@@ -25,6 +25,7 @@ import InsightsPage from "./pages/InsightsPage";
 import MyTasksPage from "./pages/MyTasksPage";
 import SettingsPage from "./pages/SettingsPage";
 import ProjectPage from "./pages/ProjectPage";
+import ProjectsOverviewPage from "./pages/ProjectsOverviewPage";
 import CalendarPage from "./pages/CalendarPage";
 import TeamPage from "./pages/TeamPage";
 import WorkspacePage from "./pages/WorkspacePage";
@@ -128,6 +129,7 @@ export default function App() {
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/team" element={<TeamPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+                            <Route path="/projects" element={<ProjectsOverviewPage />} />
               <Route path="/projects/:id" element={<ProjectPage />} />
               <Route path="/workspace" element={<WorkspacePage />} />
               <Route path="/workspace/:tab" element={<WorkspacePage />} />
