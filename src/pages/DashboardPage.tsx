@@ -52,7 +52,15 @@ function monogramGradient(seed: string): string {
 }
 
 function monogramInitials(name?: string | null, email?: string | null): string {
-  const label = String(name || email || "?").trim();
+  // GLOBAL: seed initials from the SAME canonical source as the gradient —
+  // email first (never stale), falling back to name. This guarantees the
+  // SAME letter on every surface even when Firebase Auth displayName and
+  // Firestore displayName disagree.
+  const emailLocal = String(email || "").trim().split("@")[0];
+  const label =
+    String(emailLocal || name || "?")
+      .replace(/[._-]+/g, " ")
+      .trim();
   if (!label || label === "?") return "?";
   const initials = label
     .split(/\s+/)
@@ -62,6 +70,7 @@ function monogramInitials(name?: string | null, email?: string | null): string {
     .toUpperCase();
   return initials || label[0]?.toUpperCase() || "?";
 }
+
 
 // Only Firebase Storage uploads are real user photos. Any other URL
 // (e.g. Google lh3.googleusercontent.com) is ignored so every account

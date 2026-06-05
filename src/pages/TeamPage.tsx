@@ -212,7 +212,15 @@ function monogramGradient(seed: string): string {
   return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
 }
 function monogramInitials(name?: string | null, email?: string | null): string {
-  const label = String(name || email || "?").trim();
+  // GLOBAL: seed initials from the SAME canonical source as the gradient —
+  // email first (never stale), falling back to name. This guarantees the
+  // SAME letter on every surface even when Firebase Auth displayName and
+  // Firestore displayName disagree.
+  const emailLocal = String(email || "").trim().split("@")[0];
+  const label =
+    String(emailLocal || name || "?")
+      .replace(/[._-]+/g, " ")
+      .trim();
   if (!label || label === "?") return "?";
   const initials = label
     .split(/\s+/)
@@ -222,6 +230,7 @@ function monogramInitials(name?: string | null, email?: string | null): string {
     .toUpperCase();
   return initials || label[0]?.toUpperCase() || "?";
 }
+
 
 // Only Firebase Storage uploads are real user photos. Any other URL
 // (e.g. Google lh3.googleusercontent.com) is ignored so every account
@@ -397,10 +406,18 @@ function GuestAvatar({
     return () => unsub();
   }, [resolvedUid]);
 
+  // GLOBAL: reset the broken-image guard whenever the live photo URL changes
+  // (including when it clears to "" after the user removes their photo) so the
+  // photo→monogram swap is always clean and never stuck on a stale failure.
+  useEffect(() => {
+    setImgFailed(false);
+  }, [photoURL]);
+
   const showPhoto = Boolean(photoURL) && !imgFailed;
 
   return (
     <div className="relative w-10 h-10 flex-shrink-0">
+
       {showPhoto ? (
         <img
           src={photoURL}
@@ -414,14 +431,15 @@ function GuestAvatar({
       ) : (
         <div
           className="w-full h-full rounded-full flex items-center justify-center text-white text-sm font-semibold ring-1 ring-black/5 select-none"
-          style={{
+                    style={{
             background: monogramGradient(
-              String(email || "").trim().toLowerCase() ||
+              String(email || "").trim().toLowerCase().split("@")[0] ||
                 displayName ||
                 initials,
             ),
             letterSpacing: "0.02em",
           }}
+
         >
           {initials}
         </div>
@@ -1163,27 +1181,53 @@ export default function TeamPage() {
       return;
     }
 
-    try {
-      await resetRemovedUserWorkspace(memberId);
+        try {
+      // STEP 1 — The only action that MUST succeed: remove the member doc.
+      // This is what actually revokes their access. Do it first so a failure
+      // in the optional user-reset side-effects below can never block removal.
       await deleteDoc(doc(db, "workspaces", workspaceId, "members", memberId));
 
       setConfirmRemove(null);
       showToast(`${name || "Member"} has been removed from the workspace`);
+
+      // STEP 2 — Best-effort cleanup: reset the removed user back to their own
+      // personal workspace. The owner often lacks permission to write another
+      // user's /users doc or create their personal workspace, so any failure
+      // here is logged but NOT surfaced as an error — the member is already
+      // removed successfully at this point.
+      resetRemovedUserWorkspace(memberId).catch((resetErr) => {
+        console.warn(
+          "[TeamPage] post-removal user reset skipped (non-fatal):",
+          resetErr?.message || resetErr,
+        );
+      });
     } catch (err) {
       console.error("[TeamPage] removeMember error:", err);
       showToast("Failed to remove member. Please try again.");
     }
   }
 
-  async function resetRemovedUserWorkspace(memberId: string) {
+
+   async function resetRemovedUserWorkspace(memberId: string) {
     if (!memberId) return;
 
     const removedUserRef = doc(db, "users", memberId);
-    const removedUserSnap = await getDoc(removedUserRef);
 
-    const removedData = removedUserSnap.exists()
-      ? (removedUserSnap.data() as any)
-      : {};
+    // Reading another user's /users doc may be denied for the owner under
+    // strict rules — fall back gracefully instead of throwing.
+    let removedData: any = {};
+    try {
+      const removedUserSnap = await getDoc(removedUserRef);
+      removedData = removedUserSnap.exists()
+        ? (removedUserSnap.data() as any)
+        : {};
+    } catch (readErr) {
+      console.warn(
+        "[TeamPage] could not read removed user doc (non-fatal):",
+        (readErr as any)?.message || readErr,
+      );
+    }
+
 
     const existingPersonalWsId =
       typeof removedData.personalWorkspaceId === "string" &&
@@ -1828,11 +1872,12 @@ export default function TeamPage() {
                               ? "hidden"
                               : "flex"
                           }`}
-                          style={{
+                                                    style={{
                             background: monogramGradient(
                               String(ownerMember.email || "")
                                 .trim()
-                                .toLowerCase() ||
+                                .toLowerCase()
+                                .split("@")[0] ||
                                 String(ownerMember.displayName || "?")
                                   .trim()
                                   .toLowerCase(),
@@ -1950,17 +1995,19 @@ export default function TeamPage() {
                                 ? "hidden"
                                 : "flex"
                             }`}
-                            style={{
+                                                        style={{
                               background: monogramGradient(
                                 String(member.email || "")
                                   .trim()
-                                  .toLowerCase() ||
+                                  .toLowerCase()
+                                  .split("@")[0] ||
                                   String(member.displayName || "?")
                                     .trim()
                                     .toLowerCase(),
                               ),
                               letterSpacing: "0.02em",
                             }}
+
                           >
                             {monogramInitials(member.displayName, member.email)}
                           </div>
@@ -2172,11 +2219,11 @@ export default function TeamPage() {
 
 
 
-                      const initials = (
-                        guest.displayName ||
-                        guest.email ||
-                        "?"
-                      )[0].toUpperCase();
+                                        const initials = monogramInitials(
+                        guest.displayName,
+                        guest.email,
+                      );
+
 
                       const bgColor =
                         guest.avatarColor || getAvatarColor(guestId || "guest");

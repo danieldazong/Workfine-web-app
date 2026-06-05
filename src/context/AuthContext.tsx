@@ -2,6 +2,7 @@ import React, {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
   ReactNode,
 } from "react";
@@ -21,12 +22,14 @@ import {
   getDoc,
   getDocs,
   limit,
+  onSnapshot,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
+
 import { auth, db } from "../lib/firebase/config";
 import { deriveWorkspaceDisplayId } from "../lib/firebase/users";
 
@@ -948,6 +951,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     string | null
   >(null);
 
+  // GLOBAL REAL-TIME AVATAR SYNC:
+  // Firebase Auth's user.photoURL does NOT change when we write photoURL to
+  // Firestore (it only updates on token refresh / reload). We keep a live copy
+  // of the Firestore users/{uid}.photoURL here and overlay it onto `user` below,
+  // so EVERY surface that reads useAuth().user (Navbar, Sidebar, etc.) reflects
+  // an uploaded/removed photo instantly — no per-component listener needed.
+  const [livePhotoURL, setLivePhotoURL] = useState<string | null>(null);
+  const [liveDisplayName, setLiveDisplayName] = useState<string | null>(null);
+
+
   const setWorkspaceId = (id: string | null) => {
     setWorkspaceIdState(id);
   };
@@ -1117,13 +1130,57 @@ setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
         hasResolvedOnce = true;
         setLoading(false);
       }
-    });
+       });
 
     return () => unsub();
   }, []);
 
+  // Subscribe to the master users/{uid} doc so photoURL / displayName changes
+  // (written by Settings via propagateUserPhotoURL) propagate to the in-memory
+  // `user` object in real time, across every surface.
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) {
+      setLivePhotoURL(null);
+      setLiveDisplayName(null);
+      return;
+    }
+
+    const userRef = doc(db, "users", uid);
+
+    const unsubUserDoc = onSnapshot(
+      userRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+
+        const nextPhoto = String(data?.photoURL ?? data?.avatarUrl ?? "").trim();
+        setLivePhotoURL(nextPhoto);
+
+        const nextName = String(data?.displayName ?? data?.name ?? "").trim();
+        setLiveDisplayName(nextName || null);
+      },
+      (err) => {
+        console.warn("[Auth] users/{uid} live listener error:", err);
+      }
+    );
+
+    return () => unsubUserDoc();
+  }, [user?.uid]);
+
+  // Overlay the live Firestore photo/name onto the Firebase Auth user object.
+  // Falls back to the Auth values when the listener hasn't resolved yet.
+  const effectiveUser = useMemo(() => {
+    if (!user) return null;
+    return {
+      ...user,
+      photoURL: livePhotoURL !== null ? livePhotoURL : user.photoURL,
+      displayName: liveDisplayName !== null ? liveDisplayName : user.displayName,
+    } as User;
+  }, [user, livePhotoURL, liveDisplayName]);
 
   async function signInWithGoogle(): Promise<void> {
+
     const provider = new GoogleAuthProvider();
 
     provider.addScope("profile");
@@ -1189,10 +1246,10 @@ setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
     console.log("[Auth] ✅ Signed out");
   }
 
-  return (
+    return (
     <AuthContext.Provider
       value={{
-        user,
+        user: effectiveUser,
         loading,
               workspaceId,
         personalWorkspaceId,
@@ -1207,6 +1264,7 @@ setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
     </AuthContext.Provider>
   );
 }
+
 
 export function useAuth(): AuthContextType {
   return useContext(AuthContext);

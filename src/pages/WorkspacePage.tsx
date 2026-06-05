@@ -152,7 +152,15 @@ function monogramGradient(seed: string): string {
 }
 
 function monogramInitials(name?: string | null, email?: string | null): string {
-  const label = String(name || email || "?").trim();
+  // GLOBAL: seed initials from the SAME canonical source as the gradient —
+  // email first (never stale), falling back to name. This guarantees the
+  // SAME letter on every surface even when Firebase Auth displayName and
+  // Firestore displayName disagree.
+  const emailLocal = String(email || "").trim().split("@")[0];
+  const label =
+    String(emailLocal || name || "?")
+      .replace(/[._-]+/g, " ")
+      .trim();
   if (!label || label === "?") return "?";
   const initials = label
     .split(/\s+/)
@@ -163,6 +171,7 @@ function monogramInitials(name?: string | null, email?: string | null): string {
   return initials || label[0]?.toUpperCase() || "?";
 }
 
+
 // Only Firebase Storage uploads are real user photos. Any other URL
 // (e.g. Google lh3.googleusercontent.com) is ignored so every account
 // shows its monogram gradient instead of the Gmail photo.
@@ -171,13 +180,15 @@ function resolveAvatarPhoto(photoURL?: string | null): string {
   return url.includes("firebasestorage") ? url : "";
 }
 
-// Returns the email-based seed used for the gradient. Falls back to name.
+// CANONICAL SEED — must be byte-for-byte identical to monogramSeed() used by
+// Navbar, Sidebar, TaskDetailPanel and TeamPage: email LOCAL-PART first (the
+// part before "@"), then display name. Using the full email here was the bug
+// that made Workspace avatars a different color than the Team page.
 function avatarSeed(name?: string | null, email?: string | null): string {
-  return (
-    String(email || "").trim().toLowerCase() ||
-    String(name || "?").trim().toLowerCase()
-  );
+  const emailLocal = String(email || "").trim().toLowerCase().split("@")[0];
+  return emailLocal || String(name || "?").trim().toLowerCase();
 }
+
 // Converts the raw internal workspace ID into the clean short UI label.
 // Personal workspaces are stored as "personal_<uid>" but should display as
 // the short "WF-######" code. Falls back to an explicit display code if the

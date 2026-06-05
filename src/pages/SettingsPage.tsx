@@ -53,7 +53,15 @@ function monogramGradient(seed: string): string {
 }
 
 function monogramInitials(name?: string | null, email?: string | null): string {
-  const label = String(name || email || "?").trim();
+  // GLOBAL: seed initials from the SAME canonical source as the gradient —
+  // email first (never stale), falling back to name. This guarantees the
+  // SAME letter on every surface even when Firebase Auth displayName and
+  // Firestore displayName disagree.
+  const emailLocal = String(email || "").trim().split("@")[0];
+  const label =
+    String(emailLocal || name || "?")
+      .replace(/[._-]+/g, " ")
+      .trim();
   if (!label || label === "?") return "?";
   const initials = label
     .split(/\s+/)
@@ -63,6 +71,7 @@ function monogramInitials(name?: string | null, email?: string | null): string {
     .toUpperCase();
   return initials || label[0]?.toUpperCase() || "?";
 }
+
 
 // Only Firebase Storage uploads are real user photos. Any other URL
 // (e.g. Google lh3.googleusercontent.com) is ignored so every account
@@ -164,16 +173,32 @@ function AvatarDisplay({
   uploadProgress?: number | null;
   onClick?: () => void;
 }) {
-   // Same seed used everywhere: normalized lowercase email, then display name.
+     // GLOBAL CANONICAL SEED — initials and gradient MUST derive from the exact
+  // same source on every surface. Email-local-part first (never stale), then
+  // display name. monogramInitials() already follows this order, so we build
+  // the gradient seed from the IDENTICAL expression to guarantee the letter
+  // and the color always agree.
+  const emailLocalSeed = String(email || "").trim().toLowerCase().split("@")[0];
   const seed =
-    String(email || "").trim().toLowerCase() ||
+    emailLocalSeed ||
     String(displayName || "?").trim().toLowerCase();
   const initials = monogramInitials(displayName, email);
+
   const circumference = 2 * Math.PI * (size / 2 - 3);
   // Ignore Google/Gmail photos; only honour Firebase Storage uploads.
   const safePhoto = resolveAvatarPhoto(photoURL);
 
+  // GLOBAL: a firebasestorage URL can still be DEAD (the user just clicked
+  // Remove, so the underlying Storage object 404s). Track load failure per-URL
+  // and fall back to the monogram gradient instead of showing a broken image.
+  // This mirrors ModernAvatar/GuestAvatar so Settings reverts identically.
+  const [imgFailed, setImgFailed] = React.useState(false);
 
+  React.useEffect(() => {
+    setImgFailed(false);
+  }, [safePhoto]);
+
+  const showPhoto = Boolean(safePhoto) && !imgFailed;
 
   return (
     <div
@@ -185,22 +210,24 @@ function AvatarDisplay({
         className="w-full h-full rounded-full flex items-center justify-center
           text-white font-semibold overflow-hidden ring-4 ring-white shadow-md select-none"
         style={{
-          background: safePhoto ? "transparent" : monogramGradient(seed),
+          background: showPhoto ? "transparent" : monogramGradient(seed),
           fontSize: size * 0.35,
           letterSpacing: "0.02em",
         }}
       >
-        {safePhoto ? (
+        {showPhoto ? (
           <img
             src={safePhoto}
             alt="avatar"
             className="w-full h-full object-cover"
             key={safePhoto}
+            onError={() => setImgFailed(true)}
           />
         ) : (
           initials
         )}
       </div>
+
 
 
 
@@ -291,10 +318,19 @@ export default function SettingsPage() {
     []
   );
 
-  // ── Sync localPhotoURL when user object changes ───────────────────────────
+   // ── Sync localPhotoURL when user object changes ───────────────────────────
+  // GLOBAL: when the live user.photoURL becomes empty (the user clicked Remove,
+  // here or on another device), clear the local preview too so Settings reverts
+  // to the monogram gradient in real time and the Remove button hides.
   useEffect(() => {
-    if (user?.photoURL) setLocalPhotoURL(user.photoURL);
+    const livePhoto = resolveAvatarPhoto(user?.photoURL);
+    if (livePhoto) {
+      setLocalPhotoURL(livePhoto);
+    } else {
+      setLocalPhotoURL(null);
+    }
   }, [user?.photoURL]);
+
 
   // ── Load user data from Firestore on mount ────────────────────────────────
   useEffect(() => {
@@ -376,13 +412,16 @@ export default function SettingsPage() {
         );
       }
 
-      // 3b. GLOBAL: propagate the cleared photo everywhere so every account
+                  // 3b. GLOBAL: propagate the cleared photo everywhere so every account
       // and every section (comments, task modal, grids, invites) reverts to
-      // the monogram gradient in real time.
+      // the monogram gradient in real time. This is the step that flips every
+      // other user's "Who has access" / member / guest row back to the
+      // monogram — it MUST land before we delete the Storage file, otherwise
+      // other accounts could briefly point at a dead URL.
       await propagateUserPhotoURL(currentUser.uid, currentUser.email, "");
 
-
-      // 4. Delete the stored avatar file (ignore if missing)
+      // 4. Delete the stored avatar file LAST (ignore if missing). By now every
+      // doc holds photoURL: "", so no surface is referencing this file anymore.
       await deleteObject(ref(storage, `avatars/${currentUser.uid}/profile.jpg`))
         .catch((err) =>
           console.warn("[Settings] avatar file delete skipped:", err.code)

@@ -1332,16 +1332,25 @@ function normalizeEmail(email?: string | null): string {
 
 
   function monogramInitials(name?: string | null, email?: string | null): string {
-    const label = String(name || email || "?").trim();
-    if (!label || label === "?") return "?";
-    const initials = label
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase();
-    return initials || label[0]?.toUpperCase() || "?";
-  }
+  // GLOBAL: seed initials from the SAME canonical source as the gradient —
+  // email first (never stale), falling back to name. This guarantees the
+  // SAME letter on every surface even when Firebase Auth displayName and
+  // Firestore displayName disagree.
+  const emailLocal = String(email || "").trim().split("@")[0];
+  const label =
+    String(emailLocal || name || "?")
+      .replace(/[._-]+/g, " ")
+      .trim();
+  if (!label || label === "?") return "?";
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return initials || label[0]?.toUpperCase() || "?";
+}
+
 
    function ModernAvatar({
     email,
@@ -1379,16 +1388,17 @@ function normalizeEmail(email?: string | null): string {
       >
         <div
           className="w-full h-full rounded-full flex items-center justify-center text-white font-semibold ring-1 ring-black/5 shadow-sm overflow-hidden select-none"
-          style={{
+                    style={{
             background: showPhoto
               ? "transparent"
               : monogramGradient(
-                  String(email || "").trim().toLowerCase() ||
+                  String(email || "").trim().toLowerCase().split("@")[0] ||
                     String(name || "?").trim().toLowerCase(),
                 ),
             fontSize: Math.max(11, Math.floor(size * 0.4)),
             letterSpacing: "0.02em",
           }}
+
         >
           {showPhoto ? (
             <img
@@ -8304,16 +8314,38 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                       })()}
 
 
-                      {/* Assignee */}
+                                            {/* Assignee */}
                                             {(taskView.assignee || task.assignee) &&
-                        (taskView.assignee || task.assignee) !== safeCurrentUserDisplayName && (
+                        (taskView.assignee || task.assignee) !== safeCurrentUserDisplayName && (() => {
+                          const assigneeName = taskView.assignee || task.assignee || "";
+                          // Resolve the assignee against workspace members so the
+                          // monogram seeds from their canonical email — identical
+                          // to every other surface. Falls back to the raw name
+                          // only when no member match exists.
+                          const assigneeProfile = getResolvedUserProfile({
+                            uid:
+                              (taskView as any).assigneeUid ||
+                              (taskView as any).assigneeId ||
+                              (task as any).assigneeUid ||
+                              (task as any).assigneeId ||
+                              "",
+                            email:
+                              (taskView as any).assigneeEmail ||
+                              (task as any).assigneeEmail ||
+                              "",
+                            name: assigneeName,
+                            photoURL: "",
+                          });
+
+                          return (
                           <div className="flex items-center gap-2.5 rounded-lg px-1.5 py-1.5 hover:bg-slate-50 transition-colors">
                             <ModernAvatar
-                                                            name={taskView.assignee || task.assignee}
-                              email=""
-                              photoURL=""
+                              name={assigneeProfile.name || assigneeName}
+                              email={assigneeProfile.email}
+                              photoURL={assigneeProfile.photoURL}
                               size={32}
                             />
+
 
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-slate-800 truncate leading-tight">
@@ -8324,13 +8356,15 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                               </p>
                             </div>
 
-                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-100 flex-shrink-0">
+                                                       <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 border border-amber-100 flex-shrink-0">
                               Assignee
                             </span>
                           </div>
-                        )}
+                          );
+                        })()}
 
                       {/* Email shares */}
+
                       {taskShares.map((share) => {
                         const shareStatus = share.status || "pending";
 
