@@ -90,11 +90,15 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
     myRole === "admin" ||
     myMembership?.permissions?.canEdit === true ||
     myMembership?.permissions?.canManageTasks === true;
-  const [title, setTitle] = useState(task?.title || '');
+   const [title, setTitle] = useState(task?.title || '');
   const [description, setDescription] = useState(task?.description || '');
   const [priority, setPriority] = useState<TaskPriority>(task?.priority || 'Medium');
   const [status, setStatus] = useState<TaskStatus>(task?.status || 'To Do');
   const [dueDate, setDueDate] = useState(task?.dueDate || '');
+  // Assignee: defaults to the task's existing assignee, else the current user.
+  const [assigneeId, setAssigneeId] = useState<string>(
+    String(task?.assigneeId || user?.uid || '')
+  );
   const [isUploading, setIsUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -108,29 +112,48 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
     }
     setSaving(true);
 
-    try {
+       try {
+      // Resolve the picked assignee from the live members list so we store the
+      // correct uid + email. Falls back to the current user when nothing chosen.
+      const picked = (members as any[]).find(
+        (m: any) => String(m?.userId || m?.uid || m?.id || '') === assigneeId
+      );
+      const finalAssigneeId = assigneeId || user.uid;
+      const finalAssigneeEmail = String(
+        picked?.email || picked?.emailLower || (assigneeId ? '' : user.email) || ''
+      ).trim();
+      const finalAssigneeName = String(
+        picked?.displayName || picked?.name || (assigneeId ? '' : (user.displayName || user.email)) || ''
+      ).trim();
+
       if (task) {
         await taskService.updateTask(task.id, {
-  title,
-  description,
-  priority,
-  status,
-  dueDate
-}, workspaceId);
+          title,
+          description,
+          priority,
+          status,
+          dueDate,
+          // Persist (re)assignment on edit too.
+          assignee: finalAssigneeName,
+          assigneeId: finalAssigneeId,
+          assigneeIds: [finalAssigneeId],
+          assigneeEmail: finalAssigneeEmail,
+          assigneeEmails: finalAssigneeEmail ? [finalAssigneeEmail] : [],
+        }, workspaceId);
 
       } else {
-           await taskService.createTask({
+        await taskService.createTask({
           projectId,
           workspaceId,
           title: title.trim(),
           description: description.trim(),
           createdBy: user.uid,
           ownerId: user.uid,
-          assignee: user.email || user.displayName || "",
-          assigneeId: user.uid,
-          assigneeIds: [user.uid],
-          assigneeEmail: user.email || "",
-          assigneeEmails: user.email ? [user.email] : [],
+          assignee: finalAssigneeName,
+          assigneeId: finalAssigneeId,
+          assigneeIds: [finalAssigneeId],
+          assigneeEmail: finalAssigneeEmail,
+          assigneeEmails: finalAssigneeEmail ? [finalAssigneeEmail] : [],
           dueDate: dueDate || null,
           priority,
           status,
@@ -200,23 +223,54 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
                 <div className="space-y-4">
-                   <div className="flex items-center gap-4">
+                                      <div className="flex items-center gap-4">
                      <div className="w-24 text-sm font-medium text-muted-text flex items-center gap-2">
                        <UserIcon size={16} /> Assignee
                      </div>
-                     <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl cursor-not-allowed">
-                                                <div
-                          className="w-5 h-5 rounded-full text-[8px] flex items-center justify-center text-white font-bold ring-1 ring-black/5 select-none"
-                          style={{
-                                                        background: monogramGradient(user?.email || user?.displayName || "U"),
-                            letterSpacing: "0.02em",
-                          }}
-                        >
-                          {user?.displayName?.[0]?.toUpperCase()}
-                        </div>
-
-                        <span className="text-xs font-semibold dark:text-white">{user?.displayName}</span>
-                     </div>
+                     {(() => {
+                       // The member currently selected (for the avatar swatch).
+                       const sel = (members as any[]).find(
+                         (m: any) => String(m?.userId || m?.uid || m?.id || '') === assigneeId
+                       );
+                       const seed =
+                         String(sel?.email || sel?.emailLower || '').trim() ||
+                         (assigneeId ? '' : (user?.email || user?.displayName || 'U')) ||
+                         'U';
+                       const initial =
+                         (String(sel?.displayName || sel?.name || '').trim()[0] ||
+                          (assigneeId ? '?' : (user?.displayName?.[0] || 'U')) ||
+                          'U').toUpperCase();
+                       return (
+                         <div className="flex items-center gap-2 px-2 py-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                           <div
+                             className="w-5 h-5 rounded-full text-[8px] flex items-center justify-center text-white font-bold ring-1 ring-black/5 select-none flex-shrink-0"
+                             style={{ background: monogramGradient(seed), letterSpacing: "0.02em" }}
+                           >
+                             {initial}
+                           </div>
+                           <select
+                             value={assigneeId}
+                             onChange={(e) => setAssigneeId(e.target.value)}
+                             disabled={!canEditTasks}
+                             className="bg-transparent border-none outline-none text-xs font-semibold dark:text-white cursor-pointer disabled:cursor-not-allowed pr-1"
+                           >
+                             <option value="">Unassigned</option>
+                             {(members as any[]).map((m: any) => {
+                               const uid = String(m?.userId || m?.uid || m?.id || '');
+                               const label =
+                                 String(m?.displayName || m?.name || '').trim() ||
+                                 String(m?.email || '').split('@')[0] ||
+                                 'Member';
+                               return (
+                                 <option key={uid || label} value={uid}>
+                                   {label}
+                                 </option>
+                               );
+                             })}
+                           </select>
+                         </div>
+                       );
+                     })()}
                    </div>
 
                    <div className="flex items-center gap-4">

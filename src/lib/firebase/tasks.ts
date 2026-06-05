@@ -14,7 +14,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "./config";
-import { createTaskAssignmentNotification } from "./notifications";
+
 
 
 export type TaskPriority = "Urgent" | "High" | "Medium" | "Low";
@@ -47,8 +47,10 @@ export type Task = {
   attachments?: Attachment[];
   createdAt?: any;
   updatedAt?: any;
+  completedAt?: any;
   [key: string]: any;
 };
+
 
 export type Comment = {
   id: string;
@@ -85,32 +87,17 @@ function assertCanEditWorkspaceContent(canEdit?: boolean) {
     throw new Error("You do not have permission to edit this project.");
   }
 }
-// GLOBAL: resolves the single assignee uid from any of the task's assignee fields.
-function resolveAssigneeUid(data: Record<string, any>): string {
-  const single = String(data.assigneeId || data.assignedToUid || "").trim();
-  if (single) return single;
-  if (Array.isArray(data.assigneeIds) && data.assigneeIds.length > 0) {
-    return String(data.assigneeIds[0] || "").trim();
-  }
-  if (Array.isArray(data.assignedTo) && data.assignedTo.length > 0) {
-    return String(data.assignedTo[0] || "").trim();
-  }
-  return "";
-}
-
-type AssignmentActor = {
-  actorId: string;
-  actorName?: string;
-  actorPhotoURL?: string;
-};
 
 export const taskService = {
-    async createTask(data: CreateTaskInput, actor?: AssignmentActor) {
+
+     async createTask(data: CreateTaskInput) {
     const { workspaceId, ...taskData } = data;
 
     if (!workspaceId) {
       throw new Error("workspaceId is required to create task");
     }
+
+    const finalStatus = taskData.status || "To Do";
 
     const ref = await addDoc(
       collection(db, "workspaces", workspaceId, "tasks"),
@@ -118,45 +105,25 @@ export const taskService = {
         ...taskData,
         workspaceId,
         title: String(taskData.title || "").trim(),
-        status: taskData.status || "To Do",
+        status: finalStatus,
         priority: taskData.priority || "Medium",
+        // GLOBAL accuracy: if the task is created already Done, stamp the
+        // real completion time now. Otherwise leave it unset (null).
+        completedAt: finalStatus === "Done" ? serverTimestamp() : null,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
     );
 
-    // GLOBAL: notify the assignee if the task was created already assigned.
-    const assigneeUid = resolveAssigneeUid(taskData);
-    if (assigneeUid && actor?.actorId) {
-      try {
-        await createTaskAssignmentNotification({
-          workspaceId,
-          recipientUid: assigneeUid,
-          taskId: ref.id,
-          taskTitle: String(taskData.title || "").trim(),
-          projectId: String(taskData.projectId || ""),
-          projectName: String((taskData as any).projectName || ""),
-          actorId: actor.actorId,
-          actorName: actor.actorName,
-          actorPhotoURL: actor.actorPhotoURL,
-        });
-      } catch (err) {
-        console.warn(
-          "[createTask] assignment notification failed (non-fatal):",
-          (err as any)?.message || err,
-        );
-      }
-    }
-
     return ref.id;
   },
 
 
-   async updateTask(
+
+    async updateTask(
     taskId: string,
     data: Partial<Task>,
-    workspaceId?: string,
-    actor?: AssignmentActor
+    workspaceId?: string
   ) {
     const finalWorkspaceId = workspaceId || data.workspaceId;
 
@@ -172,58 +139,41 @@ export const taskService = {
       taskId
     );
 
-    // Read the existing assignee BEFORE the update so we only notify
-    // when the assignee actually CHANGES (prevents duplicate notifications).
-    let previousAssigneeUid = "";
-    const newAssigneeUid = resolveAssigneeUid(data as Record<string, any>);
+    // GLOBAL accuracy: maintain a real completedAt timestamp.
+    // Only touch completedAt when the status is actually changing, so that
+    // editing a Done task (title, description, etc.) never shifts its
+    // completion date.
+    const completedAtPatch: Record<string, any> = {};
+    if (typeof data.status === "string") {
+      // Read the current status to know whether this is a real transition.
+      const snap = await getDoc(taskRef);
+      const prevStatus = snap.exists()
+        ? String((snap.data() as any)?.status || "")
+        : "";
 
-    if (newAssigneeUid && actor?.actorId) {
-      try {
-        const existingSnap = await getDoc(taskRef);
-        if (existingSnap.exists()) {
-          previousAssigneeUid = resolveAssigneeUid(
-            existingSnap.data() as Record<string, any>,
-          );
-        }
-      } catch {
-        previousAssigneeUid = "";
+      const becomingDone = data.status === "Done" && prevStatus !== "Done";
+      const leavingDone = data.status !== "Done" && prevStatus === "Done";
+
+      if (becomingDone) {
+        // Just completed → stamp the real time.
+        completedAtPatch.completedAt = serverTimestamp();
+      } else if (leavingDone) {
+        // Reopened → clear it so it no longer counts as completed.
+        completedAtPatch.completedAt = null;
       }
+      // Same status (Done→Done or non-Done→non-Done): leave completedAt alone.
     }
 
     await updateDoc(
       taskRef,
       cleanUndefined({
         ...data,
+        ...completedAtPatch,
         updatedAt: serverTimestamp(),
       })
     );
-
-    // GLOBAL: notify only when the assignee changed to a new user.
-    if (
-      newAssigneeUid &&
-      actor?.actorId &&
-      newAssigneeUid !== previousAssigneeUid
-    ) {
-      try {
-        await createTaskAssignmentNotification({
-          workspaceId: finalWorkspaceId,
-          recipientUid: newAssigneeUid,
-          taskId,
-          taskTitle: String(data.title || "").trim(),
-          projectId: String(data.projectId || ""),
-          projectName: String((data as any).projectName || ""),
-          actorId: actor.actorId,
-          actorName: actor.actorName,
-          actorPhotoURL: actor.actorPhotoURL,
-        });
-      } catch (err) {
-        console.warn(
-          "[updateTask] assignment notification failed (non-fatal):",
-          (err as any)?.message || err,
-        );
-      }
-    }
   },
+
 
 
   async deleteTask(taskId: string, workspaceId?: string) {

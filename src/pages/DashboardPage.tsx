@@ -15,12 +15,133 @@ import { getOverdueTasks } from "../utils/overdueUtils";
 import { FolderKanban } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────
 const toMs = (v: any): number => {
   if (!v) return 0;
   if (typeof v?.toMillis === "function") return v.toMillis();
   if (typeof v?.seconds === "number")    return v.seconds * 1000;
   return new Date(v).getTime();
 };
+// ─── Avatar helpers (SHARED — must stay byte-for-byte identical to
+// WorkspacePage.tsx / TeamPage.tsx so the SAME email renders the SAME avatar
+// everywhere, in real-time off the live `members` array). GLOBAL. ─────────────
+function monogramGradient(seed: string): string {
+  const s = String(seed || "?").trim().toLowerCase();
+
+  let h1 = 0;
+  let h2 = 0;
+  let h3 = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = (c + ((h1 << 5) - h1)) | 0;
+    h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
+    h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
+  }
+
+  const hue1 = Math.abs(h1) % 360;
+  const hueGap = 25 + (Math.abs(h2) % 90);
+  const hue2 = (hue1 + hueGap) % 360;
+
+  const sat1 = 58 + (Math.abs(h2) % 28);
+  const sat2 = 58 + (Math.abs(h3) % 28);
+  const light1 = 48 + (Math.abs(h3) % 16);
+  const light2 = 38 + (Math.abs(h1) % 14);
+  const angle = Math.abs(h2 ^ h3) % 360;
+
+  return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
+}
+
+function monogramInitials(name?: string | null, email?: string | null): string {
+  const label = String(name || email || "?").trim();
+  if (!label || label === "?") return "?";
+  const initials = label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  return initials || label[0]?.toUpperCase() || "?";
+}
+
+// Only Firebase Storage uploads are real user photos. Any other URL
+// (e.g. Google lh3.googleusercontent.com) is ignored so every account
+// shows its monogram gradient instead of the Gmail photo.
+function resolveAvatarPhoto(photoURL?: string | null): string {
+  const url = String(photoURL || "").trim();
+  return url.includes("firebasestorage") ? url : "";
+}
+
+// Returns the email-based seed used for the gradient. Falls back to name.
+function avatarSeed(name?: string | null, email?: string | null): string {
+  return (
+    String(email || "").trim().toLowerCase() ||
+    String(name || "?").trim().toLowerCase()
+  );
+}
+
+
+const completionMs = (t: any): number => {
+  if (t?.completedAt) return toMs(t.completedAt);
+  return toMs(t?.updatedAt);
+};
+
+
+
+// GLOBAL: robustly decide whether a task belongs to a given workspace member.
+// Matches by uid first (assigneeId / assigneeIds / assigneeUid / assignedToUid),
+// then falls back to email, then to name — covering every way assignment is
+// stored across the codebase. Same data the live listeners already provide,
+// so it stays real-time with zero extra reads/writes.
+const taskBelongsToMember = (t: any, m: any): boolean => {
+  const memberUid = String(m?.userId || m?.uid || m?.id || "").trim();
+  const memberEmail = String(m?.email || m?.emailLower || "").trim().toLowerCase();
+  const memberName = String(m?.displayName || m?.name || "").trim().toLowerCase();
+
+  // uid-based matches (most reliable)
+  if (memberUid) {
+    if (t?.assigneeId === memberUid) return true;
+    if (t?.assigneeUid === memberUid) return true;
+    if (t?.assignedToUid === memberUid) return true;
+    if (Array.isArray(t?.assigneeIds) && t.assigneeIds.includes(memberUid)) return true;
+    if (Array.isArray(t?.assignedTo) && t.assignedTo.includes(memberUid)) return true;
+  }
+
+  // email-based matches
+  if (memberEmail) {
+    if (typeof t?.assigneeEmail === "string" && t.assigneeEmail.toLowerCase().trim() === memberEmail) return true;
+    if (typeof t?.assignee === "string" && t.assignee.toLowerCase().trim() === memberEmail) return true;
+    if (
+      Array.isArray(t?.assigneeEmails) &&
+      t.assigneeEmails.map((e: any) => String(e).toLowerCase().trim()).includes(memberEmail)
+    ) return true;
+  }
+
+    // name-based fallback (legacy)
+  if (memberName && typeof t?.assignee === "string" && t.assignee.toLowerCase().trim() === memberName) {
+    return true;
+  }
+
+  // OWNER/CREATOR fallback: when a task has NO explicit assignee, attribute it
+  // to its owner (or creator) so the workload card reflects real responsibility
+  // instead of showing everyone at zero. New tasks created with the assignee
+  // picker below will match via the uid/email branches above and skip this.
+  const hasExplicitAssignee =
+    (typeof t?.assignee === "string" && t.assignee.trim() !== "") ||
+    !!t?.assigneeId ||
+    !!t?.assigneeUid ||
+    !!t?.assignedToUid ||
+    (Array.isArray(t?.assigneeIds) && t.assigneeIds.length > 0);
+
+  if (!hasExplicitAssignee && memberUid) {
+    if (t?.ownerId === memberUid) return true;
+    if (t?.createdBy === memberUid) return true;
+  }
+
+  return false;
+};
+
+
+
 
 const toDisplayText = (value: unknown, fallback = ""): string => {
   if (value === null || value === undefined) return fallback;
@@ -79,11 +200,12 @@ const isPastDate = (value: unknown, compareTo: Date): boolean => {
 };
 
 
-// ─── Add Task Modal ────────────────────────────────────────────────────────
 const emptyTask = () => ({
   title: "", status: "To Do", priority: "Medium",
   dueDate: "", assignee: "", projectId: "",
+  assigneeId: "", assigneeEmail: "",
 });
+
 
 
 const DashboardPage = () => {
@@ -130,14 +252,122 @@ const DashboardPage = () => {
       return {
         day: days[d.getDay()],
         completed: tasks.filter(t => {
-          if (t.status !== "Done" || !t.updatedAt) return false;
-          return new Date(toMs(t.updatedAt)).toDateString() === d.toDateString();
+          if (t.status !== "Done") return false;
+          const cms = completionMs(t);
+          if (!cms) return false;
+          return new Date(cms).toDateString() === d.toDateString();
         }).length,
       };
     });
   }, [tasks]);
 
-  const thisWeekCount = weeklyData.reduce((s, d) => s + d.completed, 0);
+
+    const thisWeekCount = weeklyData.reduce((s, d) => s + d.completed, 0);
+
+ 
+
+     // ── Weekly Digest (in-app, replaces email digest) ─────────────────────────
+  // GLOBAL: computed client-side from the same `tasks` array every account
+  // already loads. Zero extra reads/writes. Uses the real `completedAt`
+  // timestamp (via completionMs) so the numbers are 100% accurate and stay
+  // consistent with the Weekly Productivity chart above.
+  const weeklyDigest = useMemo(() => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+    const startThisWeek = nowMs - 7 * DAY;   // last 7 days
+    const startLastWeek = nowMs - 14 * DAY;  // the 7 days before that
+
+    const completedThisWeek = tasks.filter(
+      (t) =>
+        t.status === "Done" &&
+        completionMs(t) >= startThisWeek &&
+        completionMs(t) <= nowMs
+    ).length;
+
+    const completedLastWeek = tasks.filter(
+      (t) =>
+        t.status === "Done" &&
+        completionMs(t) >= startLastWeek &&
+        completionMs(t) < startThisWeek
+    ).length;
+
+    const createdThisWeek = tasks.filter(
+      (t) => t.createdAt && toMs(t.createdAt) >= startThisWeek
+    ).length;
+
+    const overdueCount = overdueTasks.length;
+
+    // Most active project this week (by tasks created OR completed in window).
+    const activityByProject = new Map<string, number>();
+    tasks.forEach((t) => {
+      const pid = String(t.projectId || "").trim();
+      if (!pid) return;
+      const created = t.createdAt && toMs(t.createdAt) >= startThisWeek;
+      const completed =
+        t.status === "Done" &&
+        completionMs(t) >= startThisWeek;
+      if (created || completed) {
+        activityByProject.set(pid, (activityByProject.get(pid) || 0) + 1);
+      }
+    });
+
+
+    let topProjectName = "";
+    let topProjectCount = 0;
+    activityByProject.forEach((count, pid) => {
+      if (count > topProjectCount) {
+        topProjectCount = count;
+        const proj = projects.find((p) => p.id === pid);
+        topProjectName = toDisplayText((proj as any)?.name, "");
+      }
+    });
+
+    // Delta vs last week.
+    const delta = completedThisWeek - completedLastWeek;
+    let trend: "up" | "down" | "flat" = "flat";
+    if (delta > 0) trend = "up";
+    else if (delta < 0) trend = "down";
+
+    // Percentage change (guard divide-by-zero).
+    let pctChange: number | null = null;
+    if (completedLastWeek > 0) {
+      pctChange = Math.round((delta / completedLastWeek) * 100);
+    } else if (completedThisWeek > 0) {
+      pctChange = 100; // went from 0 → something
+    }
+
+    // One-line narrative headline.
+    let headline = "";
+    if (completedThisWeek === 0 && completedLastWeek === 0) {
+      headline = "No tasks completed yet this week.";
+    } else if (trend === "up") {
+      headline = `You completed ${completedThisWeek} ${
+        completedThisWeek === 1 ? "task" : "tasks"
+      } this week — up from ${completedLastWeek} last week. 🎉`;
+    } else if (trend === "down") {
+      headline = `You completed ${completedThisWeek} ${
+        completedThisWeek === 1 ? "task" : "tasks"
+      } this week — down from ${completedLastWeek} last week.`;
+    } else {
+      headline = `You completed ${completedThisWeek} ${
+        completedThisWeek === 1 ? "task" : "tasks"
+      } this week — same as last week.`;
+    }
+
+    return {
+      completedThisWeek,
+      completedLastWeek,
+      createdThisWeek,
+      overdueCount,
+      topProjectName,
+      topProjectCount,
+      delta,
+      trend,
+      pctChange,
+      headline,
+    };
+  }, [tasks, projects, overdueTasks]);
+
 
   // ── Upcoming tasks ────────────────────────────────────────────────────────
   const upcomingTasks = [...tasks]
@@ -161,6 +391,51 @@ const DashboardPage = () => {
     const pct  = pt.length > 0 ? Math.round((done / pt.length) * 100) : 0;
     return { ...p, total: pt.length, done, pct };
   });
+  // ── Team Members workload (real-time, from live `members` collection) ──────
+  // GLOBAL: derived from the same `members` + `tasks` listeners every account
+  // already runs. Fixes the badge/list mismatch by using `members` (the real
+  // workspace member collection) instead of the empty legacy `teamMembers`.
+  const memberWorkload = useMemo(() => {
+    const source = (members.length > 0 ? members : teamMembers) as any[];
+
+    return source
+      .map((m: any) => {
+        const uidStr = String(m?.userId || m?.uid || m?.id || "").trim();
+        const name =
+          String(m?.displayName || m?.name || "").trim() ||
+          String(m?.email || "").split("@")[0] ||
+          "Member";
+        const email = String(m?.email || m?.emailLower || "").trim();
+        const role = String(m?.role || "member");
+        const photo = String(m?.avatar || m?.photoURL || m?.avatarUrl || "").trim();
+        const color = String(m?.avatarColor || "").trim() || "#4C28EE";
+
+        const mine = tasks.filter((t: any) => taskBelongsToMember(t, m));
+        const total = mine.length;
+        const done = mine.filter((t: any) => t.status === "Done").length;
+        const active = total - done;
+        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+                return {
+          key: uidStr || email || name,
+          name,
+          email,
+          role,
+          photo,
+          color,
+          // RAW fields the SHARED avatar helpers expect — identical inputs to
+          // WorkspacePage / TeamPage so the same email renders the same avatar.
+          displayName: String(m?.displayName || m?.name || "").trim() || name,
+          photoURL: String(m?.photoURL || m?.avatar || m?.avatarUrl || "").trim(),
+          total,
+          done,
+          active,
+          pct,
+        };
+      })
+      // Busiest people (most open work) first; ties broken by total.
+      .sort((a, b) => b.active - a.active || b.total - a.total);
+  }, [members, teamMembers, tasks]);
 
   // ── Save task ──────────────────────────────────────────────────────────────
   const handleSaveTask = async () => {
@@ -177,15 +452,30 @@ const DashboardPage = () => {
          taskCode = `${workspaceId || "WF-000"}-T${tasks.length + 1}`;
       }
 
-      await addDoc(collection(db, "workspaces", workspaceId, "tasks"), {
-  ...taskForm,
-  taskCode,
-  workspaceId,
-  ownerId: user.uid,
-  createdBy: user.uid,
-  createdAt: serverTimestamp(),
-  updatedAt: serverTimestamp(),
-});
+                   // Resolve the picked assignee (if any) from the live members list so
+          // we store BOTH the uid and email — the matcher keys off either.
+          const picked = members.find(
+            (mm: any) =>
+              String(mm?.userId || mm?.uid || mm?.id || "") === taskForm.assigneeId
+          ) as any;
+
+          await addDoc(collection(db, "workspaces", workspaceId, "tasks"), {
+            ...taskForm,
+            // Explicit assignment (empty string when "Unassigned" is chosen).
+            assigneeId: taskForm.assigneeId || "",
+            assigneeEmail:
+              taskForm.assigneeEmail ||
+              String(picked?.email || picked?.emailLower || "").trim(),
+            taskCode,
+            workspaceId,
+            ownerId: user.uid,
+            createdBy: user.uid,
+            completedAt: taskForm.status === "Done" ? serverTimestamp() : null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+
+
 
       setTaskForm(emptyTask());
       setShowTask(false);
@@ -246,8 +536,92 @@ const DashboardPage = () => {
             </div>
           </div>
         )}
+                {/* ── Weekly Digest Card ───────────────────────────────────────── */}
+                        {/* ── Weekly Digest Card ───────────────────────────────────────── */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 mb-4">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">
+                This Week at a Glance
+              </h3>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide">
+                Your last 7 days
+              </p>
+            </div>
+            <button
+              onClick={() => navigate("/insights")}
+              className="text-xs text-violet-600 hover:underline font-medium"
+            >
+              View details →
+            </button>
+          </div>
+
+          {/* Narrative headline */}
+          <p className="text-sm text-gray-700 mb-4">
+            {weeklyDigest.headline}
+            {weeklyDigest.pctChange !== null && weeklyDigest.trend !== "flat" && (
+              <span
+                className={`ml-2 text-xs font-semibold ${
+                  weeklyDigest.trend === "up"
+                    ? "text-emerald-600"
+                    : "text-red-500"
+                }`}
+              >
+                {weeklyDigest.trend === "up" ? "▲" : "▼"}{" "}
+                {Math.abs(weeklyDigest.pctChange)}%
+              </span>
+            )}
+          </p>
+
+          {/* Stat strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-emerald-50 rounded-lg px-3 py-2.5">
+              <p className="text-lg font-bold text-emerald-600">
+                {weeklyDigest.completedThisWeek}
+              </p>
+              <p className="text-[10px] text-gray-500 leading-tight">
+                Completed this week
+              </p>
+            </div>
+            <div className="bg-blue-50 rounded-lg px-3 py-2.5">
+              <p className="text-lg font-bold text-blue-600">
+                {weeklyDigest.createdThisWeek}
+              </p>
+              <p className="text-[10px] text-gray-500 leading-tight">
+                Created this week
+              </p>
+            </div>
+            <div
+              className={`rounded-lg px-3 py-2.5 ${
+                weeklyDigest.overdueCount > 0 ? "bg-red-50" : "bg-gray-50"
+              }`}
+            >
+              <p
+                className={`text-lg font-bold ${
+                  weeklyDigest.overdueCount > 0
+                    ? "text-red-500"
+                    : "text-gray-400"
+                }`}
+              >
+                {weeklyDigest.overdueCount}
+              </p>
+              <p className="text-[10px] text-gray-500 leading-tight">
+                Overdue
+              </p>
+            </div>
+            <div className="bg-violet-50 rounded-lg px-3 py-2.5">
+              <p className="text-sm font-bold text-violet-600 truncate">
+                {weeklyDigest.topProjectName || "—"}
+              </p>
+              <p className="text-[10px] text-gray-500 leading-tight">
+                Most active project
+              </p>
+            </div>
+          </div>
+        </div>
 
         {/* ── ROW 1: Stat Cards ────────────────────────────────────────── */}
+
                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
           {STAT_CARDS.map(s => (
             <div key={s.label}
@@ -683,7 +1057,7 @@ const DashboardPage = () => {
         {/* ── ROW 6: Team Members + My Notes ──────────────────────────── */}
         <div className="grid grid-cols-2 gap-3 mb-4">
 
-          {/* Team Members */}
+                  {/* Team Members */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -694,42 +1068,90 @@ const DashboardPage = () => {
                   Workload overview
                 </p>
               </div>
-              <span className="text-xs bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">{totalMembers}</span>
+              <button
+                onClick={() => navigate("/team")}
+                className="text-xs bg-violet-50 text-violet-600 hover:bg-violet-100 rounded-full px-2.5 py-0.5 font-medium transition-colors"
+              >
+                {memberWorkload.length}
+              </button>
             </div>
-            {teamMembers.length > 0 ? (
-              <div className="space-y-2 max-h-[160px] overflow-y-auto">
-                {teamMembers.map(m => {
-                  const mt   = tasks.filter(t => t.assignee === m.name || t.assignee === m.email);
-                  const done = mt.filter(t => t.status === "Done").length;
-                  const pct  = mt.length > 0 ? Math.round((done/mt.length)*100) : 0;
-                  return (
-                    <div key={m.id} className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                        {(m.name ?? m.email ?? "?")[0].toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between">
+            {memberWorkload.length > 0 ? (
+              <div className="space-y-3 max-h-[180px] overflow-y-auto pr-1">
+                {memberWorkload.map(m => (
+                  <div key={m.key} className="flex items-center gap-2.5">
+                                      {/* Avatar: SHARED monogram logic — pixel-identical to
+                        WorkspacePage / TeamPage, driven by the live members data. */}
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0 overflow-hidden select-none ring-1 ring-gray-100"
+                      style={
+                        resolveAvatarPhoto(m.photoURL)
+                          ? undefined
+                          : { background: monogramGradient(avatarSeed(m.displayName, m.email)) }
+                      }
+                    >
+                      {resolveAvatarPhoto(m.photoURL) ? (
+                        <img
+                          src={resolveAvatarPhoto(m.photoURL)}
+                          alt={m.displayName || m.email || "Member"}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        monogramInitials(m.displayName, m.email)
+                      )}
+                    </div>
+
+
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
                           <p className="text-xs font-medium text-gray-700 truncate">
-                            {m.name ?? m.email}
+                            {m.name}
                           </p>
-                          <p className="text-[10px] text-gray-400">{pct}%</p>
+                          {(m.role === "owner" || m.role === "admin") && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-600 font-semibold capitalize flex-shrink-0">
+                              {m.role}
+                            </span>
+                          )}
                         </div>
-                        <div className="w-full h-1 bg-gray-100 rounded-full mt-1">
-                          <div className="h-full bg-blue-500 rounded-full"
-                               style={{ width: `${pct}%` }} />
+                        <p className="text-[10px] text-gray-400 flex-shrink-0">
+                          {m.pct}%
+                        </p>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${m.pct}%`,
+                              backgroundColor: m.pct === 100 ? "#10b981" : "#4C28EE",
+                            }}
+                          />
                         </div>
+                        <span className="text-[10px] text-gray-400 flex-shrink-0 whitespace-nowrap">
+                          {m.active} active · {m.done} done
+                        </span>
                       </div>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="h-[120px] flex flex-col items-center justify-center gap-1">
                 <p className="text-xs text-gray-400">No team members yet.</p>
-                <p className="text-[10px] text-gray-300">Add members to see workload.</p>
+                <button
+                  type="button"
+                  onClick={() => navigate("/team")}
+                  className="text-[10px] text-violet-600 hover:underline"
+                >
+                  + Invite your first member
+                </button>
               </div>
             )}
           </div>
+
 
           {/* My Notes */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
@@ -814,7 +1236,7 @@ const DashboardPage = () => {
                   onChange={e => setTaskForm(f => ({ ...f, dueDate: e.target.value }))}
                   className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <select
+                                <select
                   value={taskForm.projectId}
                   onChange={e => setTaskForm(f => ({ ...f, projectId: e.target.value }))}
                   className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -828,6 +1250,39 @@ const DashboardPage = () => {
 
                 </select>
               </div>
+
+              {/* Assignee picker — writes assigneeId + assigneeEmail so the
+                  Team Members workload card attributes the task correctly. */}
+              <select
+                value={taskForm.assigneeId}
+                onChange={e => {
+                  const uid = e.target.value;
+                  const m = (members as any[]).find(
+                    (mm: any) => String(mm?.userId || mm?.uid || mm?.id || "") === uid
+                  );
+                  setTaskForm(f => ({
+                    ...f,
+                    assigneeId: uid,
+                    assigneeEmail: String(m?.email || m?.emailLower || "").trim(),
+                  }));
+                }}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Unassigned</option>
+                {(members.length > 0 ? members : teamMembers).map((m: any) => {
+                  const uid = String(m?.userId || m?.uid || m?.id || "");
+                  const label =
+                    String(m?.displayName || m?.name || "").trim() ||
+                    String(m?.email || "").split("@")[0] ||
+                    "Member";
+                  return (
+                    <option key={uid || label} value={uid}>
+                      {label}
+                    </option>
+                  );
+                })}
+              </select>
+
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowTask(false)}

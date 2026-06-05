@@ -84,10 +84,7 @@
   import Picker from "@emoji-mart/react";
   import { useMentionableUsers } from "../hooks/useMentionableUsers";
   import { storageService, UploadedAttachment } from "../lib/firebase/storage";
-    import {
-    createCommentNotifications,
-    createTaskAssignmentNotification,
-  } from "../lib/firebase/notifications";
+  import { createCommentNotifications } from "../lib/firebase/notifications";
   import { upsertTaskGuestPerson } from "../lib/firebase/tasks";
 
   export interface Task {
@@ -5568,46 +5565,7 @@ await notifyCommentRecipients({
         setShareEmail("");
         setShareMessage("");
         setShowShareMessage(false);
-                // ── Phase 2: Task Assignment notification ──────────────────────────
-        // The share targets an EMAIL. A notification can only be delivered to
-        // an existing user (we need their uid + their notifPrefs.taskEmails).
-        // Resolve the invited email to a workspace member uid; if found, fire
-        // the notification. The helper itself re-checks taskEmails and skips
-        // self-assignment, so this is safe and global.
-        try {
-          const invitedMember = workspaceMembers.find((member: any) => {
-            const memberEmail = normalizeEmail(
-              member?.email || member?.emailLower || member?.emailAddress,
-            );
-            return memberEmail === recipientEmail;
-          });
-
-          const recipientUid = String(
-            invitedMember?.uid ||
-              invitedMember?.userId ||
-              invitedMember?.id ||
-              "",
-          ).trim();
-
-          if (recipientUid && recipientUid !== safeCurrentUserUid) {
-            await createTaskAssignmentNotification({
-              workspaceId: taskWorkspaceId,
-              recipientUid,
-              taskId: sourceTaskId,
-              taskTitle,
-              projectId: taskView.projectId || task.projectId || "",
-              projectName,
-              actorId: safeCurrentUserUid,
-              actorName: senderName,
-              actorPhotoURL: currentUserRealPhotoURL,
-            });
-          }
-        } catch (assignErr) {
-          console.warn(
-            "[TaskDetailPanel] task assignment notification skipped:",
-            assignErr,
-          );
-        }
+              
 
         window.setTimeout(() => {
           setShareSent(false);

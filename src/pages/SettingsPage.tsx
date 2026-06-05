@@ -113,9 +113,9 @@ interface WorkspaceForm {
 interface NotifPrefs {
   inviteEmails:     boolean;
   roleChangeEmails: boolean;
-  taskEmails:       boolean;
-  weeklyDigest:     boolean;
 }
+
+
 
 // ─── Sub-nav items ────────────────────────────────────────────────────────────
 
@@ -272,12 +272,11 @@ export default function SettingsPage() {
   const [copiedWid, setCopiedWid] = useState(false);
 
   // ── Notification prefs ────────────────────────────────────────────────────
-  const [notifPrefs, setNotifPrefs] = useState<NotifPrefs>({
+        const [notifPrefs, setNotifPrefs] = useState<NotifPrefs>({
     inviteEmails:     true,
     roleChangeEmails: true,
-    taskEmails:       false,
-    weeklyDigest:     false,
   });
+
 
   // ── Danger zone ───────────────────────────────────────────────────────────
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -1219,17 +1218,13 @@ export default function SettingsPage() {
                         label: "Workspace Invitations",
                         desc:  "Get notified when someone invites you to a workspace",
                       },
-                      {
+                                            {
                         key:   "roleChangeEmails" as const,
                         label: "Role Changes",
                         desc:  "Get notified when your role in a workspace changes",
                       },
-                      {
-                        key:   "weeklyDigest" as const,
-                        label: "Weekly Digest",
-                        desc:  "Receive a weekly summary of workspace activity",
-                      },
                     ] as { key: keyof NotifPrefs; label: string; desc: string }[]
+
                   ).map(({ key, label, desc }) => (
                     <div
                       key={key}

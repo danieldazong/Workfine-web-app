@@ -131,12 +131,14 @@ export interface Task {
   dueDate?: any;
   createdAt?: any;
   updatedAt?: any;
+  completedAt?: any;
 
   attachments?: Attachment[];
   comments?: Comment[];
 
   [key: string]: any;
 }
+
 export type AppNotificationType =
   | "mention"
   | "task_comment"
