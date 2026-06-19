@@ -364,6 +364,31 @@ service cloud.firestore {
         );
     }
 
+    // ============================================================
+    // GLOBAL: collection-group READ rule for the Conversations feed.
+    // useConversations runs collectionGroup('comments'), which CANNOT use
+    // the per-task comment rule (that rule calls get() on the parent task,
+    // which is forbidden for collection-group queries and causes the
+    // permission-denied flash). This rule is satisfiable from the comment
+    // doc's OWN fields only, so the collection-group query succeeds.
+    //
+    // REQUIRED on the client: the query MUST include
+    //   where('workspaceId', '==', currentWorkspaceId)
+    // so Firestore can prove every returned doc satisfies this rule.
+    //
+    // Read-only (list/get) — no writes are granted here, so the existing
+    // per-task create/update/delete comment rules remain the only write path.
+    // ============================================================
+    match /{path=**}/comments/{commentId} {
+      allow list, get: if isSignedIn()
+        && resource.data.workspaceId is string
+        && (
+          isActiveWorkspaceMember(resource.data.workspaceId, request.auth.uid)
+          || (resource.data.authorId is string && resource.data.authorId == request.auth.uid)
+          || isPersonalWorkspaceId(resource.data.workspaceId, request.auth.uid)
+        );
+    }
+
     match /projects/{projectId} {
       allow get: if rootProjectVisibleToMe(resource.data, projectId);
 
@@ -787,6 +812,7 @@ service cloud.firestore {
             && (
               signedInEmail() in taskData.sharedWithEmails
               || signedInEmailLower() in taskData.sharedWithEmails
+              || signedInEmail().lower() in taskData.sharedWithEmails
             );
         }
 
@@ -935,6 +961,7 @@ service cloud.firestore {
                 isTrustedActiveWorkspaceMemberDoc(workspaceId, request.auth.uid)
                 && memberData(workspaceId, request.auth.uid).role == "member"
               )
+              || currentTaskSharedWithSignedInEmail()
             )
             && request.resource.data.authorId == request.auth.uid
             && request.resource.data.workspaceId == workspaceId

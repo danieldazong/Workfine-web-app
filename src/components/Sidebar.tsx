@@ -17,6 +17,7 @@ import {
   Settings,
   Building2,
   ChevronRight,
+  MessageSquare,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../context/AuthContext";
@@ -174,10 +175,11 @@ export default function Sidebar() {
     await deleteProject(projectWorkspaceId, project.id);
   };
 
-    const navItems = isGuestView
+       const navItems = isGuestView
     ? [
         // Scoped guest navigation: only the tasks shared with them.
         { name: "My Tasks", icon: CheckSquare, path: "/my-tasks" },
+        { name: "Conversations", icon: MessageSquare, path: "/conversations" },
         { name: "Settings", icon: Settings, path: "/settings" },
       ]
     : [
@@ -185,10 +187,12 @@ export default function Sidebar() {
         { name: "Insights", icon: BarChart2, path: "/insights" },
         { name: "Calendar", icon: Calendar, path: "/calendar" },
         { name: "My Tasks", icon: CheckSquare, path: "/my-tasks" },
+        { name: "Conversations", icon: MessageSquare, path: "/conversations" },
         { name: "Team", icon: Users, path: "/team" },
         { name: "Workspace", icon: Building2, path: "/workspace" },
         { name: "Settings", icon: Settings, path: "/settings" },
       ];
+
 
 
   return (
@@ -555,7 +559,7 @@ function SidebarContent({
                 "border border-indigo-400/30 text-xs font-semibold text-white select-none",
                 resolveAvatarPhoto(user?.photoURL) ? "hidden" : "flex"
               )}
-                                          style={{
+                                                                                    style={{
                 background: monogramGradient(
                   monogramSeed(user?.email, user?.displayName)
                 ),
@@ -565,7 +569,12 @@ function SidebarContent({
 
             >
               {monogramInitials(user?.displayName, user?.email)}
+              {/* Both the gradient and the initials now derive from the same
+                  canonical monogramSeed(email, name), so this avatar matches
+                  the Conversations / TaskDetailPanel / TeamPage avatars
+                  byte-for-byte for the same account. */}
             </div>
+
           </div>
 
 

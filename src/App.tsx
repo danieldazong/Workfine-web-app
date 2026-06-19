@@ -32,6 +32,7 @@ import WorkspacePage from "./pages/WorkspacePage";
 import JoinWorkspacePage from "./pages/JoinWorkspacePage";
 import AcceptTaskInvitePage from "./pages/AcceptTaskInvitePage";
 import PendingTaskInviteGate from "./components/PendingTaskInviteGate";
+import ConversationsPage from "./pages/ConversationsPage";
 
 
 function PresenceTracker() {
@@ -123,20 +124,21 @@ export default function App() {
           {/* Protected app routes */}
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
-                            <Route path="/" element={<DashboardPage />} />
+              <Route path="/" element={<DashboardPage />} />
               <Route path="/my-tasks" element={<MyTasksPage />} />
+              <Route path="/conversations" element={<ConversationsPage />} />
               <Route path="/insights" element={<InsightsPage />} />
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/team" element={<TeamPage />} />
               <Route path="/settings" element={<SettingsPage />} />
-                            <Route path="/projects" element={<ProjectsOverviewPage />} />
+              <Route path="/projects" element={<ProjectsOverviewPage />} />
               <Route path="/projects/:id" element={<ProjectPage />} />
               <Route path="/workspace" element={<WorkspacePage />} />
               <Route path="/workspace/:tab" element={<WorkspacePage />} />
             </Route>
           </Route>
 
-                    <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
 
         {/* Universal pending-invite safety net.

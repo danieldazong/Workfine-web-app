@@ -21,10 +21,12 @@ src\features\project\views\ProjectBoardView.tsx
 src\features\project\views\ProjectCalendarView.tsx
 src\features\project\views\ProjectListView.tsx
 src\features\project\views\ProjectTimelineView.tsx
+src\hooks\useConversations.ts
 src\hooks\useMentionableUsers.ts
 src\hooks\useNotifications.ts
 src\hooks\usePageTitle.ts
 src\hooks\usePresenceHeartbeat.ts
+src\lib\monogram.ts
 src\lib\projectAccess.ts
 src\lib\utils.ts
 src\lib\firebase\auth.ts
@@ -40,6 +42,7 @@ src\lib\firebase\users.ts
 src\lib\firebase\workspaceMembers.ts
 src\pages\AcceptTaskInvitePage.tsx
 src\pages\CalendarPage.tsx
+src\pages\ConversationsPage.tsx
 src\pages\DashboardPage.tsx
 src\pages\InsightsPage.tsx
 src\pages\JoinWorkspacePage.tsx

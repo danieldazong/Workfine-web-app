@@ -35,13 +35,15 @@ export function monogramGradient(seed: string): string {
   return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
 }
 
-// Email-first initials (never stale vs. displayName).
+// Email-first initials, seeded from the SAME canonical seed used by the
+// gradient so the letter and the color ALWAYS agree on every surface,
+// regardless of load timing or which field happens to be populated first.
 export function monogramInitials(
   name?: string | null,
   email?: string | null
 ): string {
-  const emailLocal = String(email || "").trim().split("@")[0];
-  const label = String(emailLocal || name || "?")
+  // Use the canonical seed (email-local first, then name) as the label source.
+  const label = monogramSeed(email, name)
     .replace(/[._-]+/g, " ")
     .trim();
   if (!label || label === "?") return "?";
@@ -53,6 +55,7 @@ export function monogramInitials(
     .toUpperCase();
   return initials || label[0]?.toUpperCase() || "?";
 }
+
 
 // The ONE canonical seed expression. Use this for BOTH the gradient
 // and the initials so color and letter always agree.

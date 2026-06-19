@@ -84,8 +84,14 @@
   import Picker from "@emoji-mart/react";
   import { useMentionableUsers } from "../hooks/useMentionableUsers";
   import { storageService, UploadedAttachment } from "../lib/firebase/storage";
-  import { createCommentNotifications } from "../lib/firebase/notifications";
-  import { upsertTaskGuestPerson } from "../lib/firebase/tasks";
+    import { createCommentNotifications } from "../lib/firebase/notifications";
+import { upsertTaskGuestPerson } from "../lib/firebase/tasks";
+import {
+  monogramGradient,
+  monogramInitials,
+} from "../lib/monogram";
+
+
 
   export interface Task {
     id: string;
@@ -1304,52 +1310,11 @@ function normalizeEmail(email?: string | null): string {
 
     return gradients[hashString(key) % gradients.length];
   }
-    function monogramGradient(seed: string): string {
-    const s = String(seed || "?").trim().toLowerCase();
-
-    let h1 = 0;
-    let h2 = 0;
-    let h3 = 0;
-    for (let i = 0; i < s.length; i++) {
-      const c = s.charCodeAt(i);
-      h1 = (c + ((h1 << 5) - h1)) | 0;
-      h2 = (c * 31 + ((h2 << 7) - h2)) | 0;
-      h3 = (c * 17 + ((h3 << 3) - h3)) | 0;
-    }
-
-    const hue1 = Math.abs(h1) % 360;
-    const hueGap = 25 + (Math.abs(h2) % 90);
-    const hue2 = (hue1 + hueGap) % 360;
-
-    const sat1 = 58 + (Math.abs(h2) % 28);
-    const sat2 = 58 + (Math.abs(h3) % 28);
-    const light1 = 48 + (Math.abs(h3) % 16);
-    const light2 = 38 + (Math.abs(h1) % 14);
-    const angle = Math.abs(h2 ^ h3) % 360;
-
-    return `linear-gradient(${angle}deg, hsl(${hue1} ${sat1}% ${light1}%), hsl(${hue2} ${sat2}% ${light2}%))`;
-  }
+      // monogramGradient now imported from ../lib/monogram (single source of truth).
 
 
-  function monogramInitials(name?: string | null, email?: string | null): string {
-  // GLOBAL: seed initials from the SAME canonical source as the gradient —
-  // email first (never stale), falling back to name. This guarantees the
-  // SAME letter on every surface even when Firebase Auth displayName and
-  // Firestore displayName disagree.
-  const emailLocal = String(email || "").trim().split("@")[0];
-  const label =
-    String(emailLocal || name || "?")
-      .replace(/[._-]+/g, " ")
-      .trim();
-  if (!label || label === "?") return "?";
-  const initials = label
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase();
-  return initials || label[0]?.toUpperCase() || "?";
-}
+   // monogramInitials now imported from ../lib/monogram (single source of truth).
+
 
 
    function ModernAvatar({
@@ -2841,6 +2806,26 @@ function formatFullLocalDateTime(timestamp: any): string {
       );
     }, [projects, taskView.projectId, task.projectId]);
 
+    // GLOBAL: task.sharedWithEmails is the canonical source of truth for invited
+    // emails. Share docs (taskShares) can be missing, stale, or not yet written,
+    // so guest-access decisions must also consult this array. Normalized once here.
+    const sharedWithEmailsSet = useMemo(() => {
+      const emails = new Set<string>();
+
+      const collect = (value: unknown) => {
+        if (Array.isArray(value)) {
+          value.forEach((entry) => {
+            const clean = normalizeEmail(entry as string);
+            if (clean) emails.add(clean);
+          });
+        }
+      };
+
+      collect((taskView as any).sharedWithEmails);
+      collect((task as any).sharedWithEmails);
+
+      return emails;
+    }, [(taskView as any).sharedWithEmails, (task as any).sharedWithEmails]);
 
     const taskParticipantCount = useMemo(() => {
       const ids = new Set<string>();
@@ -2860,7 +2845,7 @@ function formatFullLocalDateTime(timestamp: any): string {
         else if (memberEmail) ids.add(`email:${memberEmail}`);
       });
 
-      taskShares.forEach((share) => {
+           taskShares.forEach((share) => {
         const email = normalizeEmail(
           share.sharedWithEmail || share.invitedEmail || share.invitedEmailLower,
         );
@@ -2873,6 +2858,14 @@ function formatFullLocalDateTime(timestamp: any): string {
 
         if (acceptedUid) ids.add(`uid:${acceptedUid}`);
       });
+
+      // GLOBAL: also count every invited email from the canonical task field,
+      // even when no matching share doc exists. Set semantics dedupe against
+      // the share-derived emails above.
+      sharedWithEmailsSet.forEach((email) => {
+        if (email) ids.add(`email:${email}`);
+      });
+
 
       const assignee = String(taskView.assignee || task.assignee || "").trim();
 
@@ -2889,14 +2882,16 @@ function formatFullLocalDateTime(timestamp: any): string {
       });
 
       return ids.size;
-    }, [
+        }, [
       safeCurrentUserUid,
       workspaceMembers,
       taskShares,
+      sharedWithEmailsSet,
       taskView.assignee,
       task.assignee,
       project,
     ]);
+
 
                const currentWorkspaceMember = useMemo(() => {
       if (!user?.uid && !user?.email) return null;
@@ -5330,14 +5325,16 @@ await notifyCommentRecipients({
         safeCurrentUserEmail.split("@")[0] ||
         "Someone";
 
-      const alreadyShared = taskShares.some((share) => {
-        const existingEmail =
-          share.sharedWithEmail?.toLowerCase?.() ||
-          (share as any).invitedEmail?.toLowerCase?.() ||
-          "";
+          const alreadyShared =
+        sharedWithEmailsSet.has(recipientEmail) ||
+        taskShares.some((share) => {
+          const existingEmail =
+            share.sharedWithEmail?.toLowerCase?.() ||
+            (share as any).invitedEmail?.toLowerCase?.() ||
+            "";
 
-        return existingEmail === recipientEmail && share.status !== "revoked";
-      });
+          return existingEmail === recipientEmail && share.status !== "revoked";
+        });
 
       if (alreadyShared) {
         setShareError("This email already has access or has a pending invite.");
