@@ -211,6 +211,10 @@ export async function upsertTaskGuestPerson(params: {
   projectId?: string;
   projectName?: string;
   status?: "active" | "pending";
+  // GLOBAL: per-guest access level. "commenter" can read/add/edit/delete own
+  // comments + like + copy. "viewer" is read-only. Defaults to "commenter"
+  // so existing behavior is preserved for shares created before this field.
+  guestRole?: "commenter" | "viewer";
 }) {
   const {
     workspaceId,
@@ -225,6 +229,7 @@ export async function upsertTaskGuestPerson(params: {
     projectId = "",
     projectName = "",
     status = "pending",
+    guestRole = "commenter",
   } = params;
 
   if (!workspaceId || !taskId || !shareId || !invitedEmail) return;
@@ -244,9 +249,11 @@ export async function upsertTaskGuestPerson(params: {
     projectName,
     shareId,
     status: "active",
+    guestRole,
     grantedAt: serverTimestamp(),
     grantedBy: invitedBy,
   };
+
 
   const existing = await getDoc(personRef);
 
@@ -277,9 +284,11 @@ export async function upsertTaskGuestPerson(params: {
     photoURL: "",
     avatarColor: "",
 
-    type: "guest",
+       type: "guest",
     status,
+    guestRole,
     invitedVia: "task",
+
 
     invitedBy,
     invitedByName,

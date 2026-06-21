@@ -11,7 +11,7 @@ service cloud.firestore {
     }
 
     function signedInEmail() {
-      return isSignedIn() && request.auth.token.email is string
+      return (isSignedIn() && request.auth.token.email is string)
         ? request.auth.token.email
         : "";
     }
@@ -286,6 +286,26 @@ service cloud.firestore {
         ]);
     }
 
+    // GLOBAL: a comment is readable by a guest if the comment itself carries
+    // the lowercased list of emails the parent task is shared with, and the
+    // signed-in user's email is in that list. collectionGroup rules cannot
+    // get() the parent task, so the task's share list must be stamped on each
+    // comment at write time (sharedEmailsLower).
+        function commentVisibleToSignedInGuest() {
+      return signedInEmailLower() != ""
+        && (
+          (
+            resource.data.sharedEmailsLower is list
+            && signedInEmailLower() in resource.data.sharedEmailsLower
+          )
+          || (
+            resource.data.authorEmail is string
+            && resource.data.authorEmail.lower() == signedInEmailLower()
+          )
+        );
+    }
+
+
     match /invites/{inviteCode} {
       allow read: if true;
 
@@ -374,11 +394,19 @@ service cloud.firestore {
     //
     // REQUIRED on the client: the query MUST include
     //   where('workspaceId', '==', currentWorkspaceId)
-    // so Firestore can prove every returned doc satisfies this rule.
-    //
-    // Read-only (list/get) — no writes are granted here, so the existing
-    // per-task create/update/delete comment rules remain the only write path.
+    // and every comment doc MUST carry sharedEmailsLower for guest reads.
+    // Read-only (list/get) — no writes are granted here.
     // ============================================================
+    function commentTaskGuestShareData(workspaceId, taskId, shareId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)/shares/$(shareId)).data;
+    }
+
+    function commentTaskGuestShareExists(workspaceId, taskId, shareId) {
+      return shareId is string
+        && shareId != ""
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)/shares/$(shareId));
+    }
+
     match /{path=**}/comments/{commentId} {
       allow list, get: if isSignedIn()
         && resource.data.workspaceId is string
@@ -386,6 +414,36 @@ service cloud.firestore {
           isActiveWorkspaceMember(resource.data.workspaceId, request.auth.uid)
           || (resource.data.authorId is string && resource.data.authorId == request.auth.uid)
           || isPersonalWorkspaceId(resource.data.workspaceId, request.auth.uid)
+          || commentVisibleToSignedInGuest()
+                    || (
+            resource.data.taskId is string
+            && resource.data.taskId != ""
+            && resource.data.guestShareId is string
+            && resource.data.guestShareId != ""
+            && commentTaskGuestShareExists(
+                 resource.data.workspaceId,
+                 resource.data.taskId,
+                 resource.data.guestShareId
+               )
+            && commentTaskGuestShareData(
+                 resource.data.workspaceId,
+                 resource.data.taskId,
+                 resource.data.guestShareId
+               ).status in ["active", "accepted"]
+            && (
+              commentTaskGuestShareData(
+                resource.data.workspaceId,
+                resource.data.taskId,
+                resource.data.guestShareId
+              ).acceptedByUid == request.auth.uid
+              || commentTaskGuestShareData(
+                resource.data.workspaceId,
+                resource.data.taskId,
+                resource.data.guestShareId
+              ).acceptedBy == request.auth.uid
+            )
+          )
+
         );
     }
 
@@ -841,6 +899,33 @@ service cloud.firestore {
             || currentTaskSharedWithSignedInEmail();
         }
 
+        function guestShareDocPath(shareId) {
+          return /databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)/shares/$(shareId);
+        }
+
+        function shareDocMarksViewer(shareData) {
+          return shareData != null
+            && shareData.guestRole == "viewer"
+            && (
+              (shareData.invitedEmailLower is string && signedInEmailMatches(shareData.invitedEmailLower))
+              || (shareData.invitedEmail is string && signedInEmailMatches(shareData.invitedEmail))
+              || (shareData.sharedWithEmail is string && signedInEmailMatches(shareData.sharedWithEmail))
+              || (shareData.sharedWithEmailLower is string && signedInEmailMatches(shareData.sharedWithEmailLower))
+              || (shareData.acceptedByEmail is string && signedInEmailMatches(shareData.acceptedByEmail))
+              || (shareData.acceptedByEmailLower is string && signedInEmailMatches(shareData.acceptedByEmailLower))
+              || (shareData.acceptedByUid is string && shareData.acceptedByUid == request.auth.uid)
+              || (shareData.acceptedBy is string && shareData.acceptedBy == request.auth.uid)
+            );
+        }
+
+        function signedInGuestIsViewerForShare(shareId) {
+          return isSignedIn()
+            && shareId is string
+            && shareId != ""
+            && exists(guestShareDocPath(shareId))
+            && shareDocMarksViewer(get(guestShareDocPath(shareId)).data);
+        }
+
         function shareBelongsToSignedInEmail(shareData) {
           return isSignedIn()
             && shareData != null
@@ -951,8 +1036,28 @@ service cloud.firestore {
             );
         }
 
-        match /comments/{commentId} {
-          allow read: if canReadCurrentTask();
+               match /comments/{commentId} {
+          // GLOBAL: a participant can read in-task comments if they can read
+          // the parent task (member or sharedWithEmails) OR the comment itself
+          // carries them in sharedEmailsLower OR they authored it. This mirrors
+          // the collection-group rule so the in-task listener never gets a
+          // permission-denied when the parent task's sharedWithEmails is stale.
+          allow read: if canReadCurrentTask()
+            || (
+              resource.data.sharedEmailsLower is list
+              && signedInEmailLower() != ""
+              && signedInEmailLower() in resource.data.sharedEmailsLower
+            )
+            || (
+              resource.data.authorEmail is string
+              && signedInEmailLower() != ""
+              && resource.data.authorEmail.lower() == signedInEmailLower()
+            )
+            || (
+              resource.data.authorId is string
+              && resource.data.authorId == request.auth.uid
+            );
+
 
           allow create: if canReadCurrentTask()
             && (
@@ -961,7 +1066,14 @@ service cloud.firestore {
                 isTrustedActiveWorkspaceMemberDoc(workspaceId, request.auth.uid)
                 && memberData(workspaceId, request.auth.uid).role == "member"
               )
-              || currentTaskSharedWithSignedInEmail()
+              || (
+                currentTaskSharedWithSignedInEmail()
+                && (
+                  !("guestShareId" in request.resource.data)
+                  || request.resource.data.guestShareId == ""
+                  || !signedInGuestIsViewerForShare(request.resource.data.guestShareId)
+                )
+              )
             )
             && request.resource.data.authorId == request.auth.uid
             && request.resource.data.workspaceId == workspaceId

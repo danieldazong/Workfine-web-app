@@ -54,9 +54,12 @@ export interface WorkspacePersonTaskAccess {
   projectName?: string;
   shareId?: string;
   status?: "active" | "revoked" | string;
+  // GLOBAL: per-guest access level for this task. Missing → "commenter".
+  guestRole?: "commenter" | "viewer";
   grantedAt?: any;
   grantedBy?: string;
 }
+
 
 export interface WorkspacePerson {
   id?: string;
@@ -71,6 +74,9 @@ export interface WorkspacePerson {
   type?: WorkspacePersonType;
   status?: WorkspacePersonStatus;
   invitedVia?: WorkspacePersonInvitedVia;
+  // GLOBAL: default per-guest access level across this person's task shares.
+  guestRole?: "commenter" | "viewer";
+
 
   workspaceId?: string;
   invitedBy?: string;

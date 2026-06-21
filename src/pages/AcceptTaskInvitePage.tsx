@@ -8,6 +8,67 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 
+// GLOBAL: helper that adds the invitee as a workspace member on accept.
+// Without a members/{uid} doc, every workspace-scoped read is denied and
+// the Conversations page spins forever. This is account-agnostic.
+async function ensureWorkspaceMembership(params: {
+  workspaceId: string;
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL: string;
+  invite: TaskInviteData;
+}): Promise<void> {
+  const { workspaceId, uid, email, displayName, photoURL, invite } = params;
+
+  if (!workspaceId || !uid) return;
+
+  const emailLower = String(email || "").trim().toLowerCase();
+  const memberRef = doc(db, "workspaces", workspaceId, "members", uid);
+
+  // merge:true so re-accepting never clobbers an existing member/owner doc.
+  await setDoc(
+    memberRef,
+    {
+      uid,
+      userId: uid,
+      email: email || "",
+      emailLower,
+      email_lowercase: emailLower,
+      displayName: displayName || (email ? email.split("@")[0] : ""),
+      name: displayName || (email ? email.split("@")[0] : ""),
+      avatarURL: photoURL || "",
+      photoURL: photoURL || "",
+      googlePhotoURL: photoURL || "",
+      role: "member",
+      status: "active",
+      workspaceId,
+      acceptedInviteCode: (invite as any).code || (invite as any).inviteCode || "",
+      invitedBy: invite.invitedBy || (invite as any).sharedByUid || "",
+      invitedByUid: invite.invitedBy || (invite as any).sharedByUid || "",
+      invitedByEmail: invite.invitedByEmail || (invite as any).sharedByEmail || "",
+      invitedByName: invite.invitedByName || (invite as any).sharedByName || "",
+      permissions: {
+        canComment: true,
+        canView: true,
+        canViewOnly: false,
+        canEdit: false,
+        canManageTasks: false,
+        canCreateProjects: false,
+        canDelete: false,
+        canDeleteProjects: false,
+        canInvite: false,
+        canInviteMembers: false,
+      },
+      joinedAt: serverTimestamp(),
+      lastActive: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+
 import { db } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { activateTaskGuestPerson } from "../lib/firebase/tasks";
@@ -388,7 +449,7 @@ export default function AcceptTaskInvitePage() {
         setInvite(shareData);
         setTask(taskData);
 
-        if (shareData.status === "active" || shareData.status === "accepted") {
+                if (shareData.status === "active" || shareData.status === "accepted") {
           // GLOBAL REPAIR:
           // If the share is already active but users/{uid}/tasks/{taskId}
           // is missing, repair it here.
@@ -401,9 +462,34 @@ export default function AcceptTaskInvitePage() {
             );
           }
 
+          // GLOBAL REPAIR (membership): users who accepted BEFORE this fix
+          // shipped have no members/{uid} doc, so every workspace read is
+          // denied and Conversations spins. Backfill it here on next visit.
+          try {
+            await ensureWorkspaceMembership({
+              workspaceId,
+              uid: user.uid,
+              email: user.email || "",
+              displayName: user.displayName || "",
+              photoURL: user.photoURL || "",
+              invite: shareData,
+            });
+
+            console.log(
+              "[AcceptTaskInvitePage] Membership repaired for existing invitee",
+              user.uid
+            );
+          } catch (memberRepairErr) {
+            console.warn(
+              "[AcceptTaskInvitePage] Membership repair failed:",
+              memberRepairErr
+            );
+          }
+
           setState("accepted");
           return;
         }
+
 
         setState("ready");
 
@@ -578,10 +664,37 @@ export default function AcceptTaskInvitePage() {
       // task to appear, so we run it before anything that could fail
       // due to permission rules on the workspace shares doc.
       // ============================================================
-            await upsertMyTaskCopyFromInvite(invite, taskData, {
-        freshDisplayName,
-        freshPhotoURL,
-      });
+           
+      // ============================================================
+      // STEP 1b — GLOBAL: add this user to the workspace members list.
+      // This is the missing write that caused invited users to be denied
+      // on every workspace-scoped read (workspace doc, members, people,
+      // tasks, comments) and made the Conversations page spin forever.
+      // Account-agnostic: runs for every invitee, every time.
+      // NON-FATAL: failures are logged but never block acceptance.
+      // ============================================================
+      try {
+        await ensureWorkspaceMembership({
+          workspaceId,
+          uid: user.uid,
+          email: user.email || "",
+          displayName: freshDisplayName,
+          photoURL: freshPhotoURL,
+          invite,
+        });
+
+        console.log(
+          "[AcceptTaskInvitePage] Workspace membership ensured for",
+          user.uid
+        );
+      } catch (memberErr: any) {
+        console.warn(
+          "[AcceptTaskInvitePage] ensureWorkspaceMembership failed (NON-FATAL):",
+          memberErr?.code,
+          memberErr?.message
+        );
+      }
+
 
 
             // ============================================================

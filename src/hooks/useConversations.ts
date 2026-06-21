@@ -136,12 +136,13 @@ export function useConversations(
   const hasResolvedRef = useRef(false);
 
 
-    useEffect(() => {
-    if (!user?.uid || !workspaceId) {
+        useEffect(() => {
+    if (!user?.uid || !user?.email) {
       setRawComments([]);
       setLoading(false);
       return;
     }
+
 
     hasResolvedRef.current = false;
     // Only show the spinner on the very first attach. Re-subscribes keep the
@@ -156,15 +157,33 @@ export function useConversations(
     // Same transient-error backoff schedule as MyTasksPage's resilient listener.
     const RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000];
 
-    const subscribe = () => {
-      if (cancelled || !user?.uid || !workspaceId) return;
+      const subscribe = () => {
+      if (cancelled || !user?.uid) return;
 
-      // collectionGroup over every "comments" subcollection, scoped to the
-      // current workspace so we never read another workspace's data.
+      // GLOBAL FIX: a shared task's comments live in the OWNER's workspace, so a
+      // guest viewing Conversations under their OWN (different) workspaceId would
+      // never see them if we filtered by workspaceId. Instead we query by the
+      // self-authorizing `sharedEmailsLower` field — the SAME field stamped on
+      // every comment write AND authorized by the collectionGroup rule in
+      // firestore.rules. This is path-agnostic and workspace-independent, so the
+      // owner and every guest see the exact same thread regardless of which
+      // workspace the comment physically lives in.
+      const myEmailLower = String(user?.email || "").trim().toLowerCase();
+      if (!myEmailLower) {
+        // No email on the auth user — nothing we can authorize. Resolve empty.
+        setRawComments([]);
+        if (!hasResolvedRef.current) {
+          hasResolvedRef.current = true;
+          setLoading(false);
+        }
+        return;
+      }
+
       const commentsQuery = query(
         collectionGroup(db, "comments"),
-        where("workspaceId", "==", workspaceId),
+        where("sharedEmailsLower", "array-contains", myEmailLower),
       );
+
 
       activeUnsub = onSnapshot(
         commentsQuery,
@@ -263,7 +282,8 @@ export function useConversations(
         activeUnsub = null;
       }
     };
-  }, [user?.uid, workspaceId]);
+    }, [user?.uid, user?.email]);
+
 
     // GLOBAL: The guest's REAL uploaded photo lives in users/{uid} — the SAME
   // document TeamPage's GuestAvatar subscribes to. The people doc does NOT
@@ -784,6 +804,38 @@ export function useConversations(
       }
 
       const taskId = cleanStr(task.id);
+            // GLOBAL: stamp the parent task's shared emails (lowercased) onto the
+      // comment so collectionGroup reads can authorize guests without a parent
+      // get(). Pull from every shared-email field the task model may use.
+           // GLOBAL: stamp EVERY participant email (lowercased) onto the comment so
+      // the collectionGroup `array-contains` query authorizes and returns this
+      // comment for the owner AND every guest. This MUST include the author's
+      // own email + the task owner/creator email, otherwise that person's own
+      // `array-contains <myEmail>` query would never match their own comment.
+      const sharedEmailsLower = Array.from(
+        new Set(
+          [
+            ...(Array.isArray((task as any).sharedWithEmails)
+              ? (task as any).sharedWithEmails
+              : []),
+            ...(Array.isArray((task as any).sharedEmails)
+              ? (task as any).sharedEmails
+              : []),
+            ...(Array.isArray((task as any).guestEmails)
+              ? (task as any).guestEmails
+              : []),
+            // The task owner/creator — guarantees the owner sees guest comments.
+            (task as any).ownerEmail,
+            (task as any).createdByEmail,
+            // The current author (owner OR guest) — guarantees they see their own.
+            user?.email,
+          ]
+            .map((e: any) => cleanStr(e).toLowerCase())
+            .filter(Boolean),
+        ),
+      );
+
+
       const project = safeProjects.find(
         (p: any) => String(p?.id) === projectId,
       );
@@ -809,6 +861,8 @@ export function useConversations(
         authorPhotoURL: "",
         workspaceId: wsId,
         taskId,
+        // Self-authorizing field for guest collectionGroup reads.
+        sharedEmailsLower,
 
         createdAt: serverTimestamp(),
         createdAtMs: nowMs,

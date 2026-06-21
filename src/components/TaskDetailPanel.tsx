@@ -1,4 +1,4 @@
-  import React, {
+ import React, {
     useState,
     useEffect,
     useRef,
@@ -90,6 +90,12 @@ import {
   monogramGradient,
   monogramInitials,
 } from "../lib/monogram";
+import {
+  GUEST_ROLE_LABELS,
+  TASK_ACCESS_OPTIONS,
+  normalizeGuestRole,
+} from "../lib/taskAccessLabels";
+
 
 
 
@@ -159,11 +165,13 @@ import {
   interface TaskShare {
     id: string;
 
-    // Existing share fields used by your share modal
+        // Existing share fields used by your share modal
     sharedWithEmail?: string;
+    sharedWithEmailLower?: string;
     sharedByUid?: string;
     sharedByName?: string;
     sharedByEmail?: string;
+
 
     // Extra invite fields used by AcceptTaskInvitePage
     invitedEmail?: string;
@@ -184,10 +192,15 @@ import {
     projectId?: string;
     projectName?: string;
 
-    message?: string;
+        message?: string;
         status?: "pending" | "active" | "revoked" | "removed" | "failed" | "accepted" | string;
     accessType?: string;
     inviteLink?: string;
+
+    // GLOBAL: per-guest access level. "commenter" = read + own comments +
+    // like + copy. "viewer" = read-only. Missing → treated as "commenter".
+    guestRole?: "commenter" | "viewer";
+
 
     acceptedAt?: any;
     acceptedBy?: string;
@@ -263,32 +276,8 @@ import {
 
     return "";
   }
+    type TaskAccessMode = "task_project" | "invited_only" | "anyone_with_link";
 
-
-
-  type TaskAccessMode = "task_project" | "invited_only" | "anyone_with_link";
-
-  const TASK_ACCESS_OPTIONS: {
-    value: TaskAccessMode;
-    label: string;
-    description: string;
-  }[] = [
-    {
-      value: "task_project",
-      label: "Members of this task and connected project",
-      description: "Task members and project members can view this task.",
-    },
-    {
-      value: "invited_only",
-      label: "Only invited people",
-      description: "Only the owner, assignee, and invited emails can view.",
-    },
-    {
-      value: "anyone_with_link",
-      label: "Anyone with the task link",
-      description: "Anyone with this task link can view this task.",
-    },
-  ];
 
   const STATUS_STYLE: Record<string, string> = {
     "To Do": "bg-gray-100 text-gray-600",
@@ -2037,10 +2026,16 @@ function formatFullLocalDateTime(timestamp: any): string {
   const [taskLikeCount, setTaskLikeCount] = useState(0);
   const [likingTask, setLikingTask] = useState(false);
 
-  // Share task modal state
+    // Share task modal state
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareEmail, setShareEmail] = useState("");
+  // GLOBAL: chosen access level for the NEXT invite (Commenter | Viewer).
+  const [shareGuestRole, setShareGuestRole] =
+    useState<"commenter" | "viewer">("commenter");
+  // Tracks which share row is currently saving a role change.
+  const [savingShareRoleId, setSavingShareRoleId] = useState<string>("");
   const [shareMessage, setShareMessage] = useState("");
+
   const [shareError, setShareError] = useState("");
   const [sharingTask, setSharingTask] = useState(false);
   const [shareSent, setShareSent] = useState(false);
@@ -3072,6 +3067,162 @@ function formatFullLocalDateTime(timestamp: any): string {
 
     const canReplyToComments = canCommentOnTask && taskParticipantCount > 1;
 
+    // ── GUEST ACCESS RESOLUTION (GLOBAL) ──────────────────────────────────
+    // A guest is someone who is NOT a real workspace member/owner/admin but
+    // has access via a task share. We resolve THIS viewer's share doc by uid
+    // or email, then read its guestRole ("commenter" | "viewer"). Missing
+    // role → "commenter" (preserves legacy shares). Real members are never
+    // treated as guests, so their permissions are unchanged.
+             const currentUserShare = useMemo<TaskShare | null>(() => {
+      const currentUid = String(user?.uid || "").trim();
+      const currentEmail = normalizeEmail(user?.email);
+
+      if (!currentUid && !currentEmail) return null;
+
+      if (!Array.isArray(taskShares) || taskShares.length === 0) return null;
+
+      const match = taskShares.find((share) => {
+        const shareEmailLower = normalizeEmail(
+          share.sharedWithEmail ||
+            share.sharedWithEmailLower ||
+            share.invitedEmail ||
+            share.invitedEmailLower ||
+            share.acceptedByEmail,
+        );
+
+        const acceptedUid = String(
+          share.acceptedByUid || share.acceptedBy || "",
+        ).trim();
+
+        return (
+          (Boolean(currentEmail) &&
+            Boolean(shareEmailLower) &&
+            shareEmailLower === currentEmail) ||
+          (Boolean(currentUid) &&
+            Boolean(acceptedUid) &&
+            acceptedUid === currentUid)
+        );
+      });
+
+      return match || null;
+    }, [taskShares, user?.uid, user?.email]);
+
+
+    // GLOBAL: the viewer is a "task guest" only when they are NOT a real
+    // workspace member/owner AND a share grants them access. Defined here so
+    // both currentGuestShareId and currentGuestRole can rely on it.
+    const isTaskGuest =
+      Boolean(currentUserShare) &&
+      !currentWorkspaceMember &&
+      !isWorkspaceOwner &&
+      !isTaskOwner &&
+      !isProjectOwner;
+
+    // GLOBAL: the signed-in guest's OWN share-doc id. Stamped onto every
+    // comment this user creates so firestore.rules can verify their access
+    // level against the exact share document. Empty for real workspace
+    // members/owners (the rule ignores it for them).
+    const currentGuestShareId = isTaskGuest
+      ? String(currentUserShare?.id || "")
+      : "";
+
+
+
+    const currentGuestRole: "commenter" | "viewer" = (() => {
+      const raw = String(currentUserShare?.guestRole || "")
+        .trim()
+        .toLowerCase();
+      return raw === "viewer" ? "viewer" : "commenter";
+    })();
+
+    const isGuestViewer = isTaskGuest && currentGuestRole === "viewer";
+    const isGuestCommenter = isTaskGuest && currentGuestRole === "commenter";
+       // GLOBAL: lowercased list of every email that can read this task's comments,
+    // stamped onto every comment so the collectionGroup('comments') rule can
+    // authorize reads WITHOUT a parent-task get().
+    //
+    // CRITICAL: this must be COMPLETE and IDENTICAL for every writer (owner AND
+    // guests), otherwise a guest's comment is written with a partial list and
+    // other participants get permission-denied on the read. We therefore build
+    // it from THREE live, shared sources rather than the local task copy alone:
+    //   1) taskShares  — subscribed identically by every viewer (the reliable one)
+    //   2) sharedWithEmailsSet — canonical task.sharedWithEmails (owner side)
+    //   3) the inviter/owner email on each share + the current signed-in email
+    // so that owner, every guest, and every future participant can always read.
+    const commentSharedEmailsLower = useMemo(() => {
+      const emails = new Set<string>();
+
+      // 1) Canonical task field (already normalized).
+      sharedWithEmailsSet.forEach((e) => {
+        if (e) emails.add(e);
+      });
+
+      // 2) Every share doc — invited email AND the inviter/owner email, so the
+      //    owner can always read comments written by guests and vice-versa.
+      (Array.isArray(taskShares) ? taskShares : []).forEach((share) => {
+        [
+          share.sharedWithEmail,
+          share.sharedWithEmailLower,
+          share.invitedEmail,
+          share.invitedEmailLower,
+          share.acceptedByEmail,
+          (share as any).sharedByEmail,
+          (share as any).invitedByEmail,
+          (share as any).ownerEmail,
+        ].forEach((raw) => {
+          const clean = normalizeEmail(raw as string);
+          if (clean) emails.add(clean);
+        });
+      });
+
+      // 3) Task owner/creator email from the task itself.
+      [
+        (taskView as any).ownerEmail,
+        (taskView as any).createdByEmail,
+        (task as any).ownerEmail,
+        (task as any).createdByEmail,
+      ].forEach((raw) => {
+        const clean = normalizeEmail(raw as string);
+        if (clean) emails.add(clean);
+      });
+
+      // 4) The current signed-in user — guarantees the author can always
+      //    re-read their own comment regardless of share-doc timing.
+      const me = normalizeEmail(user?.email);
+      if (me) emails.add(me);
+
+      return Array.from(emails);
+    }, [
+      sharedWithEmailsSet,
+      taskShares,
+      taskView,
+      task,
+      user?.email,
+    ]);
+
+
+    // ── FINAL, GUEST-AWARE PERMISSION FLAGS (GLOBAL) ──────────────────────
+    // Guests can NEVER edit task content (no pencil, no description, no pin)
+    // or manage sharing (no Share button). A guest VIEWER additionally cannot
+    // comment/react. These OVERRIDE the earlier role-based flags by AND-ing
+    // out guest restrictions; non-guests are completely unaffected.
+    const canEditTaskContentFinal = canEditTaskContent && !isTaskGuest;
+
+    const canManageTaskSharingFinal = canManageTaskSharing && !isTaskGuest;
+
+    // Commenter guests keep commenting; viewer guests lose it.
+    const canCommentOnTaskFinal =
+      isGuestViewer ? false : isGuestCommenter ? true : canCommentOnTask;
+
+    const canReactToCommentsFinal = canCommentOnTaskFinal;
+
+    const canUseCommentComposerFinal = canCommentOnTaskFinal;
+
+    const canReplyToCommentsFinal =
+      canCommentOnTaskFinal && taskParticipantCount > 1;
+
+
+
 
 
 
@@ -3327,11 +3478,12 @@ function formatFullLocalDateTime(timestamp: any): string {
             async (comment: TaskComment, emoji: string) => {
         if (!user?.uid) return;
 
-        if (!canReactToComments) {
+                if (!canReactToCommentsFinal) {
           setToast("You do not have permission to react to comments");
           setTimeout(() => setToast(null), 2500);
           return;
         }
+
 
         if (!taskWorkspaceId || !sourceTaskId) return;
 
@@ -3370,7 +3522,8 @@ function formatFullLocalDateTime(timestamp: any): string {
           console.error("[TaskDetailPanel] toggle reaction:", e);
         }
       },
-            [user?.uid, taskWorkspaceId, sourceTaskId, canReactToComments],
+                        [user?.uid, taskWorkspaceId, sourceTaskId, canReactToCommentsFinal],
+
     );
     const migrateMyLegacyCommentsToCanonical = useCallback(async () => {
       if (!safeCurrentUserUid || !taskWorkspaceId || !sourceTaskId || !task.id)
@@ -3708,11 +3861,12 @@ useEffect(() => {
           const handleSend = useCallback(async () => {
   if (!user?.uid || !commentText.trim() || sending) return;
 
-  if (!canCommentOnTask) {
+    if (!canCommentOnTaskFinal) {
     setToast("You do not have permission to comment on this task");
     setTimeout(() => setToast(null), 2500);
     return;
   }
+
 
   setSending(true);
 
@@ -3770,12 +3924,20 @@ useEffect(() => {
       // Metadata only, not ordering
       replyTo: replyReference,
 
-      pinned: false,
+                  pinned: false,
       pinnedAt: null,
       pinnedBy: "",
+
+      // GLOBAL: guest's own share id for server-side role enforcement.
+      guestShareId: currentGuestShareId,
+
+      // GLOBAL: self-authorizing field for guest collectionGroup reads.
+      sharedEmailsLower: commentSharedEmailsLower,
     });
 
+
     const commentDocRef = await addDoc(commentsRef, commentPayload);
+
 
       await notifyCommentRecipients({
       commentId: commentDocRef.id,
@@ -3817,9 +3979,13 @@ useEffect(() => {
   replyingTo,
   mentionableUsers,
   scrollToLatestComment,
-  notifyCommentRecipients,
-  canCommentOnTask,
-]);
+                            notifyCommentRecipients,
+                canCommentOnTaskFinal,
+        currentGuestShareId,
+        commentSharedEmailsLower,
+      ]);
+
+
 
 
 
@@ -3834,11 +4000,12 @@ useEffect(() => {
 
         if (!file) return;
 
-        if (!canCommentOnTask) {
+                if (!canCommentOnTaskFinal) {
           setToast("You do not have permission to attach files");
           setTimeout(() => setToast(null), 2500);
           return;
         }
+
 
 
 
@@ -3937,17 +4104,25 @@ const commentDocRef = await addDoc(
     // Metadata only, not ordering
     replyTo: replyReference,
 
-    pinned: false,
+                pinned: false,
     pinnedAt: null,
     pinnedBy: "",
+
+    // GLOBAL: guest's own share id for server-side role enforcement.
+    guestShareId: currentGuestShareId,
+
+    // GLOBAL: self-authorizing field for guest collectionGroup reads.
+    sharedEmailsLower: commentSharedEmailsLower,
   }),
 );
+
 
 await notifyCommentRecipients({
   commentId: commentDocRef.id,
   text: text || `Attachment: ${cleanAttachment.name}`,
   mentionedUids,
 });
+
 
 
 
@@ -4018,11 +4193,14 @@ await notifyCommentRecipients({
         replyingTo,
         mentionableUsers,
         scrollToLatestComment,
-              notifyCommentRecipients,
-        canCommentOnTask,
-      ],
+                          notifyCommentRecipients,
+    canCommentOnTaskFinal,
+  currentGuestShareId,
+  commentSharedEmailsLower,
+]);
 
-    );
+
+
 
         async function handleSaveDescription() {
       if (!user?.uid || savingDescription || !taskView.id) return;
@@ -4120,8 +4298,9 @@ await notifyCommentRecipients({
 
       const canDeleteThisComment = canEditTaskContent || c.authorId === user.uid;
 
-      if (!canCommentOnTask && !canEditTaskContent) {
+            if (!canCommentOnTaskFinal && !canEditTaskContentFinal) {
         setToast("You do not have permission to delete comments");
+
         setTimeout(() => setToast(null), 2500);
         return;
       }
@@ -5138,7 +5317,99 @@ await notifyCommentRecipients({
         setSavingTaskAccess(false);
       }
     }
-       async function handleRevokeTaskShare(share: TaskShare) {
+          // GLOBAL: change an existing guest's access level (Commenter | Viewer).
+    // Writes the share doc AND the workspace people doc's nested task entry so
+    // the invited guest resolves the new role in real time on their device.
+    async function handleChangeGuestRole(
+      share: TaskShare,
+      nextRole: "commenter" | "viewer",
+    ) {
+      if (!canManageTaskSharing || isTaskGuest) {
+        setShareError("Only admins can change guest access.");
+        return;
+      }
+
+      if (!taskWorkspaceId || !sourceTaskId || !share.id) {
+        setShareError("Task share information is missing.");
+        return;
+      }
+
+      const currentRole =
+        String(share.guestRole || "").toLowerCase() === "viewer"
+          ? "viewer"
+          : "commenter";
+
+      if (currentRole === nextRole) return;
+
+      const shareEmailLower = normalizeEmail(
+        share.sharedWithEmail ||
+          share.invitedEmail ||
+          share.invitedEmailLower ||
+          share.acceptedByEmail,
+      );
+
+      setSavingShareRoleId(share.id);
+
+      try {
+        // 1) Update the share doc.
+        await updateDoc(
+          doc(
+            db,
+            "workspaces",
+            taskWorkspaceId,
+            "tasks",
+            sourceTaskId,
+            "shares",
+            share.id,
+          ),
+          {
+            guestRole: nextRole,
+            updatedAt: serverTimestamp(),
+          },
+        );
+
+        // 2) Mirror onto the workspace people doc's nested task entry so the
+        //    guest's TaskDetailPanel (and Team page) reflect it immediately.
+        if (shareEmailLower) {
+          const personId = `guest_${shareEmailLower.replace(/[^a-z0-9]/g, "_")}`;
+          const personRef = doc(
+            db,
+            "workspaces",
+            taskWorkspaceId,
+            "people",
+            personId,
+          );
+
+          await setDoc(
+            personRef,
+            {
+              guestRole: nextRole,
+              tasks: {
+                [sourceTaskId]: {
+                  guestRole: nextRole,
+                },
+              },
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+
+        setToast(
+          nextRole === "viewer"
+            ? "Access set to Viewer (read-only)"
+            : "Access set to Commenter",
+        );
+        window.setTimeout(() => setToast(null), 1800);
+           } catch (error) {
+        console.error("[TaskDetailPanel] change guest role:", error);
+        setShareError("Could not update access level. Please try again.");
+      } finally {
+        setSavingShareRoleId("");
+      }
+    }
+
+    async function handleRevokeTaskShare(share: TaskShare) {
       if (!user?.uid) {
         setShareError("You must be signed in to remove access.");
         return;
@@ -5150,25 +5421,28 @@ await notifyCommentRecipients({
       }
 
       if (!taskWorkspaceId || !sourceTaskId || !share.id) {
-
         setShareError("Task share information is missing.");
         return;
       }
 
-      const shareEmail =
+      const revokeShareEmail =
         share.sharedWithEmail ||
         share.invitedEmail ||
         share.invitedEmailLower ||
         "";
 
-      if (!shareEmail) {
+
+            if (!revokeShareEmail) {
         setShareError("This share is missing the invited email address.");
         return;
       }
 
-      const confirmRemove = window.confirm(`Remove access for ${shareEmail}?`);
+      const confirmRemove = window.confirm(
+        `Remove access for ${revokeShareEmail}?`,
+      );
 
       if (!confirmRemove) return;
+
 
             try {
         await updateDoc(
@@ -5189,20 +5463,22 @@ await notifyCommentRecipients({
           },
         );
 
-        await setDoc(
+                await setDoc(
           doc(db, "workspaces", taskWorkspaceId, "tasks", sourceTaskId),
           {
-            sharedWithEmails: arrayRemove(shareEmail.toLowerCase()),
+            sharedWithEmails: arrayRemove(revokeShareEmail.toLowerCase()),
             accessUpdatedAt: serverTimestamp(),
           },
           { merge: true },
         );
 
+
                 // FAANG-grade: remove the guest's task entry from the workspace people doc
         // so the Team page External Guests card disappears in real time.
         // IMPORTANT: personId must match upsertTaskGuestPerson()'s scheme: `guest_<sanitized>`
         try {
-          const emailLower = String(shareEmail).toLowerCase().trim();
+             const emailLower = String(revokeShareEmail).toLowerCase().trim();
+
           const personId = `guest_${emailLower.replace(/[^a-z0-9]/g, "_")}`;
           const personRef = doc(
             db,
@@ -5427,13 +5703,17 @@ await notifyCommentRecipients({
           ).trim(),
 
 
-          message: shareMessage.trim(),
+                   message: shareMessage.trim(),
           status: "pending",
           accessType: "email_invite",
+          // GLOBAL: stamp the chosen access level onto the share doc so the
+          // invited guest's TaskDetailPanel resolves the right permissions.
+          guestRole: shareGuestRole,
 
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         };
+
 
         const sourceTaskRef = doc(
           db,
@@ -5510,7 +5790,7 @@ await notifyCommentRecipients({
                 // Register this email as an External Guest on the workspace people list.
         // This makes it appear under "External Guests" on the Team Page.
         try {
-          await upsertTaskGuestPerson({
+              await upsertTaskGuestPerson({
             workspaceId: taskWorkspaceId,
             taskId: sourceTaskId,
             shareId: shareRef.id,
@@ -5523,7 +5803,9 @@ await notifyCommentRecipients({
             projectId: taskView.projectId || task.projectId || "",
             projectName,
             status: "pending",
+            guestRole: shareGuestRole,
           });
+
         } catch (guestErr) {
           console.warn(
             "[TaskDetailPanel] upsertTaskGuestPerson failed:",
@@ -5631,14 +5913,15 @@ await notifyCommentRecipients({
 
 
 
-      function handleStartReply(comment: TaskComment) {
-      if (!canCommentOnTask) {
+          function handleStartReply(comment: TaskComment) {
+      if (!canCommentOnTaskFinal) {
         setToast("You do not have permission to comment on this task");
         setTimeout(() => setToast(null), 2500);
         return;
       }
 
-      if (!canReplyToComments) {
+      if (!canReplyToCommentsFinal) {
+
         setToast("Reply is available when more than one person has access");
         setTimeout(() => setToast(null), 2500);
         return;
@@ -5654,9 +5937,10 @@ await notifyCommentRecipients({
       });
     }
 
-            function handleStartEditComment(comment: TaskComment) {
-      if (!canCommentOnTask) {
+               function handleStartEditComment(comment: TaskComment) {
+      if (!canCommentOnTaskFinal) {
         setToast("You do not have permission to edit comments");
+
         setTimeout(() => setToast(null), 2500);
         return;
       }
@@ -5858,11 +6142,12 @@ useEffect(() => {
         return;
       }
 
-            if (!canCommentOnTask) {
+                        if (!canCommentOnTaskFinal) {
         setToast("You do not have permission to edit comments");
         setTimeout(() => setToast(null), 2500);
         return;
       }
+
 
       if (!safeCurrentUserUid || comment.authorId !== safeCurrentUserUid) {
         setToast("You can only edit your own comment");
@@ -6034,10 +6319,11 @@ editedAt: serverTimestamp(),
             </h2>
 
 
-            {/* Task top actions — Share, Like, Copy Link */}
+                        {/* Task top actions — Share, Like, Copy Link */}
             <div className="flex items-center gap-1 flex-shrink-0">
                             {/* Share */}
-              {canManageTaskSharing && (
+              {canManageTaskSharingFinal && (
+
                 <button
                   type="button"
                   onClick={() => {
@@ -6057,11 +6343,13 @@ editedAt: serverTimestamp(),
               )}
 
 
-              {/* Like */}
+                            {/* Like — hidden for read-only guest viewers */}
+              {!isGuestViewer && (
               <button
                 type="button"
                 onClick={handleToggleTaskLike}
                 disabled={likingTask}
+
                 className={`h-8 min-w-8 px-2 rounded-lg border transition-colors flex items-center justify-center gap-1.5 ${
                   likedByMe
                     ? "border-violet-200 bg-violet-50 text-violet-600"
@@ -6079,12 +6367,14 @@ editedAt: serverTimestamp(),
                   />
                 )}
 
-                <span className="text-[11px] font-semibold min-w-[10px]">
+                                <span className="text-[11px] font-semibold min-w-[10px]">
                   {taskLikeCount > 0 ? taskLikeCount : ""}
                 </span>
               </button>
+              )}
 
-              {/* Copy task link */}
+              {/* Copy task link — hidden for read-only guest viewers */}
+              {!isGuestViewer && (
               <button
                 type="button"
                 onClick={handleCopyTaskLink}
@@ -6098,9 +6388,11 @@ editedAt: serverTimestamp(),
               >
                 {copiedTaskLink ? <Check size={14} /> : <Copy size={14} />}
               </button>
+              )}
             </div>
 
-                        {canEditTaskContent && (
+
+                                                {canEditTaskContentFinal && (
               <button
                                 onClick={() => onEdit(taskView)}
                 className="bg-violet-50 hover:bg-violet-100 text-violet-600 rounded-lg p-2 transition-colors flex-shrink-0"
@@ -6362,7 +6654,7 @@ editedAt: serverTimestamp(),
                           Description
                         </p>
 
-                                                {!editingDescription && canEditTaskContent && (
+                                                                                                {!editingDescription && canEditTaskContentFinal && (
                           <button
                             type="button"
                             onClick={startEditingDescription}
@@ -6425,22 +6717,24 @@ editedAt: serverTimestamp(),
                             </button>
                           </div>
                         </div>
-                      ) : (
-                                               <p
+                                            ) : (
+                        <p
                           onClick={() => {
-                            if (canEditTaskContent) startEditingDescription();
+                            if (canEditTaskContentFinal) startEditingDescription();
                           }}
+
                           className={`text-sm text-slate-600 whitespace-pre-wrap rounded-lg px-2 py-1.5 -mx-2 transition-colors ${
-                            canEditTaskContent
+                            canEditTaskContentFinal
                               ? "cursor-text hover:bg-slate-100"
                               : "cursor-default"
                           }`}
                           title={
-                            canEditTaskContent
+                            canEditTaskContentFinal
                               ? "Click to edit"
                               : "Only admins can edit this description"
                           }
                         >
+
                           {taskView.description}
                         </p>
 
@@ -6449,7 +6743,8 @@ editedAt: serverTimestamp(),
                   )}
 
                   {/* Small add-description action only when empty */}
-                                                      {!taskView.description && !editingDescription && canEditTaskContent && (
+                                                                                                            {!taskView.description && !editingDescription && canEditTaskContentFinal && (
+
                     <button
                       type="button"
                       onClick={startEditingDescription}
@@ -6581,7 +6876,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                         }`}
                       >
 
-                                                                      {canReactToComments && (
+                                                                                                                                            {canReactToCommentsFinal && (
                           <button
                             type="button"
                             onMouseDown={(e) => e.stopPropagation()}
@@ -6589,6 +6884,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                               e.stopPropagation();
 
                               const placement = getCommentPopoverPlacement(
+
                                 e.currentTarget,
                               );
 
@@ -6667,10 +6963,11 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                           >
 
 
-                                                       {canEditTaskContent && (
+                                                                                                              {canEditTaskContentFinal && (
                               <button
                                 type="button"
                                 onClick={() => handleTogglePinComment(c)}
+
                                 className="w-full px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700 flex items-center gap-2 transition-colors"
                               >
                                 <Pin size={14} />
@@ -6678,10 +6975,11 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                               </button>
                             )}
 
-                                                       {canReplyToComments && canCommentOnTask && (
+                                                                                                              {canReplyToCommentsFinal && canCommentOnTaskFinal && (
                               <button
                                 type="button"
                                 onClick={() => handleStartReply(c)}
+
                                 className="w-full px-3 py-2.5 text-left text-sm text-slate-700 hover:bg-violet-50 hover:text-violet-700 flex items-center gap-2 transition-colors"
                               >
                                 <Reply size={14} />
@@ -6700,11 +6998,12 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                             </button>
 
 
-                                                        {isMine && canCommentOnTask && (
+                                                                                                                {isMine && canCommentOnTaskFinal && (
                               <button
                                 type="button"
                                 disabled={!canEditThisComment}
                                 onClick={() => handleStartEditComment(c)}
+
                                 className={`w-full px-3 py-2.5 text-left text-sm flex items-center gap-2 transition-colors ${
                                   canEditThisComment
                                     ? "text-slate-700 hover:bg-violet-50 hover:text-violet-700"
@@ -6727,7 +7026,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                             )}
 
 
-                                                        {(isMine || canEditTaskContent) && (canCommentOnTask || canEditTaskContent) && (
+                                                                                                                {(isMine || canEditTaskContentFinal) && (canCommentOnTaskFinal || canEditTaskContentFinal) && (
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -7185,16 +7484,17 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                 {reactionEntries.map(([emoji, uids]) => {
                                   const mine =
                                     !!user?.uid && uids.includes(user.uid);
-                                  return (
-                                                                        <button
+                                                                   return (
+                                    <button
                                       key={emoji}
                                       type="button"
                                       onClick={() => {
-                                        if (canReactToComments) {
+                                        if (canReactToCommentsFinal) {
                                           toggleReaction(c, emoji);
                                         }
                                       }}
-                                      disabled={!canReactToComments}
+                                      disabled={!canReactToCommentsFinal}
+
                                       className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs transition-colors ${
                                         mine
                                           ? "bg-violet-50 border-violet-300 text-violet-700"
@@ -7204,10 +7504,11 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                           ? "opacity-70 cursor-default"
                                           : ""
                                       }`}
-                                      title={
-                                        !canReactToComments
+                                                                           title={
+                                        !canReactToCommentsFinal
                                           ? "You do not have permission to react"
                                           : mine
+
                                             ? "Click to remove your reaction"
                                             : "Click to react"
                                       }
@@ -7255,8 +7556,9 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
 
             className="flex-shrink-0 border-t border-slate-200 bg-white px-5 py-3"
           >
-                        {!canUseCommentComposer ? (
+                                                {!canUseCommentComposerFinal ? (
               <div className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl border border-slate-200 bg-slate-50 text-left">
+
                 <ModernAvatar
                   name={user?.displayName || user?.email || "You"}
                   email={user?.email || ""}
@@ -7883,7 +8185,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                         )}
                       </div>
 
-                      <button
+                                            <button
                         type="button"
                         onClick={handleSendTaskShare}
                         disabled={sharingTask || !shareEmail.trim()}
@@ -7902,7 +8204,53 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                         )}
                       </button>
                     </div>
+
+                                        {/* GLOBAL: default access level applied to the NEXT invite.
+                        This is a ROLE (what they can do), distinct from the
+                        "Who can open this task" SCOPE below. */}
+                    <div className="mt-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-medium text-slate-500">
+                          New invites can
+                        </span>
+
+                        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+                          <button
+                            type="button"
+                            onClick={() => setShareGuestRole("commenter")}
+                            className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                              shareGuestRole === "commenter"
+                                ? "bg-violet-600 text-white"
+                                : "bg-white text-slate-600 hover:bg-slate-50"
+                            }`}
+                            title={GUEST_ROLE_LABELS.commenter.description}
+                          >
+                            {GUEST_ROLE_LABELS.commenter.label}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShareGuestRole("viewer")}
+                            className={`px-2.5 py-1 text-[11px] font-medium border-l border-slate-200 transition-colors ${
+                              shareGuestRole === "viewer"
+                                ? "bg-violet-600 text-white"
+                                : "bg-white text-slate-600 hover:bg-slate-50"
+                            }`}
+                            title={GUEST_ROLE_LABELS.viewer.description}
+                          >
+                            {GUEST_ROLE_LABELS.viewer.label}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Live description so the choice is never ambiguous */}
+                      <p className="mt-1 text-[10px] text-slate-400 leading-snug">
+                        {GUEST_ROLE_LABELS[shareGuestRole].description}
+                      </p>
+                    </div>
+
                   </div>
+
 
                   {/* Optional message - collapsed by default */}
                   <div className="mb-4">
@@ -7953,11 +8301,16 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                     )}
                   </div>
 
-                  {/* Access settings */}
+                                    {/* Who can open this task (SCOPE — distinct from per-guest role above) */}
                   <div className="pt-3 border-t border-slate-100 mb-4">
-                    <p className="text-xs font-semibold text-slate-700 mb-2">
-                      Access settings
+                    <p className="text-xs font-semibold text-slate-700 mb-0.5">
+                      Who can open this task
                     </p>
+                    <p className="text-[10px] text-slate-400 mb-2 leading-snug">
+                      Controls who is allowed to open this task. Each person's
+                      Commenter / Viewer access is set in the list below.
+                    </p>
+
 
                     <div className="relative">
                                             <button
@@ -8448,7 +8801,7 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                               </p>
                             </div>
 
-                            <span
+                                                        <span
                               className={`text-[10px] px-2 py-0.5 rounded-md border capitalize flex-shrink-0 ${statusClass}`}
                             >
                               {shareStatus === "accepted"
@@ -8456,10 +8809,38 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                                 : shareStatus}
                             </span>
 
-                                                        {canManageTaskSharing && (
+                            {/* GLOBAL: per-guest access level selector */}
+                            {canManageTaskSharingFinal && (
+                                                            <select
+                                value={normalizeGuestRole(share.guestRole)}
+                                disabled={savingShareRoleId === share.id}
+                                onChange={(e) =>
+                                  handleChangeGuestRole(
+                                    share,
+                                    e.target.value === "viewer"
+                                      ? "viewer"
+                                      : "commenter",
+                                  )
+                                }
+                                                                className="text-[10px] rounded-md border border-slate-200 bg-white px-1.5 py-1 text-slate-600 focus:outline-none focus:border-violet-400 flex-shrink-0 disabled:opacity-50"
+                                title="Change this person's access level"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <option value="commenter">
+                                  {GUEST_ROLE_LABELS.commenter.label}
+                                </option>
+                                <option value="viewer">
+                                  {GUEST_ROLE_LABELS.viewer.label}
+                                </option>
+                              </select>
+
+                            )}
+
+                                                        {canManageTaskSharingFinal && (
                               <button
                                 type="button"
                                 onClick={() => handleRevokeTaskShare(share)}
+
                                 className="w-7 h-7 rounded-md flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0"
                                 title={`Remove access for ${shareEmail || "this user"}`}
                                 aria-label={`Remove access for ${shareEmail || "this user"}`}
