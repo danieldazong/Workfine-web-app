@@ -235,9 +235,15 @@ function getSeconds(v: any): number {
 export function AppDataProvider({ children }: { children: ReactNode }) {
     const { user, workspaceId, personalWorkspaceId, setWorkspaceId } = useAuth();
   const uid = user?.uid ?? "";
-
   const [tasks, setTasks] = useState<Task[]>([]);
+  // GLOBAL: per-user task copies from users/{uid}/tasks — the SAME source the
+  // My Tasks page reads. Shared/guest tasks live here (written at invite-accept),
+  // NOT in workspaces/{workspaceId}/tasks, so without this they never reach the
+  // app-wide task list (and the Conversations composer dropdown).
+  const [userTasks, setUserTasks] = useState<Task[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  
   const [notes, setNotes] = useState<Note[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -247,8 +253,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [workspacePeople, setWorkspacePeople] = useState<WorkspacePerson[]>([]);
 
 
-    const resolvedRef = useRef(false);
+        const resolvedRef = useRef(false);
   const hasEverResolvedRef = useRef(false);
+  // GLOBAL: keep the latest per-user tasks in a ref so publishAccessibleData()
+  // (defined inside the workspace effect) can always merge the freshest copy
+  // without needing to be in that effect's dependency array.
+  const userTasksRef = useRef<Task[]>([]);
+
 
   const cancelInvite = async (inviteCode: string): Promise<void> => {
     if (!workspaceId) throw new Error("No workspace found");
@@ -264,14 +275,30 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     console.log("[cancelInvite] ✅ Invite deleted");
   };
+    // Keep the ref in sync and re-publish the accessible task list whenever the
+  // per-user task copies change, so shared/guest tasks appear app-wide in
+  // real time (Conversations composer, etc.) without restructuring the
+  // workspace listener effect.
+  // GLOBAL: keep userTasksRef fresh AND nudge a republish when the per-user
+  // task copies change, so shared/guest tasks surface in real time. We do NOT
+  // call setTasks here — publishAccessibleData() is the single writer. Bumping
+  // a state value forces the workspace listeners' publish path to re-run with
+  // the latest userTasksRef. (Cheap: only fires when userTasks actually change.)
+  const [userTasksVersion, setUserTasksVersion] = useState(0);
+  useEffect(() => {
+    userTasksRef.current = Array.isArray(userTasks) ? userTasks : [];
+    setUserTasksVersion((v) => v + 1);
+  }, [userTasks]);
 
-  // User personal listeners: notes and legacy teamMembers only.
+    // User personal listeners: notes, legacy teamMembers, and per-user task copies.
   useEffect(() => {
     if (!uid) {
       setTeamMembers([]);
       setNotes([]);
+      setUserTasks([]);
       return;
     }
+
 
     const unsubMembers = onSnapshot(
       collection(db, "users", uid, "teamMembers"),
@@ -287,6 +314,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       },
       (err) => console.warn("[AppData] user teamMembers error:", err.code)
     );
+        // GLOBAL: subscribe to users/{uid}/tasks — the canonical source the My Tasks
+    // page reads. Shared/guest tasks are written here at invite-accept, so this
+    // is what makes shared tasks visible app-wide (and in the Conversations
+    // composer dropdown). Same flat shape My Tasks uses: { id, ...data }.
+    const unsubUserTasks = onSnapshot(
+      collection(db, "users", uid, "tasks"),
+      (snap) => {
+        const data: Task[] = snap.docs.map(
+          (d) =>
+            ({
+              id: d.id,
+              ...(d.data() as Omit<Task, "id">),
+            } as Task)
+        );
+        setUserTasks(data);
+        console.log("[AppData] user tasks (users/{uid}/tasks):", data.length);
+      },
+      (err) => {
+        console.warn("[AppData] user tasks error:", (err as any)?.code || err);
+        setUserTasks([]);
+      }
+    );
+
 
     const unsubNotes = onSnapshot(
       collection(db, "users", uid, "notes"),
@@ -303,11 +353,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       (err) => console.warn("[AppData] user notes error:", err.code)
     );
 
-    return () => {
+        return () => {
       unsubMembers();
       unsubNotes();
+      unsubUserTasks();
     };
   }, [uid]);
+
 
   // Real-time listener for users/{uid}.workspaceId
   useEffect(() => {
@@ -512,13 +564,34 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
 
 
-    function publishAccessibleData() {
+        function publishAccessibleData() {
       const accessibleProjects = getAccessibleProjects();
       const accessibleProjectIds = new Set(accessibleProjects.map((p) => p.id));
 
       const myEmail = user?.email?.toLowerCase().trim() ?? "";
 
-      const accessibleTasks = latestTasks.filter((task: any) => {
+      // GLOBAL: merge per-user task copies (users/{uid}/tasks) with the workspace
+      // tasks BEFORE filtering. Shared/guest tasks live ONLY in users/{uid}/tasks
+      // (written at invite-accept), never in workspaces/{ws}/tasks — so without
+      // this merge they can never reach the app-wide list or the Conversations
+      // composer dropdown. Deduped by id; the workspace doc wins on collision
+      // because it is the canonical task document. This keeps ONE writer
+      // (setTasks below) and avoids the multi-writer race entirely.
+      const mergedById = new Map<string, any>();
+      (Array.isArray(userTasksRef.current) ? userTasksRef.current : []).forEach(
+        (t: any) => {
+          const id = String(t?.id || "").trim();
+          if (id) mergedById.set(id, t);
+        }
+      );
+      (Array.isArray(latestTasks) ? latestTasks : []).forEach((t: any) => {
+        const id = String(t?.id || "").trim();
+        if (id) mergedById.set(id, t); // canonical workspace task overrides copy
+      });
+      const tasksToConsider = Array.from(mergedById.values());
+
+      const accessibleTasks = tasksToConsider.filter((task: any) => {
+
         const taskProjectId = String(task.projectId || "").trim();
 
         /**
@@ -527,6 +600,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         if (taskProjectId && accessibleProjectIds.has(taskProjectId)) {
           return true;
         }
+                /**
+         * GLOBAL: Show tasks SHARED with the current user. A shared/guest task's
+         * per-user copy (from users/{uid}/tasks) is NOT owned or assigned to the
+         * viewer — the owner created it — so every ownership/assignee check below
+         * would reject it. We accept it here using the EXACT SAME detection the
+         * My Tasks page uses (its isSharedTask() helper), so a task is "shared"
+         * in the Conversations composer if and only if it is "shared" in My Tasks:
+         *   isSharedTask || sharedWithMe || accessType==="email_invite" || shareId
+         * This is what makes shared tasks appear in the composer dropdown.
+         */
+        if (
+          task.isSharedTask ||
+          task.sharedWithMe ||
+          task.accessType === "email_invite" ||
+          task.shareId
+        ) {
+          return true;
+        }
+
 
         /**
          * Show personal/unprojected tasks created or owned by the user.
@@ -1015,7 +1107,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
 
 
-        }, [uid, workspaceId, personalWorkspaceId, user?.email]);
+        }, [uid, workspaceId, personalWorkspaceId, user?.email, userTasksVersion]);
 
 
        const effectivePersonalWorkspaceId =
@@ -1039,12 +1131,46 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     !!workspaceId &&
     (workspaceId === effectivePersonalWorkspaceId ||
       workspaceId === `personal_${uid}`);
+        // GLOBAL: guest view must be decided by WORKSPACE MEMBERSHIP, not by tasks.
+  // The earlier task-based heuristic broke because a real owner/member can have
+  // zero workspace tasks and only a shared task merged in from users/{uid}/tasks
+  // — which falsely looked like "only shared tasks => guest". Membership is the
+  // correct signal: a TRUE external guest is signed into their own personal
+  // workspace AND is NOT a member/owner of any real (non-personal) workspace.
+  const isSharedTaskEntry = (t: any) =>
+    Boolean(
+      t?.isSharedTask ||
+        t?.sharedWithMe ||
+        t?.accessType === "email_invite" ||
+        t?.shareId
+    );
 
-  const hasSharedTasks = tasks.some(
-    (t: any) => t?.isSharedTask === true || t?.sharedWithMe === true
-  );
+  const hasSharedTasks = tasks.some((t: any) => isSharedTaskEntry(t));
 
-  const isGuestView = isOnOwnPersonalWorkspace && hasSharedTasks;
+  // Am I a real member/owner of the CURRENT workspace? If yes, I am never a guest.
+  const myEmailLowerForGuest = String(user?.email || "").trim().toLowerCase();
+  const isWorkspaceMember =
+    workspaceData?.ownerId === uid ||
+    workspaceData?.createdBy === uid ||
+    members.some((m: any) => {
+      const memberUid = String(m?.userId || m?.uid || m?.id || "").trim();
+      const memberEmail = String(
+        m?.emailLower || m?.email_lowercase || m?.email || m?.emailAddress || ""
+      )
+        .trim()
+        .toLowerCase();
+      return (
+        (memberUid && memberUid === uid) ||
+        (myEmailLowerForGuest && memberEmail === myEmailLowerForGuest)
+      );
+    });
+
+  // True guest = on own personal workspace, has shared tasks, and is NOT a
+  // recognized member/owner of this workspace.
+  const isGuestView =
+    isOnOwnPersonalWorkspace && hasSharedTasks && !isWorkspaceMember;
+
+
 
   return (
     <AppDataContext.Provider

@@ -704,33 +704,47 @@ export function useConversations(
     filters.unreadOnly,
   ]);
 
-  // Distinct projects present in the feed, for the project dropdown.
+    // GLOBAL FIX: the composer must be able to tag ANY task/project the user can
+  // access — not only ones that already have a comment. The previous version
+  // derived these from `allItems` (the comment feed), so a brand-new task with
+  // no comments yet never appeared and could never receive its first comment.
+  //
+  // We now build the dropdowns from the user's full accessible list, which
+  // AppDataContext already scopes per-user (so this stays a correct, global,
+  // account-agnostic fix that exposes nothing the user can't already see).
+  // The returned shapes ({ id, name } / { id, title }) are unchanged, so
+  // ConversationsPage renders byte-for-byte identically.
   const projectOptions = useMemo(() => {
+    const safeProjects = Array.isArray(projects) ? projects : [];
     const map = new Map<string, string>();
-    allItems.forEach((item) => {
-      if (item.projectId) {
-        map.set(item.projectId, item.projectName || "Untitled project");
-      }
+    safeProjects.forEach((p: any) => {
+      const id = cleanStr(p?.id);
+      if (!id) return;
+      map.set(id, cleanStr(p?.name) || "Untitled project");
     });
     return Array.from(map.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [allItems]);
+  }, [projects]);
 
-  // Distinct tasks present in the feed (respecting the selected project),
-  // for the task dropdown.
   const taskOptions = useMemo(() => {
+    const safeTasks = Array.isArray(tasks) ? tasks : [];
     const map = new Map<string, string>();
-    allItems.forEach((item) => {
-      if (filters.projectId && item.projectId !== filters.projectId) return;
-      if (item.taskId) {
-        map.set(item.taskId, item.taskTitle || "Untitled task");
+    safeTasks.forEach((t: any) => {
+      const id = cleanStr(t?.id);
+      if (!id) return;
+      // When a project is selected as a FILTER, scope the task list to it —
+      // preserves the existing behavior of the task picker narrowing by project.
+      if (filters.projectId && cleanStr(t?.projectId) !== filters.projectId) {
+        return;
       }
+      map.set(id, cleanStr(t?.title) || "Untitled task");
     });
     return Array.from(map.entries())
       .map(([id, title]) => ({ id, title }))
       .sort((a, b) => a.title.localeCompare(b.title));
-  }, [allItems, filters.projectId]);
+  }, [tasks, filters.projectId]);
+
 
     // Counts for the filter chips.
   const counts = useMemo(() => {
