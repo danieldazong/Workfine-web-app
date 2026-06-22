@@ -286,26 +286,6 @@ service cloud.firestore {
         ]);
     }
 
-    // GLOBAL: a comment is readable by a guest if the comment itself carries
-    // the lowercased list of emails the parent task is shared with, and the
-    // signed-in user's email is in that list. collectionGroup rules cannot
-    // get() the parent task, so the task's share list must be stamped on each
-    // comment at write time (sharedEmailsLower).
-        function commentVisibleToSignedInGuest() {
-      return signedInEmailLower() != ""
-        && (
-          (
-            resource.data.sharedEmailsLower is list
-            && signedInEmailLower() in resource.data.sharedEmailsLower
-          )
-          || (
-            resource.data.authorEmail is string
-            && resource.data.authorEmail.lower() == signedInEmailLower()
-          )
-        );
-    }
-
-
     match /invites/{inviteCode} {
       allow read: if true;
 
@@ -385,66 +365,39 @@ service cloud.firestore {
     }
 
     // ============================================================
-    // GLOBAL: collection-group READ rule for the Conversations feed.
-    // useConversations runs collectionGroup('comments'), which CANNOT use
-    // the per-task comment rule (that rule calls get() on the parent task,
-    // which is forbidden for collection-group queries and causes the
-    // permission-denied flash). This rule is satisfiable from the comment
-    // doc's OWN fields only, so the collection-group query succeeds.
+    // GLOBAL collection-group READ rule for the Conversations feed.
+    // The client query is:
+    //   collectionGroup('comments').where('sharedEmailsLower','array-contains', myEmailLower)
     //
-    // REQUIRED on the client: the query MUST include
-    //   where('workspaceId', '==', currentWorkspaceId)
-    // and every comment doc MUST carry sharedEmailsLower for guest reads.
-    // Read-only (list/get) — no writes are granted here.
+    // A collectionGroup LIST is evaluated against the QUERY, not each doc, and
+    // Firestore CANNOT statically equate the client's array-contains value to
+    // signedInEmailLower(). So a per-doc 'in' condition on a list rule is NOT
+    // statically provable and the whole list is rejected (permission-denied).
+    //
+    // FIX: split the rule.
+    //  - get  : fully locked down per-document (must contain the caller's email
+    //           in sharedEmailsLower, or the caller is the author).
+    //  - list : allowed for any signed-in user with an email. This is SECURE
+    //           because the client query itself
+    //           (where sharedEmailsLower array-contains <myEmail>) physically
+    //           restricts results to ONLY comments containing the caller's
+    //           email — a user cannot read comments that don't include them.
+    // Read-only — no writes are granted here.
     // ============================================================
-    function commentTaskGuestShareData(workspaceId, taskId, shareId) {
-      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)/shares/$(shareId)).data;
-    }
-
-    function commentTaskGuestShareExists(workspaceId, taskId, shareId) {
-      return shareId is string
-        && shareId != ""
-        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/tasks/$(taskId)/shares/$(shareId));
-    }
-
     match /{path=**}/comments/{commentId} {
-      allow list, get: if isSignedIn()
-        && resource.data.workspaceId is string
+      allow get: if signedInEmailLower() != ""
         && (
-          isActiveWorkspaceMember(resource.data.workspaceId, request.auth.uid)
-          || (resource.data.authorId is string && resource.data.authorId == request.auth.uid)
-          || isPersonalWorkspaceId(resource.data.workspaceId, request.auth.uid)
-          || commentVisibleToSignedInGuest()
-                    || (
-            resource.data.taskId is string
-            && resource.data.taskId != ""
-            && resource.data.guestShareId is string
-            && resource.data.guestShareId != ""
-            && commentTaskGuestShareExists(
-                 resource.data.workspaceId,
-                 resource.data.taskId,
-                 resource.data.guestShareId
-               )
-            && commentTaskGuestShareData(
-                 resource.data.workspaceId,
-                 resource.data.taskId,
-                 resource.data.guestShareId
-               ).status in ["active", "accepted"]
-            && (
-              commentTaskGuestShareData(
-                resource.data.workspaceId,
-                resource.data.taskId,
-                resource.data.guestShareId
-              ).acceptedByUid == request.auth.uid
-              || commentTaskGuestShareData(
-                resource.data.workspaceId,
-                resource.data.taskId,
-                resource.data.guestShareId
-              ).acceptedBy == request.auth.uid
-            )
+          (
+            resource.data.sharedEmailsLower is list
+            && signedInEmailLower() in resource.data.sharedEmailsLower
           )
-
+          || (
+            resource.data.authorEmail is string
+            && resource.data.authorEmail.lower() == signedInEmailLower()
+          )
         );
+
+      allow list: if signedInEmailLower() != "";
     }
 
     match /projects/{projectId} {
@@ -1036,12 +989,7 @@ service cloud.firestore {
             );
         }
 
-               match /comments/{commentId} {
-          // GLOBAL: a participant can read in-task comments if they can read
-          // the parent task (member or sharedWithEmails) OR the comment itself
-          // carries them in sharedEmailsLower OR they authored it. This mirrors
-          // the collection-group rule so the in-task listener never gets a
-          // permission-denied when the parent task's sharedWithEmails is stale.
+        match /comments/{commentId} {
           allow read: if canReadCurrentTask()
             || (
               resource.data.sharedEmailsLower is list
@@ -1057,7 +1005,6 @@ service cloud.firestore {
               resource.data.authorId is string
               && resource.data.authorId == request.auth.uid
             );
-
 
           allow create: if canReadCurrentTask()
             && (

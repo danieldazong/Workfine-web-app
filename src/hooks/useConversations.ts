@@ -134,6 +134,10 @@ export function useConversations(
   const [rawComments, setRawComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const hasResolvedRef = useRef(false);
+    // True ONLY after a successful server snapshot has landed (NOT after the
+  // spinner grace period). Used to decide whether the warmup safety-net kick
+  // is still needed, so the feed always populates without a user write.
+  const rawCommentsResolvedRef = useRef(false);
 
 
         useEffect(() => {
@@ -144,18 +148,30 @@ export function useConversations(
     }
 
 
-    hasResolvedRef.current = false;
+      hasResolvedRef.current = false;
+    rawCommentsResolvedRef.current = false;
     // Only show the spinner on the very first attach. Re-subscribes keep the
     // last-known feed on screen so the user never sees comments → empty flash.
     setLoading(true);
+
 
     let cancelled = false;
     let activeUnsub: (() => void) | null = null;
     let retryTimer: number | null = null;
     let attempt = 0;
 
-    // Same transient-error backoff schedule as MyTasksPage's resilient listener.
+        // Same transient-error backoff schedule as MyTasksPage's resilient listener.
     const RETRY_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000];
+
+    // GLOBAL FIX (guest spinner): for a guest, the FIRST collectionGroup read can
+    // keep throwing permission-denied during the auth/workspace warmup race. The
+    // old handler retried forever WITHOUT ever resolving `loading`, so the page
+    // span infinitely until the guest posted a comment (which finally produced a
+    // successful read). We now keep retrying in the BACKGROUND, but after a short
+    // grace period we stop the spinner and show the (empty) feed. The moment a
+    // read succeeds, the feed fills in. This works for every account globally.
+    const STOP_SPINNER_AFTER_TRANSIENT_ATTEMPTS = 3;
+
 
       const subscribe = () => {
       if (cancelled || !user?.uid) return;
@@ -209,12 +225,16 @@ export function useConversations(
             };
           });
 
-          setRawComments(data);
+                    setRawComments(data);
+
+          // A real server read landed — cancel any pending warmup safety net.
+          rawCommentsResolvedRef.current = true;
 
           if (!hasResolvedRef.current) {
             hasResolvedRef.current = true;
             setLoading(false);
           }
+
         },
         (err) => {
           if (cancelled) return;
@@ -225,13 +245,23 @@ export function useConversations(
           // (workspaceId flips null → personal_... and rules briefly reject the
           // read). We must NOT clear the feed or resolve loading on these — we
           // re-subscribe with backoff so we recover onto the populated feed.
-                    const isTransient =
+                    // failed-precondition = the collectionGroup index is still building
+          // (or briefly unavailable during deploy). It MUST be treated as
+          // transient so we keep retrying onto a successful read instead of
+          // permanently clearing the feed. resource-exhausted/aborted are also
+          // warmup-class errors. This is what made history only appear after a
+          // local write (which served from cache and bypassed the server read).
+          const isTransient =
             code === "permission-denied" ||
             code === "unauthenticated" ||
             code === "unavailable" ||
             code === "deadline-exceeded" ||
             code === "internal" ||
-            code === "cancelled";
+            code === "cancelled" ||
+            code === "failed-precondition" ||
+            code === "resource-exhausted" ||
+            code === "aborted";
+
 
           console.warn(
             `[useConversations] comments listener error (transient=${isTransient}):`,
@@ -256,21 +286,50 @@ export function useConversations(
             return;
           }
 
-          // Transient: keep existing rawComments + loading state untouched,
-          // and re-subscribe after a backoff delay.
+                    // Transient: keep existing rawComments untouched and re-subscribe with
+          // backoff. BUT once we've retried past the grace period without a
+          // successful read, stop the spinner so the guest sees the (empty) feed
+          // instead of spinning forever. Retries continue in the background, so
+          // the feed will fill in the instant the read finally succeeds.
+          if (
+            !hasResolvedRef.current &&
+            attempt >= STOP_SPINNER_AFTER_TRANSIENT_ATTEMPTS
+          ) {
+            hasResolvedRef.current = true;
+            setLoading(false);
+          }
+
           const delay =
             RETRY_DELAYS_MS[Math.min(attempt, RETRY_DELAYS_MS.length - 1)];
           attempt += 1;
 
           retryTimer = window.setTimeout(subscribe, delay);
+
         },
       );
     };
 
-    subscribe();
+     subscribe();
+
+    // SAFETY NET (global): if the very first attach resolved the spinner on a
+    // transient error (empty feed shown) but a successful server read has not
+    // yet landed, force one clean re-subscribe shortly after mount. This
+    // guarantees the populated feed appears WITHOUT requiring the user to post.
+    const warmupKick = window.setTimeout(() => {
+      if (cancelled) return;
+      if (rawCommentsResolvedRef.current) return; // a real read already landed
+      attempt = 0;
+      if (activeUnsub) {
+        try { activeUnsub(); } catch {}
+        activeUnsub = null;
+      }
+      subscribe();
+    }, 1500);
 
     return () => {
+
       cancelled = true;
+      window.clearTimeout(warmupKick);
       if (retryTimer) {
         window.clearTimeout(retryTimer);
         retryTimer = null;
@@ -282,6 +341,7 @@ export function useConversations(
         activeUnsub = null;
       }
     };
+
     }, [user?.uid, user?.email]);
 
 
