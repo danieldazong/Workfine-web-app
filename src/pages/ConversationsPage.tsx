@@ -69,20 +69,21 @@ export function ConversationsPage() {
     postConversationMessage,
   } = useConversations(filters);
 
-  // Composer state.
-  const [targetType, setTargetType] = useState<ConversationTargetType>("task");
+  // Composer state. Comments always attach to a concrete task — a project has
+  // no single comment thread, so "project" mode was removed to avoid posting
+  // to a random task inside the project.
+  const targetType: ConversationTargetType = "task";
   const [targetId, setTargetId] = useState("");
   const [text, setText] = useState("");
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState("");
 
-  // Options for the composer's target picker mirror the active feed.
-  const composerOptions = useMemo(() => {
-    if (targetType === "task") {
-      return taskOptions.map((t) => ({ id: t.id, label: t.title }));
-    }
-    return projectOptions.map((p) => ({ id: p.id, label: p.name }));
-  }, [targetType, taskOptions, projectOptions]);
+    // Options for the composer's target picker — tasks only.
+  const composerOptions = useMemo(
+    () => taskOptions.map((t) => ({ id: t.id, label: t.title })),
+    [taskOptions],
+  );
+
 
   const handlePost = async () => {
     setError("");
@@ -119,46 +120,13 @@ export function ConversationsPage() {
         <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
           {/* Composer */}
           <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="inline-flex rounded-lg bg-slate-100 p-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTargetType("task");
-                    setTargetId("");
-                  }}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
-                    targetType === "task"
-                      ? "bg-white text-indigo-600 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  Task
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTargetType("project");
-                    setTargetId("");
-                  }}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition ${
-                    targetType === "project"
-                      ? "bg-white text-indigo-600 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  Project
-                </button>
-              </div>
-
+                                    <div className="flex items-center gap-2 mb-3">
               <select
                 value={targetId}
                 onChange={(e) => setTargetId(e.target.value)}
                 className="flex-1 min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
-                <option value="">
-                  {targetType === "task" ? "Select a task…" : "Select a project…"}
-                </option>
+                <option value="">Select a task…</option>
                 {composerOptions.map((o) => (
                   <option key={o.id} value={o.id}>
                     {o.label}
@@ -166,6 +134,7 @@ export function ConversationsPage() {
                 ))}
               </select>
             </div>
+
 
             <textarea
               value={text}
