@@ -117,7 +117,7 @@ export function ConversationsPage() {
       </header>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+                     <div className="max-w-6xl mx-auto px-6 pt-14 pb-8 space-y-6">
           {/* Composer */}
           <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-4">
                                     <div className="flex items-center gap-2 mb-3">
