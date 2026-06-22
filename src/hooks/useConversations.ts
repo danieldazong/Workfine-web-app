@@ -899,7 +899,24 @@ export function useConversations(
         }
       }
 
-      const taskId = cleanStr(task.id);
+            // GLOBAL FIX (visibility mismatch): TaskDetailPanel reads comments from
+      //   workspaces/{wsId}/tasks/{sourceTaskId}/comments
+      // where sourceTaskId = originalTaskId || sharedTaskId || id.
+      // The Conversations write MUST target that SAME canonical id, otherwise
+      // for shared/duplicated tasks the comment is written under the local id
+      // and the panel (reading the original id) never sees it. Mirror the
+      // panel's exact resolution order here.
+      const taskId = cleanStr(
+        (task as any).originalTaskId ||
+          (task as any).sharedTaskId ||
+          task.id,
+      );
+
+      // The workspace the canonical task actually lives in. Prefer the task's
+      // own workspaceId (set on shared tasks) and fall back to the active one,
+      // matching TaskDetailPanel.taskWorkspaceId.
+      const canonicalWsId = cleanStr((task as any).workspaceId) || wsId;
+
             // GLOBAL: stamp the parent task's shared emails (lowercased) onto the
       // comment so collectionGroup reads can authorize guests without a parent
       // get(). Pull from every shared-email field the task model may use.
@@ -908,9 +925,27 @@ export function useConversations(
       // comment for the owner AND every guest. This MUST include the author's
       // own email + the task owner/creator email, otherwise that person's own
       // `array-contains <myEmail>` query would never match their own comment.
+          // GLOBAL FIX (visibility): the comment is only visible to a participant
+      // whose lowercased email is in sharedEmailsLower (that's how the
+      // collectionGroup array-contains read authorizes/returns it). The old
+      // version pulled from task field names that don't reliably exist, so the
+      // array often collapsed to just the author's own email — making the
+      // comment invisible to everyone else (including the task owner).
+      //
+      // Source of truth here is the SAME live data the feed already resolves:
+      // workspace members + workspace people (External Guests). We collect every
+      // email those carry, then add the task's own email-ish fields and the
+      // author, so every real participant ends up in the array. This is global
+      // and account-agnostic, exposes nothing new, and changes no UI.
+      const safePeopleForShare = Array.isArray(workspacePeople)
+        ? workspacePeople
+        : [];
+      const safeMembersForShare = Array.isArray(members) ? members : [];
+
       const sharedEmailsLower = Array.from(
         new Set(
           [
+            // Task-level email fields (kept for backward compatibility).
             ...(Array.isArray((task as any).sharedWithEmails)
               ? (task as any).sharedWithEmails
               : []),
@@ -920,10 +955,27 @@ export function useConversations(
             ...(Array.isArray((task as any).guestEmails)
               ? (task as any).guestEmails
               : []),
-            // The task owner/creator — guarantees the owner sees guest comments.
             (task as any).ownerEmail,
             (task as any).createdByEmail,
-            // The current author (owner OR guest) — guarantees they see their own.
+
+            // Every workspace member's email (covers the owner + teammates).
+            ...safeMembersForShare.flatMap((m: any) => [
+              m?.email,
+              m?.emailLower,
+              m?.invitedEmail,
+              m?.acceptedByEmail,
+            ]),
+
+            // Every External Guest's email (covers shared-task guests).
+            ...safePeopleForShare.flatMap((p: any) => [
+              p?.email,
+              p?.emailLower,
+              p?.invitedEmail,
+              p?.invitedEmailLower,
+              p?.acceptedByEmail,
+            ]),
+
+            // The current author — guarantees they always see their own comment.
             user?.email,
           ]
             .map((e: any) => cleanStr(e).toLowerCase())
@@ -939,14 +991,15 @@ export function useConversations(
       const authorName = cleanStr(user?.displayName || user?.email || "User");
       const nowMs = Date.now();
 
-      const commentsRef = collection(
+            const commentsRef = collection(
         db,
         "workspaces",
-        wsId,
+        canonicalWsId,
         "tasks",
         taskId,
         "comments",
       );
+
 
       // Same comment shape as TaskDetailPanel.handleSend.
       const commentPayload = stripUndefined({
@@ -955,7 +1008,7 @@ export function useConversations(
         authorName,
         authorEmail: cleanStr(user?.email),
         authorPhotoURL: "",
-        workspaceId: wsId,
+                workspaceId: canonicalWsId,
         taskId,
         // Self-authorizing field for guest collectionGroup reads.
         sharedEmailsLower,
@@ -1038,8 +1091,8 @@ export function useConversations(
       const taskMemberUids = Array.from(recipientUids);
 
       try {
-        await createCommentNotifications({
-          workspaceId: wsId,
+            await createCommentNotifications({
+          workspaceId: canonicalWsId,
           projectId,
           taskId,
           sourceTaskId: taskId,
