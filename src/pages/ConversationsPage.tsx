@@ -128,11 +128,12 @@ export function ConversationsPage() {
     navigate(target);
 
   };
+    
 
 
 
 
-  const {
+      const {
     items,
     loading,
     projectOptions,
@@ -140,6 +141,8 @@ export function ConversationsPage() {
     counts,
     postConversationMessage,
   } = useConversations(filters);
+
+
 
   // Composer state. Comments always attach to a concrete task — a project has
   // no single comment thread, so "project" mode was removed to avoid posting
@@ -358,8 +361,7 @@ export function ConversationsPage() {
                       <p className="mt-1 text-sm text-slate-700 whitespace-pre-wrap break-words">
                         {item.text}
                       </p>
-
-                                            <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                                                                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
                         {item.projectName ? (
                           <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600">
                             {item.projectName}
@@ -378,6 +380,7 @@ export function ConversationsPage() {
                         </button>
 
                       </div>
+
 
                     </div>
                   </div>

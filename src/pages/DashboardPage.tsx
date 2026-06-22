@@ -80,13 +80,16 @@ function resolveAvatarPhoto(photoURL?: string | null): string {
   return url.includes("firebasestorage") ? url : "";
 }
 
-// Returns the email-based seed used for the gradient. Falls back to name.
+// CANONICAL SEED — must be byte-for-byte identical to avatarSeed() in
+// WorkspacePage.tsx / TeamPage / Navbar / Sidebar: email LOCAL-PART first
+// (the part before "@"), then display name. Using the full email here was
+// the bug that made the Dashboard avatar a different color than every other
+// surface. GLOBAL — same logic for every account.
 function avatarSeed(name?: string | null, email?: string | null): string {
-  return (
-    String(email || "").trim().toLowerCase() ||
-    String(name || "?").trim().toLowerCase()
-  );
+  const emailLocal = String(email || "").trim().toLowerCase().split("@")[0];
+  return emailLocal || String(name || "?").trim().toLowerCase();
 }
+
 
 
 const completionMs = (t: any): number => {

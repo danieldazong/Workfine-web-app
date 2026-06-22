@@ -8,6 +8,7 @@ import {
   addDoc,
   collection,
   collectionGroup,
+  deleteDoc,
   doc,
   onSnapshot,
   query,
@@ -748,10 +749,18 @@ export function useConversations(
 
           mentionsMe,
         } as ConversationItem;
-      })
-      // Only keep entries that resolved to a real task the user can see
-      // (AppDataContext already scopes tasks to what the user may access).
-      .filter((item) => Boolean(item.taskId) && Boolean(item.text))
+            })
+      // GLOBAL FIX (orphan comments): a comment must point to a task that STILL
+      // EXISTS in the user's live task list. When a task is deleted, its
+      // taskById entry disappears, so any comment whose taskId no longer
+      // resolves is dropped from the feed automatically — no more ghost rows
+      // that open a non-existent task. Comments still need a taskId and text.
+      .filter(
+        (item) =>
+          Boolean(item.taskId) &&
+          Boolean(item.text) &&
+          taskById.has(item.taskId),
+      )
       .sort((a, b) => b.createdAtMs - a.createdAtMs);
              }, [rawComments, tasks, projects, members, workspacePeople, userPhotoMap, unreadCommentIds, unreadTaskIdsNoComment, currentUid]);
 
@@ -1120,6 +1129,42 @@ export function useConversations(
     [user?.uid, user?.email, user?.displayName, workspaceId, allTasks, allProjects, members],
   );
 
+   /**
+   * GLOBAL: delete a SINGLE comment from the Conversations feed. Removes only
+   * the comment document at the canonical path the TaskDetailPanel reads from
+   * (workspaces/{workspaceId}/tasks/{taskId}/comments/{commentId}), so the row
+   * disappears from BOTH the feed and the task drawer in real time. The task
+   * itself is never touched. Default policy: a user can delete only their OWN
+   * comments. Works for every account.
+   */
+  const deleteConversationMessage = useCallback(
+    async (item: any) => {
+      const uid = cleanStr(user?.uid);
+      if (!uid) throw new Error("You must be signed in.");
+
+      const wsId = cleanStr(item?.workspaceId) || cleanStr(workspaceId);
+      const taskId = cleanStr(item?.taskId);
+      const commentId = cleanStr(item?.commentId || item?.id);
+
+      if (!wsId || !taskId || !commentId) {
+        throw new Error("This comment is missing routing information.");
+      }
+
+      // Own-comments-only policy.
+      const authorId = cleanStr(item?.authorId);
+      if (authorId && authorId !== uid) {
+        throw new Error("You can only delete your own comments.");
+      }
+
+      await deleteDoc(
+        doc(db, "workspaces", wsId, "tasks", taskId, "comments", commentId),
+      );
+
+      return { taskId, commentId };
+    },
+    [user?.uid, workspaceId],
+  );
+
   return {
     items,
     loading,
@@ -1127,7 +1172,9 @@ export function useConversations(
     taskOptions,
     counts,
     postConversationMessage,
+    deleteConversationMessage,
   };
 }
+
 
 

@@ -26,9 +26,11 @@
 
   import { db } from "../lib/firebase/config";
   import { getOverdueTasks } from "../utils/overdueUtils";
-  import TaskDetailPanel, {
+   import TaskDetailPanel, {
     Task as DetailTask,
   } from "../components/TaskDetailPanel";
+  import ConfirmDialog from "../components/ConfirmDialog";
+
 
   type FilterType =
     | "All"
@@ -187,6 +189,10 @@
     });
 
       const [editSaving, setEditSaving] = useState(false);
+          // Confirmation modal state for task deletion.
+    const [pendingDeleteTask, setPendingDeleteTask] = useState<any | null>(null);
+    const [deleteBusy, setDeleteBusy] = useState(false);
+
 
     const tasks = useMemo(() => {
       const merged = new Map<string, any>();
@@ -422,17 +428,33 @@
 
         if (candidates.length === 0) return;
 
-        const missing: typeof candidates = [];
+             const missing: typeof candidates = [];
         for (const c of candidates) {
           try {
             const existing = await getDoc(
               doc(db, "users", user.uid, "tasks", c.taskId)
             );
-            if (!existing.exists()) missing.push(c);
+            if (existing.exists()) continue;
+
+            // TOMBSTONE CHECK: if the user deliberately removed this task,
+            // do NOT recreate it. The tombstone is written by deleteTask.
+            const tombstone = await getDoc(
+              doc(db, "users", user.uid, "removedTasks", c.taskId)
+            );
+            if (tombstone.exists()) {
+              console.log(
+                "[MyTasksPage] Reconciler skipping tombstoned task:",
+                c.taskId
+              );
+              continue;
+            }
+
+            missing.push(c);
           } catch {
             // ignore
           }
         }
+
 
         if (cancelled || missing.length === 0) return;
 
@@ -984,7 +1006,7 @@
         );
       }
     };
-      const deleteTask = async (taskId: string) => {
+          const runDeleteTask = async (taskId: string) => {
     if (!user?.uid) return;
     if (isViewerOnly) {
       console.warn("[MyTasksPage] deleteTask blocked: viewer access");
@@ -1145,7 +1167,7 @@
           }
         }
 
-        // 3. Remove ONLY my personal copy/copies.
+                // 3. Remove ONLY my personal copy/copies.
         await Promise.all(
           candidateIds.map(async (id) => {
             try {
@@ -1156,6 +1178,29 @@
             }
           })
         );
+
+        // 3b. TOMBSTONE: mark every id as deliberately removed so the
+        // reconciler never recreates this shared task on refresh.
+        await Promise.all(
+          candidateIds.map(async (id) => {
+            try {
+              await setDoc(
+                doc(db, "users", user.uid!, "removedTasks", id),
+                {
+                  taskId: id,
+                  canonicalTaskId,
+                  workspaceId: sourceWorkspaceId,
+                  removedAt: serverTimestamp(),
+                  reason: "user_removed_shared_task",
+                },
+                { merge: true }
+              );
+            } catch (e) {
+              console.warn("[MyTasksPage] tombstone write skipped:", id, e);
+            }
+          })
+        );
+
       } else {
         // Author / editor: delete the real workspace source...
         if (sourceWorkspaceId) {
@@ -1202,9 +1247,28 @@
       console.error("[MyTasksPage] deleteTask failed:", err);
     }
   };
+      // Opens the confirmation modal instead of deleting immediately.
+    const requestDeleteTask = (task: any) => {
+      if (isViewerOnly) {
+        console.warn("[MyTasksPage] delete blocked: viewer access");
+        return;
+      }
+      setPendingDeleteTask(task);
+    };
 
-
-
+    // Confirmed: run the real deletion, then close the modal.
+    const confirmDeleteTask = async () => {
+      if (!pendingDeleteTask) return;
+      setDeleteBusy(true);
+      try {
+        await runDeleteTask(pendingDeleteTask.id);
+        setPendingDeleteTask(null);
+      } catch (err) {
+        console.error("[MyTasksPage] confirmDeleteTask failed:", err);
+      } finally {
+        setDeleteBusy(false);
+      }
+    };
 
     function emptyTitle() {
       if (filter === "All") return "No tasks yet";
@@ -1451,12 +1515,12 @@
                       {task.priority ?? "Low"}
                     </span>
 
-                    {/* Delete */}
+                                        {/* Delete */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteTask(task.id);
+                        requestDeleteTask(task);
                       }}
                       className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none flex-shrink-0"
                       title={
@@ -1467,6 +1531,7 @@
                     >
                       &times;
                     </button>
+
                   </div>
                 );
               })
@@ -1658,6 +1723,30 @@
             </div>
           </div>
         )}
+                <ConfirmDialog
+          open={!!pendingDeleteTask}
+          tone="danger"
+          title={
+            pendingDeleteTask && isSharedTask(pendingDeleteTask)
+              ? "Remove from My Tasks?"
+              : "Delete task?"
+          }
+          message={
+            pendingDeleteTask && isSharedTask(pendingDeleteTask)
+              ? "This removes the task from your list. The original owner keeps it."
+              : "This permanently deletes the task and its comments. This cannot be undone."
+          }
+          confirmLabel={
+            pendingDeleteTask && isSharedTask(pendingDeleteTask)
+              ? "Remove"
+              : "Delete"
+          }
+          busy={deleteBusy}
+          onConfirm={confirmDeleteTask}
+          onCancel={() => {
+            if (!deleteBusy) setPendingDeleteTask(null);
+          }}
+        />
       </div>
     );
   }
