@@ -491,24 +491,40 @@ export function useConversations(
     };
   }, [user?.uid, workspaceId]);
 
-   // Set of taskIds that currently have an UNREAD comment/mention notification.
-  const unreadTaskIds = useMemo(() => {
-    const set = new Set<string>();
+    // Set of commentIds that currently have an UNREAD comment/mention
+  // notification for the current user. This is PER-COMMENT (not per-task), so
+  // opening one comment clears exactly one unread, and each NEW comment adds
+  // exactly one. We also keep a per-task fallback set for legacy notifications
+  // that were written WITHOUT a commentId, so those still show as unread.
+  const { unreadCommentIds, unreadTaskIdsNoComment } = useMemo(() => {
+    const commentSet = new Set<string>();
+    const taskNoCommentSet = new Set<string>();
     const safeNotifications = Array.isArray(notifications) ? notifications : [];
 
     safeNotifications.forEach((n: any) => {
       if (n?.read) return;
 
       const type = String(n?.type || "");
-      // Only comment-related notifications mark a task as unread in the feed.
       if (type !== "task_comment" && type !== "mention") return;
 
+      const commentId = cleanStr(n?.commentId);
+      if (commentId) {
+        commentSet.add(commentId);
+        return;
+      }
+
+      // Legacy notification with no commentId — fall back to per-task so the
+      // task's comments still surface as unread instead of silently vanishing.
       const taskId = cleanStr(n?.taskId || n?.sourceTaskId);
-      if (taskId) set.add(taskId);
+      if (taskId) taskNoCommentSet.add(taskId);
     });
 
-    return set;
+    return {
+      unreadCommentIds: commentSet,
+      unreadTaskIdsNoComment: taskNoCommentSet,
+    };
   }, [notifications]);
+
 
   const currentUid = cleanStr(user?.uid);
 
@@ -726,7 +742,10 @@ export function useConversations(
           projectId,
           projectName: cleanStr(project?.name || c.projectName || ""),
 
-          isUnread: unreadTaskIds.has(taskId),
+                isUnread:
+            unreadCommentIds.has(cleanStr(c.commentId || c.id)) ||
+            unreadTaskIdsNoComment.has(taskId),
+
           mentionsMe,
         } as ConversationItem;
       })
@@ -734,9 +753,7 @@ export function useConversations(
       // (AppDataContext already scopes tasks to what the user may access).
       .filter((item) => Boolean(item.taskId) && Boolean(item.text))
       .sort((a, b) => b.createdAtMs - a.createdAtMs);
-       }, [rawComments, tasks, projects, members, workspacePeople, userPhotoMap, unreadTaskIds, currentUid]);
-
-
+             }, [rawComments, tasks, projects, members, workspacePeople, userPhotoMap, unreadCommentIds, unreadTaskIdsNoComment, currentUid]);
 
 
   // The feed AFTER applying the active filters.
@@ -806,14 +823,19 @@ export function useConversations(
   }, [tasks, filters.projectId]);
 
 
-    // Counts for the filter chips.
+        // Counts for the filter chips.
+  // "Mentions me" counts UNREAD mentions only, so it decrements once the user
+  // views the comment they were mentioned in (the same way Unread does). A
+  // mention is a permanent property of a comment, so without the isUnread
+  // gate the count could never go down.
   const counts = useMemo(() => {
     return {
       all: allItems.length,
-      mentionsMe: allItems.filter((i) => i.mentionsMe).length,
+      mentionsMe: allItems.filter((i) => i.mentionsMe && i.isUnread).length,
       unread: allItems.filter((i) => i.isUnread).length,
     };
   }, [allItems]);
+
 
    const allTasks = tasks;
   const allProjects = projects;

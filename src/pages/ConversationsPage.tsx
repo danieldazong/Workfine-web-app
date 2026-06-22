@@ -4,6 +4,9 @@
  */
 
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { useNotifications } from "../hooks/useNotifications";
 import {
   useConversations,
   DEFAULT_CONVERSATION_FILTERS,
@@ -56,9 +59,78 @@ function formatWhen(ms: number): string {
 
 
 export function ConversationsPage() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { notifications, markAsRead } = useNotifications(user?.uid);
+
   const [filters, setFilters] = useState<ConversationFilters>(
     DEFAULT_CONVERSATION_FILTERS,
   );
+
+    // Mark ONLY the clicked comment's unread notification(s) as read — per
+  // comment, not per task. So opening one comment drops the Unread count by
+  // exactly one; each new comment raises it by exactly one. Legacy
+  // notifications that have no commentId fall back to matching by taskId so
+  // they still get cleared.
+  const markCommentNotificationsRead = (item: any) => {
+    const commentId = String(item?.commentId || item?.id || "").trim();
+    const taskId = String(item?.taskId || "").trim();
+
+    const toClear = (Array.isArray(notifications) ? notifications : []).filter(
+      (n: any) => {
+        if (n?.read) return false;
+        const type = String(n?.type || "");
+        if (type !== "task_comment" && type !== "mention") return false;
+
+        const nCommentId = String(n?.commentId || "").trim();
+        if (nCommentId) {
+          // Per-comment match — clears exactly this comment.
+          return commentId && nCommentId === commentId;
+        }
+
+        // Legacy notification without a commentId — fall back to task match.
+        const nTaskId = String(n?.taskId || n?.sourceTaskId || "").trim();
+        return taskId && nTaskId === taskId;
+      },
+    );
+
+    toClear.forEach((n: any) => {
+      if (n?.id) {
+        markAsRead(n.id).catch((err) => {
+          console.warn("[Conversations] markAsRead failed:", n.id, err);
+        });
+      }
+    });
+  };
+
+
+  // Open the task this comment belongs to, deep-linking straight to the
+  // comment. MyTasksPage already understands these query params and opens
+  // TaskDetailPanel scrolled/highlighted to the exact comment.
+    const openTaskForComment = (item: any) => {
+    const taskId = String(item?.taskId || "").trim();
+
+    const params = new URLSearchParams();
+    if (taskId) params.set("taskId", taskId);
+    if (item?.commentId) params.set("commentId", String(item.commentId));
+    if (item?.workspaceId) params.set("workspaceId", String(item.workspaceId));
+    if (item?.projectId) params.set("projectId", String(item.projectId));
+
+    const target = `/my-tasks?${params.toString()}`;
+
+    if (!taskId) {
+      console.warn("[Conversations] no taskId on this item — cannot open", item);
+      return;
+    }
+    // Clear ONLY this comment's unread notification so the count drops by one.
+    markCommentNotificationsRead(item);
+
+    navigate(target);
+
+  };
+
+
+
 
   const {
     items,
@@ -92,7 +164,7 @@ export function ConversationsPage() {
       return;
     }
     if (!targetId) {
-      setError("Select a task or project to tag.");
+            setError("Select a task to tag.");
       return;
     }
     setPosting(true);
@@ -229,10 +301,13 @@ export function ConversationsPage() {
           ) : (
             <ul className="space-y-3">
               {items.map((item: any) => (
-                                <li
+                                                <li
                   key={item.id || item.commentId}
-                  className="rounded-xl border border-slate-200 bg-white shadow-sm p-4"
+                  onClick={() => openTaskForComment(item)}
+                  title="Open this task"
+                  className="rounded-xl border border-slate-200 bg-white shadow-sm p-4 cursor-pointer hover:border-indigo-200 hover:shadow-md transition"
                 >
+
                   <div className="flex items-start gap-3">
 
                                         <div className="relative h-9 w-9 flex-shrink-0">
@@ -284,16 +359,26 @@ export function ConversationsPage() {
                         {item.text}
                       </p>
 
-                      <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                                            <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
                         {item.projectName ? (
                           <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600">
                             {item.projectName}
                           </span>
                         ) : null}
-                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                                                <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openTaskForComment(item);
+                          }}
+                          title="Open this task"
+                          className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 transition-colors cursor-pointer"
+                        >
                           {item.taskTitle}
-                        </span>
+                        </button>
+
                       </div>
+
                     </div>
                   </div>
                 </li>
