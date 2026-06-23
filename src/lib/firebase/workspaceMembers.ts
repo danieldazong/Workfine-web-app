@@ -9,7 +9,11 @@ import {
 } from "firebase/firestore";
 import { db } from "./config";
 import { deriveWorkspaceDisplayId } from "./users";
-import { createRoleChangeNotification } from "./notifications";
+import {
+  createRoleChangeNotification,
+  createWorkspaceRemovalNotification,
+} from "./notifications";
+
 
 
 
@@ -122,7 +126,7 @@ export async function removeMember(
         (userSnap.data().personalWorkspaceId as string | undefined) ||
         `personal_${userId}`;
 
-        await setDoc(
+                            await setDoc(
         userRef,
         {
           workspaceId: personalId,
@@ -130,17 +134,59 @@ export async function removeMember(
           workspaceDisplayId: deriveWorkspaceDisplayId(userId),
           lastRemovedFromWorkspaceId: workspaceId,
           removedFromWorkspaceAt: serverTimestamp(),
+          // GLOBAL REAL-TIME SIGNAL: User 1 always has permission to read their
+          // OWN users/{uid} doc, so a live listener on it fires the instant we
+          // bump this counter — no need to read the workspace they just lost.
+          removalSignal: Date.now(),
           updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
 
 
+
     }
   } catch (e) {
     console.warn("[removeMember] could not reset user workspaceId:", e);
   }
+
+  // GLOBAL REAL-TIME REMOVAL NOTIFICATION:
+  // Fire a notification through the SAME proven pipeline used by task invites
+  // and role changes. This makes the removal appear in the live bell instantly
+  // AND lets AppShell pop the removal modal off it. Non-fatal — never blocks
+  // the removal itself.
+  try {
+    const wsSnap = await getDoc(doc(db, "workspaces", workspaceId));
+    const wsName = wsSnap.exists()
+      ? String(wsSnap.data().name || "")
+      : "";
+
+    let actorId = "";
+    let actorName = "";
+    let actorPhotoURL = "";
+    try {
+      const authMod = await import("./config");
+      const currentUser = authMod.auth.currentUser;
+      actorId = String(currentUser?.uid || "");
+      actorName = String(currentUser?.displayName || "An admin");
+      actorPhotoURL = String(currentUser?.photoURL || "");
+    } catch {}
+
+    if (actorId && actorId !== userId) {
+      await createWorkspaceRemovalNotification({
+        workspaceId,
+        recipientUid: userId,
+        workspaceName: wsName,
+        actorId,
+        actorName,
+        actorPhotoURL,
+      });
+    }
+  } catch (e) {
+    console.warn("[removeMember] removal notification skipped:", e);
+  }
 }
+
 
 /**
  * Convenience wrapper for the current user leaving a workspace.

@@ -824,13 +824,69 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
      * Existing user with a workspaceId: keep it.
      */
         if (snap.exists() && snap.data().workspaceId) {
-      const existingWid = snap.data().workspaceId as string;
+                  let existingWid = snap.data().workspaceId as string;
       const personalWid = snap.data().personalWorkspaceId as string | undefined;
+
+      // ============================================================
+      // GLOBAL SELF-HEAL (cross-account personal-workspace leak)
+      //
+      // A "personal_<UID>" workspace belongs ONLY to that UID. If this user's
+      // active workspaceId is a personal workspace owned by a DIFFERENT uid,
+      // the pointer is corrupted (it leaked from an invite/remove flow). This
+      // can NEVER be legitimate, so we heal it BEFORE verification — resetting
+      // to this user's own personal workspace and persisting the fix.
+      //
+      // Why this is safe and does NOT harm real invited members:
+      //  - It triggers ONLY for ids matching "personal_" + someOtherUid.
+      //  - Real team workspaces don't start with "personal_" → untouched.
+      //  - This user's own personal_<myUid> matches → untouched.
+      // So the protective "don't reset invited users" logic below is preserved
+      // for every legitimate case; we only fix the provably-corrupt case here.
+      // ============================================================
+      const myUid = firebaseUser.uid;
+      const myPersonalWid = `personal_${myUid}`;
+
+      if (
+        typeof existingWid === "string" &&
+        existingWid.startsWith("personal_") &&
+        existingWid !== myPersonalWid
+      ) {
+        console.warn(
+          "[Auth] 🩹 Detected leaked personal workspace pointer — self-healing:",
+          { wrongWorkspaceId: existingWid, correctWorkspaceId: myPersonalWid }
+        );
+
+        // Recreate/repair THIS user's own personal workspace, then point to it.
+        await ensurePersonalWorkspace(firebaseUser);
+
+        existingWid = myPersonalWid;
+
+        await setDoc(
+          userRef,
+          {
+            workspaceId: myPersonalWid,
+            personalWorkspaceId: myPersonalWid,
+            workspaceDisplayId: deriveWorkspaceDisplayId(myUid),
+            updatedAt: serverTimestamp(),
+            lastActive: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        console.log(
+          "[Auth] ✅ Self-heal complete — workspaceId reset to:",
+          myPersonalWid
+        );
+
+        // Already corrected and persisted to our OWN workspace — return now.
+        return existingWid;
+      }
 
       const hasValidWorkspaceAccess = await ensureWorkspaceAndMembership(
         firebaseUser,
         existingWid
       );
+
 
             if (hasValidWorkspaceAccess) {
         await setDoc(

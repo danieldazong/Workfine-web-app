@@ -250,6 +250,82 @@ export async function createRoleChangeNotification({
 
   await setDoc(notificationRef, payload);
 }
+
+type CreateWorkspaceRemovalNotificationParams = {
+  workspaceId: string;
+  recipientUid: string;
+  workspaceName?: string;
+  actorId: string;
+  actorName?: string;
+  actorPhotoURL?: string;
+};
+
+// GLOBAL: notifies a user IN REAL TIME that they were removed from a workspace.
+// Uses the SAME users/{uid}/notifications pipeline that powers task-invite and
+// role-change notifications, so it appears in the live bell instantly. The
+// `createdAtMs` field is REQUIRED — useNotifications orderBy("createdAtMs")
+// excludes any doc missing it. `type: "workspace_removed"` lets AppShell pop
+// the removal modal off this exact notification.
+export async function createWorkspaceRemovalNotification({
+  workspaceId,
+  recipientUid,
+  workspaceName,
+  actorId,
+  actorName,
+  actorPhotoURL,
+}: CreateWorkspaceRemovalNotificationParams) {
+  const safeWorkspaceId = cleanId(workspaceId);
+  const safeRecipientUid = cleanId(recipientUid);
+  const safeActorId = cleanId(actorId);
+
+  if (!safeWorkspaceId || !safeRecipientUid || !safeActorId) {
+    return;
+  }
+
+  if (safeRecipientUid === safeActorId) return;
+
+  const wsLabel = String(workspaceName || "a workspace").trim();
+
+  const notificationRef = doc(
+    collection(db, "users", safeRecipientUid, "notifications"),
+  );
+
+  const payload = {
+    type: "workspace_removed",
+
+    // REQUIRED by firestore.rules for notifications/{id} create.
+    senderUid: safeActorId,
+    recipientUid: safeRecipientUid,
+
+    workspaceId: safeWorkspaceId,
+    projectId: "",
+    taskId: "",
+    sourceTaskId: "",
+    commentId: "",
+
+    title: `Removed from ${wsLabel}`,
+    message: `You were removed from ${wsLabel}. You'll be returned to your own workspace.`,
+
+    taskTitle: "",
+    projectName: wsLabel,
+
+    actorId: safeActorId,
+    actorName: actorName || "An admin",
+    actorPhotoURL: actorPhotoURL || "",
+
+    commentPreview: "",
+
+    read: false,
+    readAt: null,
+
+    createdAt: serverTimestamp(),
+    createdAtMs: Date.now(),
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(notificationRef, payload);
+}
+
 type CreateTaskAssignmentNotificationParams = {
   workspaceId: string;
   recipientUid: string;
