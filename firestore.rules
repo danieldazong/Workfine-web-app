@@ -1051,11 +1051,18 @@ service cloud.firestore {
             && request.resource.data.workspaceId == workspaceId
             && request.resource.data.taskId == taskId;
 
-          allow update: if canReadCurrentTask()
+                        allow update: if canReadCurrentTask()
             && (
               resource.data.authorId == request.auth.uid
               || canEditWorkspaceContent(workspaceId)
+              || (
+                // Any task reader may mark THIS comment seen by themselves
+                // only. They can change nothing else on the comment.
+                onlyChanged(["seenBy", "updatedAt"])
+                && request.resource.data.seenBy[request.auth.uid] is timestamp
+              )
             );
+
 
           allow delete: if canReadCurrentTask()
             && (

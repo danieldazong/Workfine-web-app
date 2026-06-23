@@ -269,6 +269,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // (defined inside the workspace effect) can always merge the freshest copy
   // without needing to be in that effect's dependency array.
   const userTasksRef = useRef<Task[]>([]);
+    // GLOBAL: holds the CURRENT workspace effect's publishAccessibleData() so the
+  // per-user-tasks effect can re-publish WITHOUT forcing the whole workspace
+  // listener set to tear down and re-subscribe (that re-subscribe storm was
+  // flooding Firestore's channel → QUIC_TOO_MANY_RTOS → all real-time died).
+  const publishAccessibleDataRef = useRef<() => void>(() => {});
+
 
 
   const cancelInvite = async (inviteCode: string): Promise<void> => {
@@ -294,11 +300,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // call setTasks here — publishAccessibleData() is the single writer. Bumping
   // a state value forces the workspace listeners' publish path to re-run with
   // the latest userTasksRef. (Cheap: only fires when userTasks actually change.)
-  const [userTasksVersion, setUserTasksVersion] = useState(0);
-  useEffect(() => {
+    useEffect(() => {
     userTasksRef.current = Array.isArray(userTasks) ? userTasks : [];
-    setUserTasksVersion((v) => v + 1);
+    // Re-publish the merged task list using the LIVE workspace publisher,
+    // without changing any dependency that would re-subscribe the listeners.
+    publishAccessibleDataRef.current();
   }, [userTasks]);
+
 
     // User personal listeners: notes, legacy teamMembers, and per-user task copies.
   useEffect(() => {
@@ -380,7 +388,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const myOwnIds = new Set(
+        const myOwnIds = new Set(
       [personalWorkspaceId, `personal_${uid}`].filter(Boolean) as string[]
     );
 
@@ -393,8 +401,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let projectUnsubs: Array<() => void> = [];
     let taskUnsubs: Array<() => void> = [];
 
+    // GLOBAL: remember which external workspace ids we are CURRENTLY subscribed
+    // to. The members collection-group snapshot re-fires constantly (reconnects,
+    // ripple state writes). Re-subscribing every time tore down and re-created
+    // every external project/task listener on each fire → a 👂 Listening storm
+    // that flooded Firestore's channel. We now re-subscribe ONLY when the set of
+    // external ids actually changes.
+    let subscribedExternalKey = "";
+
     const projectsByWs: Record<string, Project[]> = {};
     const tasksByWs: Record<string, Task[]> = {};
+
 
     const republishProjects = () =>
       setSharedExternalProjects(Object.values(projectsByWs).flat());
@@ -404,7 +421,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const unsubMembers = onSnapshot(
       membersQuery,
       (snap) => {
-        const externalIds = new Set<string>();
+            const externalIds = new Set<string>();
         snap.docs.forEach((d) => {
           const data = d.data() as any;
           const status = String(data.status || "active").toLowerCase();
@@ -414,13 +431,24 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           externalIds.add(wid);
         });
 
-        // Tear down old per-workspace listeners.
+        // GLOBAL: only re-subscribe when the external id SET truly changed.
+        // Sorted, joined key makes the comparison order-independent. If the same
+        // workspaces come back (the common case on every reconnect), bail out so
+        // we never tear down / re-create the external listeners again.
+        const nextExternalKey = Array.from(externalIds).sort().join("|");
+        if (nextExternalKey === subscribedExternalKey) {
+          return;
+        }
+        subscribedExternalKey = nextExternalKey;
+
+        // The id set changed — tear down old per-workspace listeners and rebuild.
         projectUnsubs.forEach((u) => u && u());
         taskUnsubs.forEach((u) => u && u());
         projectUnsubs = [];
         taskUnsubs = [];
         Object.keys(projectsByWs).forEach((k) => delete projectsByWs[k]);
         Object.keys(tasksByWs).forEach((k) => delete tasksByWs[k]);
+
 
         externalIds.forEach((wid) => {
           // Projects (reuse the shared helper — same shape as everywhere).
@@ -798,6 +826,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setProjects(accessibleProjects);
       setTasks(accessibleTasks);
     }
+        // Expose this run's publisher so the per-user-tasks effect can re-publish
+    // the merged list without re-subscribing the workspace listeners.
+    publishAccessibleDataRef.current = publishAccessibleData;
+
 
         function tryResolve() {
       if (
@@ -1216,8 +1248,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
 
 
-        }, [uid, workspaceId, personalWorkspaceId, user?.email, userTasksVersion]);
-
+               }, [uid, workspaceId, personalWorkspaceId, user?.email]);
 
        const effectivePersonalWorkspaceId =
     personalWorkspaceId || (uid ? `personal_${uid}` : "");

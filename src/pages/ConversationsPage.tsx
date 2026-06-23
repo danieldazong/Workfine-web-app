@@ -353,9 +353,28 @@ export function ConversationsPage() {
                         {item.isUnread ? (
                           <span className="h-2 w-2 rounded-full bg-indigo-500" />
                         ) : null}
-                        <span className="text-xs text-slate-400">
+                                                <span className="text-xs text-slate-400">
                           {formatWhen(item.createdAtMs)}
                         </span>
+                        {item.authorId === user?.uid ? (
+                          (() => {
+                            const seenByOthers = Object.keys(
+                              item.seenBy || {},
+                            ).some((uid) => uid !== user?.uid);
+                            return (
+                              <span
+                                title={seenByOthers ? "Seen" : "Sent"}
+                                className={`text-xs font-medium ${
+                                  seenByOthers
+                                    ? "text-indigo-500"
+                                    : "text-slate-300"
+                                }`}
+                              >
+                                {seenByOthers ? "✓✓" : "✓"}
+                              </span>
+                            );
+                          })()
+                        ) : null}
                       </div>
 
                       <p className="mt-1 text-sm text-slate-700 whitespace-pre-wrap break-words">

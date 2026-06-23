@@ -157,9 +157,12 @@ import {
     pinned?: boolean;
     pinnedAt?: any;
     pinnedBy?: string;
-    /** emoji char → array of user UIDs who reacted */
+        /** emoji char → array of user UIDs who reacted */
     reactions?: Record<string, string[]>;
+    /** uid → server timestamp when that user saw this comment (read receipts) */
+    seenBy?: Record<string, any>;
   }
+
 
 
   interface TaskShare {
@@ -3653,7 +3656,7 @@ useEffect(() => {
     "comments",
   );
 
-  const unsub = onSnapshot(
+    const unsub = onSnapshot(
     commentsRef,
     (snap) => {
       const data: TaskComment[] = snap.docs.map((d) =>
@@ -3665,16 +3668,14 @@ useEffect(() => {
 
       setComments(data);
     },
-    (err) =>
-      console.error(
-        "[TaskDetailPanel] canonical comments listener:",
-        err.message,
-      ),
+    (err) => {
+      console.error("[TaskDetailPanel] comments listener:", err.message);
+      setComments([]);
+    },
   );
 
   return () => unsub();
 }, [user?.uid, taskWorkspaceId, sourceTaskId]);
-
 
     // One-time legacy migration:
     // Older comments were stored under users/{uid}/tasks/{taskId}/comments.
@@ -3780,11 +3781,72 @@ useEffect(() => {
       task.id,
       currentUserRealPhotoURL,
     ]);
-
-    const handleClose = useCallback(() => {
+        const handleClose = useCallback(() => {
       setClosing(true);
       setTimeout(() => onClose(), 280);
     }, [onClose]);
+
+
+        // Read receipts: mark every comment NOT written by me as seen-by-me, so the
+    // SENDER's tick flips from ✓ (sent) to ✓✓ (seen). Runs whenever the comment
+    // list changes AND whenever this panel mounts (recipient re-opening the
+    // task), guaranteeing the seenBy write happens even if they were already on
+    // the page when the comment arrived. The rule only authorizes writing the
+    // caller's OWN seenBy.<uid> field, so this is safe for members and guests.
+    const seenWriteInFlightRef = useRef<Set<string>>(new Set());
+
+    useEffect(() => {
+      if (!user?.uid || !taskWorkspaceId || !sourceTaskId) return;
+      if (!Array.isArray(comments) || comments.length === 0) return;
+
+      const myUid = user.uid;
+
+      const unseen = comments.filter(
+        (c) =>
+          c.id &&
+          c.authorId !== myUid &&
+          !(c.seenBy && c.seenBy[myUid]) &&
+          !seenWriteInFlightRef.current.has(c.id),
+      );
+
+      if (unseen.length === 0) return;
+
+      unseen.forEach((c) => {
+        // Guard against firing the same write repeatedly before the listener
+        // echoes the updated seenBy back to us.
+        seenWriteInFlightRef.current.add(c.id);
+
+        updateDoc(
+          doc(
+            db,
+            "workspaces",
+            taskWorkspaceId,
+            "tasks",
+            sourceTaskId,
+            "comments",
+            c.id,
+          ),
+          {
+            [`seenBy.${myUid}`]: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          },
+        )
+          .then(() => {
+            // Keep it marked in-flight; the listener will deliver the doc with
+            // seenBy[myUid] set, after which the filter above excludes it.
+          })
+          .catch((err) => {
+            // Allow a retry on next run if the write failed (e.g. transient).
+            seenWriteInFlightRef.current.delete(c.id);
+            console.warn(
+              "[TaskDetailPanel] mark seen skipped:",
+              c.id,
+              err?.message,
+            );
+          });
+      });
+    }, [comments, user?.uid, taskWorkspaceId, sourceTaskId, mounted]);
+
     const notifyCommentRecipients = useCallback(
       async ({
         commentId,
@@ -3936,16 +3998,9 @@ useEffect(() => {
     });
 
 
-    const commentDocRef = await addDoc(commentsRef, commentPayload);
-
-
-      await notifyCommentRecipients({
-      commentId: commentDocRef.id,
-      text,
-      mentionedUids,
-    });
-
-
+       // Clear the composer and stop the spinner IMMEDIATELY. The comment is
+    // already built; the actual Firestore write + notifications run after and
+    // must never keep the UI in a "Sending..." state if they stall.
     setCommentText("");
     setReplyingTo(null);
     setShowSuggestions(false);
@@ -3957,6 +4012,41 @@ useEffect(() => {
     setComposerExpanded(false);
     setShowComposerEmojiPicker(false);
     setShowFormattingToolbar(false);
+    setSending(false);
+
+      // Clear the composer and stop the spinner IMMEDIATELY. The comment payload
+    // is already built and will be written below. The local listener renders it
+    // instantly, so the UI must not stay in a "Sending..." state waiting for the
+    // server round-trip or notifications.
+    setCommentText("");
+    setReplyingTo(null);
+    setShowSuggestions(false);
+    setMentionFilter("");
+    setMentionStart(-1);
+    setShowUserSuggestions(false);
+    setUserMentionFilter("");
+    setUserMentionStart(-1);
+    setComposerExpanded(false);
+    setShowComposerEmojiPicker(false);
+    setShowFormattingToolbar(false);
+    setSending(false);
+
+    // Fire the actual write WITHOUT awaiting it, so a slow network can never
+    // hold the spinner open. Notifications are chained off the same promise and
+    // are also non-blocking.
+    addDoc(commentsRef, commentPayload)
+      .then((commentDocRef) =>
+        notifyCommentRecipients({
+          commentId: commentDocRef.id,
+          text,
+          mentionedUids,
+        }),
+      )
+      .catch((writeErr) => {
+        console.error("[TaskDetailPanel] add comment:", writeErr);
+        setToast("Failed to send comment");
+        setTimeout(() => setToast(null), 2500);
+      });
 
     window.setTimeout(() => {
       scrollToLatestComment("smooth");
@@ -3969,6 +4059,7 @@ useEffect(() => {
   } finally {
     setSending(false);
   }
+
 }, [
   user,
   commentText,
@@ -7460,18 +7551,35 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
 
                               {!isMine && messageActions}
                             </div>
-                            {/* Timestamp — every message carries its own sent time. */}
+                                                      {/* Timestamp — every message carries its own sent time. */}
 {timeLabel && (
   <span
     title={fullTimeLabel}
-    className={`text-[10px] mt-1 px-1 ${
+    className={`text-[10px] mt-1 px-1 inline-flex items-center gap-1 ${
       isMine ? "text-slate-400 text-right" : "text-slate-400 text-left"
     }`}
   >
     {timeLabel}
     {wasEdited ? " · edited" : ""}
+    {isMine &&
+      (() => {
+        const seenByOthers = Object.keys(c.seenBy || {}).some(
+          (uid) => uid !== user?.uid,
+        );
+        return (
+          <span
+            title={seenByOthers ? "Seen" : "Sent"}
+            className={`font-semibold leading-none ${
+              seenByOthers ? "text-violet-500" : "text-slate-300"
+            }`}
+          >
+            {seenByOthers ? "✓✓" : "✓"}
+          </span>
+        );
+      })()}
   </span>
 )}
+
 
 
                             {/* Reaction chips */}
