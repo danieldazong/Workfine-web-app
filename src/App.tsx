@@ -18,6 +18,8 @@ import { AppDataProvider } from "./context/AppDataContext";
 import Sidebar from "./components/Sidebar";
 import { usePresenceHeartbeat } from "./hooks/usePresenceHeartbeat";
 import AppShell from "./components/AppShell";
+import FloatingNoteButton from "./components/FloatingNoteButton";
+
 
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -58,7 +60,7 @@ function ProtectedRoute() {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  return (
+    return (
     <AppDataProvider>
       <PresenceTracker />
       <div className="flex h-screen w-screen overflow-hidden bg-white">
@@ -67,6 +69,9 @@ function ProtectedRoute() {
           <Outlet />
         </div>
       </div>
+      {/* Global "Take a note" button — same position on every page,
+          hidden on Settings (handled inside the component). */}
+      <FloatingNoteButton />
     </AppDataProvider>
   );
 }

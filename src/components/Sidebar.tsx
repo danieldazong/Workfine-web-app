@@ -18,6 +18,9 @@ import {
   Building2,
   ChevronRight,
   MessageSquare,
+  MoreVertical,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../context/AuthContext";
@@ -31,6 +34,8 @@ import {
 import { useAppData } from "../context/AppDataContext";
 import { deleteProject } from "../lib/firebase/projects";
 import CreateProjectModal from "./CreateProjectModal";
+import ConfirmDialog from "./ConfirmDialog";
+
 
 
 
@@ -42,8 +47,22 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
+  // When set, the modal opens in EDIT mode pre-filled with this project.
+  const [editProject, setEditProject] = useState<any | null>(null);
+  // When set, the reusable ConfirmDialog asks before deleting this project.
+  const [pendingDeleteProject, setPendingDeleteProject] = useState<any | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+
+  // Permission check used by the kebab "Edit" option (mirrors delete rules).
+  const canEditProject = (project: any) => {
+    return isPrivateProject(project)
+      ? isProjectOwner(project)
+      : canDeleteSharedProjects;
+  };
+
 
   const safeMembers = Array.isArray(members) ? members : [];
 
@@ -144,7 +163,9 @@ export default function Sidebar() {
     };
   }, [projects, workspaceId, effectivePersonalWorkspaceId, user?.uid]);
 
-  const handleDelete = async (e: React.MouseEvent, project: any) => {
+
+    // Opens the reusable ConfirmDialog instead of the native browser confirm().
+  const handleDelete = (e: React.MouseEvent, project: any) => {
     e.stopPropagation();
 
     const projectWorkspaceId =
@@ -160,20 +181,48 @@ export default function Sidebar() {
 
     const privateProject = isPrivateProject(project);
 
-    const canDeleteThisProject =
-      privateProject ? isProjectOwner(project) : canDeleteSharedProjects;
+    const canDeleteThisProject = privateProject
+      ? isProjectOwner(project)
+      : canDeleteSharedProjects;
 
     if (!canDeleteThisProject) {
       alert("You do not have permission to delete this project.");
       return;
     }
 
-    if (!confirm("Delete this project? This action cannot be undone.")) {
-      return;
-    }
-
-    await deleteProject(projectWorkspaceId, project.id);
+    setPendingDeleteProject(project);
   };
+
+    // Runs the real deletion after the user confirms in the modal.
+  const confirmDeleteProject = async () => {
+    const project = pendingDeleteProject;
+    if (!project) return;
+
+    const projectWorkspaceId =
+      project.workspaceId ||
+      project.projectWorkspaceId ||
+      project.sourceWorkspaceId ||
+      "";
+
+    setDeleteBusy(true);
+    try {
+      await deleteProject(projectWorkspaceId, project.id);
+      setPendingDeleteProject(null);
+
+      // If the user is currently viewing the project that was just deleted,
+      // redirect them to the Projects overview so they don't land on a dead
+      // "Project not found" page.
+      if (location.pathname === `/projects/${project.id}`) {
+        navigate("/projects", { replace: true });
+      }
+    } catch (err) {
+      console.error("[Sidebar] deleteProject failed:", err);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+
 
        const navItems = isGuestView
     ? [
@@ -207,8 +256,10 @@ export default function Sidebar() {
             navigate={navigate}
             location={location}
             navItems={navItems}
-            handleDelete={handleDelete}
+                                   handleDelete={handleDelete}
             setShowCreateProject={setShowCreateProject}
+            setEditProject={setEditProject}
+            canEditProject={canEditProject}
             canCreateProjects={canCreateProjects}
             canDeleteSharedProjects={canDeleteSharedProjects}
             isProjectOwner={isProjectOwner}
@@ -256,8 +307,10 @@ export default function Sidebar() {
               navigate={navigate}
               location={location}
               navItems={navItems}
-              handleDelete={handleDelete}
-              setShowCreateProject={setShowCreateProject}
+                          handleDelete={handleDelete}
+            setShowCreateProject={setShowCreateProject}
+            setEditProject={setEditProject}
+            canEditProject={canEditProject}
               canCreateProjects={canCreateProjects}
               canDeleteSharedProjects={canDeleteSharedProjects}
               isProjectOwner={isProjectOwner}
@@ -271,13 +324,31 @@ export default function Sidebar() {
         )}
       </AnimatePresence>
 
-      <CreateProjectModal
-        isOpen={showCreateProject}
-        onClose={() => setShowCreateProject(false)}
+                  <CreateProjectModal
+        isOpen={showCreateProject || !!editProject}
+        editProject={editProject}
+        onClose={() => {
+          setShowCreateProject(false);
+          setEditProject(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!pendingDeleteProject}
+        tone="danger"
+        title="Delete project?"
+        message="This permanently deletes the project and everything in it. This cannot be undone."
+        confirmLabel="Delete"
+        busy={deleteBusy}
+        onConfirm={confirmDeleteProject}
+        onCancel={() => {
+          if (!deleteBusy) setPendingDeleteProject(null);
+        }}
       />
     </>
   );
 }
+
 
 interface SidebarContentProps {
   user: any;
@@ -289,6 +360,8 @@ interface SidebarContentProps {
   navItems: { name: string; icon: any; path: string }[];
   handleDelete: (e: React.MouseEvent, project: any) => void;
   setShowCreateProject: (v: boolean) => void;
+  setEditProject: (project: any | null) => void;
+  canEditProject: (project: any) => boolean;
   canCreateProjects: boolean;
   canDeleteSharedProjects: boolean;
   isProjectOwner: (project: any) => boolean;
@@ -297,6 +370,7 @@ interface SidebarContentProps {
   showCloseButton?: boolean;
   isGuestView?: boolean;
 }
+
 
 
 
@@ -310,6 +384,8 @@ function SidebarContent({
   navItems,
   handleDelete,
   setShowCreateProject,
+  setEditProject,
+  canEditProject,
   canCreateProjects,
   canDeleteSharedProjects,
   isProjectOwner,
@@ -318,6 +394,9 @@ function SidebarContent({
   showCloseButton = false,
   isGuestView = false,
 }: SidebarContentProps) {
+  // Tracks which project's kebab menu is open (by composite key).
+  const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
+
 
   function renderProject(project: any) {
     const privateProject = isPrivateProject(project);
@@ -326,10 +405,15 @@ function SidebarContent({
       ? isProjectOwner(project)
       : canDeleteSharedProjects;
 
+    const canEditThisProject = canEditProject(project);
+
+    const rowKey = `${project.workspaceId || project.projectWorkspaceId || ""}:${project.id}`;
+    const menuOpen = openMenuKey === rowKey;
+
     return (
-                 <div
-        key={`${project.workspaceId || project.projectWorkspaceId || ""}:${project.id}`}
-        className="group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-300 transition-colors hover:bg-white/10"
+      <div
+        key={rowKey}
+        className="group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-300 transition-colors hover:bg-white/10"
         onClick={(e) => {
           e.preventDefault();
           const targetPath = `/projects/${project.id}`;
@@ -350,19 +434,76 @@ function SidebarContent({
           {project.name || "Untitled Project"}
         </span>
 
-        {canDeleteThisProject && (
-          <button
-            type="button"
-            onClick={(e) => handleDelete(e, project)}
-            className="px-1 text-xs text-gray-500 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
-            title="Delete project"
-          >
-            ✕
-          </button>
+        {(canEditThisProject || canDeleteThisProject) && (
+          <div className="relative flex-shrink-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOpenMenuKey(menuOpen ? null : rowKey);
+              }}
+              className={cn(
+                "rounded p-0.5 text-gray-500 transition-all hover:bg-white/10 hover:text-white",
+                menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              )}
+              title="More options"
+            >
+              <MoreVertical size={14} />
+            </button>
+
+            {menuOpen && (
+              <>
+                {/* Invisible backdrop closes the menu on outside click. */}
+                <div
+                  className="fixed inset-0 z-[80]"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpenMenuKey(null);
+                  }}
+                />
+
+                <div
+                  className="absolute right-0 top-7 z-[90] w-32 overflow-hidden rounded-lg border border-slate-700 bg-[#1E293B] py-1 shadow-xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {canEditThisProject && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuKey(null);
+                        setEditProject(project);
+                        onClose();
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-gray-200 transition-colors hover:bg-white/10"
+                    >
+                      <Pencil size={13} />
+                      Edit
+                    </button>
+                  )}
+
+                  {canDeleteThisProject && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        setOpenMenuKey(null);
+                        handleDelete(e, project);
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10"
+                    >
+                      <Trash2 size={13} />
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
     );
   }
+
 
   return (
     <>

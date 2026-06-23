@@ -14,6 +14,9 @@ import CreateProjectModal from "../components/CreateProjectModal";
 import { getOverdueTasks } from "../utils/overdueUtils";
 import { FolderKanban } from "lucide-react";
 
+
+
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 // ─── Helpers ──────────────────────────────────────────────────────────────
 const toMs = (v: any): number => {
@@ -226,7 +229,7 @@ const DashboardPage = () => {
   const navigate                                       = useNavigate();
 
   // ── Modals ──────────────────────────────────────────────────────────────
-  const [showTask,    setShowTask]    = useState(false);
+    const [showTask,    setShowTask]    = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [taskForm,    setTaskForm]    = useState(emptyTask());
   const [saving,      setSaving]      = useState(false);
@@ -727,70 +730,69 @@ const DashboardPage = () => {
                 VIEW ALL →
               </button>
             </div>
-            {upcomingTasks.length > 0 ? (
-              <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                                                                                                                           {upcomingTasks.length > 0 ? (
+              <div className="space-y-2 max-h-[160px] overflow-y-auto">
                 {upcomingTasks.map(t => {
-  const taskTitle = toDisplayText((t as any).title, "Untitled task");
-  const taskCode = toDisplayText((t as any).taskCode);
-  const taskPriority = toDisplayText((t as any).priority, "Low");
-  const taskDueDate = (t as any).dueDate;
-
-  return (
-    <div
-      key={(t as any).id}
-      className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0"
-    >
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-gray-300 text-sm flex-shrink-0">⏱</span>
-
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-gray-700 truncate">
-            {taskCode && (
-              <span className="text-slate-400 mr-1">
-                {taskCode}
-              </span>
-            )}
-            {taskTitle}
-          </p>
-
-          <p
-            className={`text-[10px] ${
-              taskDueDate && isPastDate(taskDueDate, now)
-                ? "text-red-500"
-                : "text-gray-400"
-            }`}
-          >
-            {taskDueDate ? fmtDate(taskDueDate) : "No due date"}
-          </p>
-        </div>
-      </div>
-
-      <span
-        className={`text-[10px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
-          taskPriority === "High"
-            ? "bg-red-100 text-red-600"
-            : taskPriority === "Medium"
-            ? "bg-amber-100 text-amber-600"
-            : "bg-gray-100 text-gray-500"
-        }`}
-      >
-        {taskPriority}
-      </span>
-    </div>
-  );
-})}
-
+                  const proj = projects.find(p => p.id === (t as any).projectId);
+                  const projName = toDisplayText((proj as any)?.name, "");
+                  const code = toDisplayText((t as any).taskCode, "");
+                  const priority = toDisplayText((t as any).priority, "");
+                  const overdue =
+                    !!(t as any).dueDate &&
+                    isPastDate((t as any).dueDate, now) &&
+                    (t as any).status !== "Done";
+                  return (
+                    <div key={t.id}
+                         onClick={() => navigate("/my-tasks")}
+                         className="py-1.5 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-medium text-gray-700 truncate flex-1">
+                          {code && <span className="text-gray-400">{code} </span>}
+                          {toDisplayText((t as any).title, "Untitled task")}
+                        </p>
+                        {priority && (
+                          <span
+                            className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${
+                              priority === "High"
+                                ? "bg-red-100 text-red-500"
+                                : priority === "Medium"
+                                ? "bg-amber-100 text-amber-600"
+                                : "bg-gray-100 text-gray-500"
+                            }`}
+                          >
+                            {priority}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {projName && (
+                          <p className="text-[10px] text-gray-400 truncate">{projName}</p>
+                        )}
+                        {(t as any).dueDate && (
+                          <p className={`text-[10px] flex-shrink-0 ${overdue ? "text-red-500" : "text-gray-400"}`}>
+                            📅 {fmtDate((t as any).dueDate)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="h-[180px] flex items-center justify-center">
                 <p className="text-xs text-gray-400">No upcoming tasks</p>
               </div>
             )}
+
           </div>
         </div>
 
+
+
         {/* ── ROW 3: Workflow Health + Task Priority ───────────────────── */}
+
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
+
 
           {/* Workflow Health */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
@@ -812,7 +814,7 @@ const DashboardPage = () => {
                         <Cell key={i} fill={d.fill} />
                       ))}
                     </Bar>
-                  </BarChart>
+                                    </BarChart>
                 </ResponsiveContainer>
               </div>
             ) : (
@@ -823,6 +825,7 @@ const DashboardPage = () => {
           </div>
 
           {/* Task Priority Breakdown */}
+
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
             <h3 className="text-sm font-semibold text-gray-800 mb-0.5">
               Task Priority Breakdown
@@ -861,7 +864,7 @@ const DashboardPage = () => {
                       iconSize={8}
                       wrapperStyle={{ fontSize: 11 }}
                     />
-                  </PieChart>
+                                    </PieChart>
                 </ResponsiveContainer>
               </div>
             ) : (
@@ -875,6 +878,7 @@ const DashboardPage = () => {
         {/* ── ROW 4: Recent Activity + Weekly Productivity ─────────────── */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
 
+
           {/* Recent Activity */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
             <h3 className="text-sm font-semibold text-gray-800 mb-0.5">
@@ -884,7 +888,7 @@ const DashboardPage = () => {
               Latest actions
             </p>
             {recentActivity.length > 0 ? (
-              <div className="space-y-2 max-h-[160px] overflow-y-auto">
+                            <div className="space-y-2 max-h-[160px] overflow-y-auto overflow-x-hidden">
                 {recentActivity.map(t => (
                   <div key={t.id}
                        className="flex items-center gap-2.5 py-1.5 border-b border-gray-50 last:border-0">
@@ -1171,18 +1175,24 @@ const DashboardPage = () => {
               <h3 className="text-sm font-semibold text-gray-800">My Notes</h3>
               <span className="text-xs text-gray-400">{notes.length} notes</span>
             </div>
-            {notes.length > 0 ? (
+                                                            {notes.length > 0 ? (
               <div className="space-y-2 max-h-[160px] overflow-y-auto">
                 {notes.slice(0,5).map(n => (
                   <div key={n.id}
-                       className="py-1.5 border-b border-gray-50 last:border-0">
+                       onClick={() =>
+                         window.dispatchEvent(
+                           new CustomEvent("open-note-panel", {
+                             detail: { noteId: n.id },
+                           })
+                         )
+                       }
+                       className="py-1.5 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors">
                     <p className="text-xs font-medium text-gray-700 truncate">
-  {String(n.title ?? "Untitled")}
-</p>
-<p className="text-[10px] text-gray-400 truncate mt-0.5">
-  {String(n.content ?? n.body ?? "")}
-</p>
-
+                      {String(n.title ?? "Untitled")}
+                    </p>
+                    <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                      {String(n.content ?? n.body ?? "")}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -1192,19 +1202,16 @@ const DashboardPage = () => {
                 <p className="text-xs text-gray-400">No notes yet.</p>
               </div>
             )}
+
           </div>
         </div>
 
       </div>
 
-      {/* ══ ADD TASK FLOATING BUTTON ══════════════════════════════════════ */}
-            <button
-        onClick={() => setShowTask(true)}
-        style={{ backgroundColor:  "#4C28EE" }}
-        className="fixed bottom-6 right-6 flex items-center gap-2 px-4 py-3 text-white text-sm font-medium rounded-full shadow-lg transition-all hover:shadow-xl hover:opacity-90 z-40"
-      >
-        + Add Task
-      </button>
+                 
+
+
+
 
       {/* ══ ADD TASK MODAL ════════════════════════════════════════════════ */}
       {showTask && (
@@ -1311,11 +1318,13 @@ const DashboardPage = () => {
         </div>
       )}
 
-      {/* ══ CREATE PROJECT MODAL ══════════════════════════════════════════ */}
+            {/* ══ CREATE PROJECT MODAL ══════════════════════════════════════════ */}
                  <CreateProjectModal
         isOpen={showCreateProject}
         onClose={() => setShowCreateProject(false)}
       />
+
+      
 
     </div>
   );

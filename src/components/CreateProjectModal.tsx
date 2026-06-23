@@ -3,7 +3,8 @@ import { X, FolderKanban, Lock, Globe2, AlertCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
-import { createProject } from "../lib/firebase/projects";
+import { createProject, updateProject } from "../lib/firebase/projects";
+
 
 interface Props {
   isOpen: boolean;
@@ -15,7 +16,14 @@ interface Props {
    */
   defaultVisibility?: "workspace" | "private";
   defaultPinnedToWorkspace?: boolean;
+  /**
+   * EDIT MODE: when provided, the modal pre-fills with this project's data
+   * and updates it instead of creating a new one. Same UI, button reads
+   * "Save changes" and the title becomes "Edit project".
+   */
+  editProject?: any | null;
 }
+
 
 const COLORS = [
   "#6366f1",
@@ -33,7 +41,10 @@ export default function CreateProjectModal({
   onClose,
   defaultVisibility = "private",
   defaultPinnedToWorkspace = false,
+  editProject = null,
 }: Props) {
+  const isEditMode = !!editProject;
+
   const navigate = useNavigate();
   const { user, workspaceId, personalWorkspaceId } = useAuth();
   const { members, workspaceData } = useAppData();
@@ -109,13 +120,35 @@ export default function CreateProjectModal({
     return base ? `${base}-${Math.floor(Math.random() * 900 + 100)}` : "";
   }, [trimmedName]);
 
-  React.useEffect(() => {
-    if (isOpen) {
+    React.useEffect(() => {
+    if (!isOpen) return;
+
+    if (editProject) {
+      // EDIT MODE: hydrate every field from the existing project so the user
+      // can backspace the name and type a new one, etc.
+      setName(String(editProject.name || ""));
+      setDescription(String(editProject.description || ""));
+      setColor(String(editProject.color || COLORS[0]));
+      setVisibility(
+        editProject.visibility === "workspace" ? "workspace" : "private"
+      );
+      setPinnedToWorkspace(editProject.pinnedToWorkspace === true);
+      setPriority(
+        ["low", "medium", "high"].includes(String(editProject.priority))
+          ? (editProject.priority as any)
+          : "medium"
+      );
+      setDueDate(
+        typeof editProject.dueDate === "string" ? editProject.dueDate : ""
+      );
+      setError("");
+    } else {
       setVisibility(defaultVisibility);
       setPinnedToWorkspace(defaultPinnedToWorkspace);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, defaultVisibility, defaultPinnedToWorkspace]);
+  }, [isOpen, editProject, defaultVisibility, defaultPinnedToWorkspace]);
+
 
   if (!isOpen) return null;
 
@@ -154,7 +187,7 @@ export default function CreateProjectModal({
       return;
     }
 
-    if (!canCreateProjects) {
+        if (!isEditMode && !canCreateProjects) {
       setError(
         visibility === "private"
           ? "Your personal workspace is still loading. Please refresh and try again."
@@ -163,17 +196,40 @@ export default function CreateProjectModal({
       return;
     }
 
+
     if (!trimmedName) {
       setError("Project name is required.");
       return;
     }
 
-    setSaving(true);
+        setSaving(true);
 
     try {
+      // ── EDIT MODE: update the existing project, then close (no navigate). ──
+      if (isEditMode) {
+        const editWorkspaceId =
+          editProject.workspaceId ||
+          editProject.projectWorkspaceId ||
+          editProject.sourceWorkspaceId ||
+          targetWorkspaceId;
+
+        await updateProject(editWorkspaceId, editProject.id, {
+          name: trimmedName,
+          description: trimmedDescription,
+          color,
+          priority,
+          dueDate: dueDate || null,
+        });
+
+        resetForm();
+        onClose();
+        return;
+      }
+
       const projectId = await createProject(
         targetWorkspaceId,
         {
+
           name: trimmedName,
           description: trimmedDescription,
           color,
@@ -197,9 +253,14 @@ export default function CreateProjectModal({
       resetForm();
       onClose();
       navigate(`/projects/${projectId}`);
-    } catch (err: any) {
+        } catch (err: any) {
       console.error("[CreateProjectModal] failed:", err);
-      setError(err?.message || "Failed to create project.");
+      setError(
+        err?.message ||
+          (isEditMode
+            ? "Failed to save project changes."
+            : "Failed to create project.")
+      );
     } finally {
       setSaving(false);
     }
@@ -228,14 +289,16 @@ export default function CreateProjectModal({
             </div>
 
             <div className="min-w-0">
-              <h2
+                            <h2
                 id="create-project-title"
                 className="text-sm font-semibold leading-tight text-slate-900"
               >
-                Create project
+                {isEditMode ? "Edit project" : "Create project"}
               </h2>
               <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-                Start a new shared or private workspace project.
+                {isEditMode
+                  ? "Update this project's details."
+                  : "Start a new shared or private workspace project."}
               </p>
             </div>
           </div>
@@ -455,13 +518,20 @@ export default function CreateProjectModal({
             Cancel
           </button>
 
-          <button
+                    <button
             type="submit"
-            disabled={!trimmedName || saving || !canCreateProjects}
+            disabled={!trimmedName || saving || (!isEditMode && !canCreateProjects)}
             className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {saving ? "Creating..." : "Create project"}
+            {saving
+              ? isEditMode
+                ? "Saving..."
+                : "Creating..."
+              : isEditMode
+                ? "Save changes"
+                : "Create project"}
           </button>
+
         </div>
       </form>
     </div>
