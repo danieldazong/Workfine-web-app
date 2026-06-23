@@ -13,8 +13,10 @@ import {
   doc,
   query,
   where,
+  limit,
   writeBatch,
   getDocs,
+  getDoc,
 } from "firebase/firestore";
 import { db } from "../lib/firebase/config";
 import { useAuth } from "./AuthContext";
@@ -250,7 +252,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
-  const [workspacePeople, setWorkspacePeople] = useState<WorkspacePerson[]>([]);
+    const [workspacePeople, setWorkspacePeople] = useState<WorkspacePerson[]>([]);
+
+  // GLOBAL: externally-shared (other owners') workspace projects + their tasks,
+  // so Navbar search (and anything reading projects/tasks) can find them.
+  // Reuses the SAME members collection-group query + subscribeToProjects the
+  // Sidebar uses. Read-only: we never write here.
+  const [sharedExternalProjects, setSharedExternalProjects] = useState<Project[]>([]);
+  const [sharedExternalTasks, setSharedExternalTasks] = useState<Task[]>([]);
+
 
 
         const resolvedRef = useRef(false);
@@ -359,6 +369,105 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       unsubUserTasks();
     };
   }, [uid]);
+    // ── External shared workspaces: projects + tasks ────────────────────────────
+  // Find workspaces where I'm an active member but that are NOT my own, then
+  // live-subscribe to their projects and tasks. Merged into the global
+  // projects/tasks arrays below so Navbar search includes shared items.
+  useEffect(() => {
+    if (!uid) {
+      setSharedExternalProjects([]);
+      setSharedExternalTasks([]);
+      return;
+    }
+
+    const myOwnIds = new Set(
+      [personalWorkspaceId, `personal_${uid}`].filter(Boolean) as string[]
+    );
+
+    const membersQuery = query(
+      collectionGroup(db, "members"),
+      where("userId", "==", uid),
+      limit(200)
+    );
+
+    let projectUnsubs: Array<() => void> = [];
+    let taskUnsubs: Array<() => void> = [];
+
+    const projectsByWs: Record<string, Project[]> = {};
+    const tasksByWs: Record<string, Task[]> = {};
+
+    const republishProjects = () =>
+      setSharedExternalProjects(Object.values(projectsByWs).flat());
+    const republishTasks = () =>
+      setSharedExternalTasks(Object.values(tasksByWs).flat());
+
+    const unsubMembers = onSnapshot(
+      membersQuery,
+      (snap) => {
+        const externalIds = new Set<string>();
+        snap.docs.forEach((d) => {
+          const data = d.data() as any;
+          const status = String(data.status || "active").toLowerCase();
+          if (status !== "active") return;
+          const wid = String(data.workspaceId || "").trim();
+          if (!wid || myOwnIds.has(wid)) return;
+          externalIds.add(wid);
+        });
+
+        // Tear down old per-workspace listeners.
+        projectUnsubs.forEach((u) => u && u());
+        taskUnsubs.forEach((u) => u && u());
+        projectUnsubs = [];
+        taskUnsubs = [];
+        Object.keys(projectsByWs).forEach((k) => delete projectsByWs[k]);
+        Object.keys(tasksByWs).forEach((k) => delete tasksByWs[k]);
+
+        externalIds.forEach((wid) => {
+          // Projects (reuse the shared helper — same shape as everywhere).
+          projectUnsubs.push(
+            subscribeToProjects(wid, (list) => {
+              projectsByWs[wid] = Array.isArray(list) ? list : [];
+              republishProjects();
+            })
+          );
+
+          // Tasks of that external workspace.
+          taskUnsubs.push(
+            onSnapshot(
+              collection(db, "workspaces", wid, "tasks"),
+              (tsnap) => {
+                tasksByWs[wid] = tsnap.docs.map(
+                  (d) => ({ id: d.id, ...(d.data() as Omit<Task, "id">) } as Task)
+                );
+                republishTasks();
+              },
+              (err) =>
+                console.warn(
+                  "[AppData] external tasks listener:",
+                  wid,
+                  (err as any)?.code || err
+                )
+            )
+          );
+        });
+
+        republishProjects();
+        republishTasks();
+      },
+      (err) =>
+        console.warn(
+          "[AppData] external members listener:",
+          (err as any)?.code || err
+        )
+    );
+
+    return () => {
+      unsubMembers();
+      projectUnsubs.forEach((u) => u && u());
+      taskUnsubs.forEach((u) => u && u());
+    };
+  }, [uid, personalWorkspaceId]);
+
 
 
   // Real-time listener for users/{uid}.workspaceId
@@ -1169,6 +1278,37 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   // recognized member/owner of this workspace. (FIX)
   const isGuestView =
   !isOnOwnPersonalWorkspace && !isWorkspaceMember;
+    // GLOBAL: merge externally-shared projects/tasks into the app-wide arrays so
+  // Navbar search (and any consumer) finds them. De-duped by composite id; the
+  // existing (canonical) entry wins on collision. Read-only merge — does NOT
+  // change guest-view logic, membership logic, or any write path.
+  const mergedProjects = React.useMemo(() => {
+    const map = new Map<string, Project>();
+    (Array.isArray(sharedExternalProjects) ? sharedExternalProjects : []).forEach(
+      (p: any) => {
+        const key = `${p.workspaceId || ""}:${p.id}`;
+        if (p?.id) map.set(key, p);
+      }
+    );
+    (Array.isArray(projects) ? projects : []).forEach((p: any) => {
+      const key = `${p.workspaceId || ""}:${p.id}`;
+      if (p?.id) map.set(key, p); // canonical wins
+    });
+    return Array.from(map.values());
+  }, [projects, sharedExternalProjects]);
+
+  const mergedTasks = React.useMemo(() => {
+    const map = new Map<string, Task>();
+    (Array.isArray(sharedExternalTasks) ? sharedExternalTasks : []).forEach(
+      (t: any) => {
+        if (t?.id) map.set(String(t.id), t);
+      }
+    );
+    (Array.isArray(tasks) ? tasks : []).forEach((t: any) => {
+      if (t?.id) map.set(String(t.id), t); // canonical wins
+    });
+    return Array.from(map.values());
+  }, [tasks, sharedExternalTasks]);
 
 
 
@@ -1177,11 +1317,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppDataContext.Provider
-      value={{
-        tasks,
+            value={{
+        tasks: mergedTasks,
         teamMembers,
         notes,
-        projects,
+        projects: mergedProjects,
         loading,
         files: [],
         members,
