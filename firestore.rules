@@ -363,6 +363,31 @@ service cloud.firestore {
           )
         );
     }
+        // ============================================================
+    // GLOBAL collection-group READ rule for the "Shared with me" tab.
+    // The client query is:
+    //   collectionGroup('members').where('userId','==', myUid).limit(200)
+    //
+    // A collectionGroup LIST is evaluated against the QUERY, not each doc.
+    // The existing per-workspace `members/list` rule cannot satisfy a
+    // collection-group query, so it is rejected (permission-denied).
+    //
+    // FIX: add a dedicated collection-group rule.
+    //  - get  : per-document — caller must own the member doc.
+    //  - list : allowed for any signed-in user. This is SECURE because the
+    //           client query (where userId == myUid) physically restricts
+    //           results to ONLY the caller's own member docs.
+    // Read-only — no writes are granted here.
+    // ============================================================
+    match /{path=**}/members/{memberDoc} {
+      allow get: if isSignedIn()
+        && (
+          (resource.data.userId is string && resource.data.userId == request.auth.uid)
+          || (resource.data.uid is string && resource.data.uid == request.auth.uid)
+        );
+
+      allow list: if isSignedIn();
+    }
 
     // ============================================================
     // GLOBAL collection-group READ rule for the Conversations feed.

@@ -31,6 +31,17 @@ import {
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
+import {
+  collectionGroup,
+  query as fsQuery,
+  where as fsWhere,
+  onSnapshot as fsOnSnapshot,
+  getDoc as fsGetDoc,
+  doc as fsDoc,
+  limit as fsLimit,
+} from "firebase/firestore";
+import { useEffect } from "react";
+import { subscribeToProjects } from "../lib/firebase/projects";
 import { useAppData } from "../context/AppDataContext";
 import InviteMemberModal from "../components/InviteMemberModal";
 import CreateProjectModal from "../components/CreateProjectModal";
@@ -45,13 +56,15 @@ import { isProjectPinnedToWorkspace } from "../lib/projectAccess";
 import { addExistingProjectToWorkspace } from "../lib/firebase/projects";
 
 
-type TabId = "overview" | "members" | "settings";
+type TabId = "overview" | "members" | "settings" | "shared";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "members",  label: "Members"  },
   { id: "settings", label: "Settings" },
+  { id: "shared",   label: "Shared with me" },
 ];
+
 function normalizeEmail(email?: string | null): string {
   return String(email || "").trim().toLowerCase();
 }
@@ -223,8 +236,11 @@ export default function WorkspacePage() {
  const { user, workspaceId: authWorkspaceId } = useAuth();
   const { members, pendingInvites, workspaceData, projects, tasks, cancelInvite } = useAppData();
 
-  const activeTab: TabId =
-    tab === "members" || tab === "settings" ? (tab as TabId) : "overview";
+   const activeTab: TabId =
+    tab === "members" || tab === "settings" || tab === "shared"
+      ? (tab as TabId)
+      : "overview";
+
 
  const [showInvite, setShowInvite] = useState(false);
 const [showCreateProject, setShowCreateProject] = useState(false);
@@ -541,6 +557,7 @@ return (
     members={membersForUi}
   />
 )}
+       {activeTab === "shared" && <SharedWithMeTab />}
 
 
       </div>
@@ -2398,3 +2415,264 @@ function ConfirmDialog({
     </div>
   );
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// SHARED WITH ME TAB  (external workspaces the user was invited into)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function normalizeEmailLocal(email?: string | null): string {
+  return String(email || "").trim().toLowerCase();
+}
+
+function SharedWithMeTab() {
+  const { user, workspaceId, personalWorkspaceId } = useAuth();
+  const myEmailLower = normalizeEmailLocal(user?.email);
+
+  const [rows, setRows] = useState<
+    { workspaceId: string; name: string; taskTitle: string }[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+
+  // Which external workspace is selected in the right panel.
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [panelProjects, setPanelProjects] = useState<any[]>([]);
+  const [panelLoading, setPanelLoading] = useState(false);
+
+  const myOwnIds = new Set(
+    [personalWorkspaceId, `personal_${user?.uid || ""}`].filter(Boolean) as string[]
+  );
+
+  // Load the list of external workspaces (membership-based).
+  useEffect(() => {
+    if (!user?.uid || !myEmailLower) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
+    const membersQuery = fsQuery(
+      collectionGroup(db, "members"),
+      fsWhere("userId", "==", user.uid),
+      fsLimit(200)
+    );
+
+
+    const unsub = fsOnSnapshot(
+      membersQuery,
+      async (snap) => {
+        const candidateIds = new Set<string>();
+        snap.docs.forEach((d) => {
+          const data = d.data() as any;
+          const status = String(data.status || "active").toLowerCase();
+          if (status !== "active") return;
+          const wid = String(data.workspaceId || "").trim();
+          if (!wid) return;
+          if (myOwnIds.has(wid)) return;
+          candidateIds.add(wid);
+        });
+
+        const resolved: { workspaceId: string; name: string; taskTitle: string }[] =
+          [];
+        for (const wid of candidateIds) {
+          let name = wid;
+          let isExternal = true;
+          try {
+            const wsSnap = await fsGetDoc(fsDoc(db, "workspaces", wid));
+            if (wsSnap.exists()) {
+              const wd = wsSnap.data() as any;
+              name = String(wd.name || wid);
+              if (wd.ownerId === user.uid) isExternal = false;
+            }
+          } catch {
+            // keep id as label
+          }
+          if (isExternal) {
+            resolved.push({ workspaceId: wid, name, taskTitle: "Workspace member" });
+          }
+        }
+
+        setRows(resolved);
+        setLoading(false);
+
+        // Auto-select the first workspace so the right panel isn't empty.
+        setSelectedId((prev) => prev || (resolved[0]?.workspaceId ?? ""));
+      },
+      (err) => {
+        console.warn("[SharedWithMeTab] members listener:", err.message);
+        setLoading(false);
+      }
+    );
+
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, myEmailLower]);
+
+  // Load the selected workspace's projects into the right panel.
+  useEffect(() => {
+    if (!selectedId) {
+      setPanelProjects([]);
+      return;
+    }
+    setPanelLoading(true);
+    const unsub = subscribeToProjects(selectedId, (list) => {
+      setPanelProjects(list);
+      setPanelLoading(false);
+    });
+    return () => unsub();
+  }, [selectedId]);
+
+  const selectedRow = rows.find((r) => r.workspaceId === selectedId) || null;
+  const curated = panelProjects.filter((p: any) => p?.pinnedToWorkspace === true);
+
+   const isViewingExternal = false; // preview-only; we never switch the app's workspace
+
+  if (loading) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-10 text-center">
+        <Loader2 className="mx-auto mb-3 animate-spin text-violet-500" size={28} />
+        <p className="text-sm text-gray-500">Loading shared workspaces…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      
+
+      {rows.length === 0 ? (
+        <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-12 text-center">
+          <FolderKanban className="mx-auto mb-3 text-gray-300" size={36} />
+          <p className="text-sm font-medium text-gray-700">
+            No shared workspaces yet
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            When someone invites you to their workspace, it appears here.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          {/* LEFT — external workspace list */}
+          <div className="space-y-3">
+            {rows.map((r) => {
+              const isActive = selectedId === r.workspaceId;
+              return (
+                <button
+                  key={r.workspaceId}
+                  onClick={() => setSelectedId(r.workspaceId)}
+                  className={`w-full text-left border rounded-2xl p-4 transition-all hover:shadow-md active:scale-[0.98] ${
+                    isActive
+                      ? "border-violet-400 bg-violet-50"
+                      : "border-gray-200 bg-white hover:border-violet-300"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
+                      style={{ background: monogramGradient(r.name) }}
+                    >
+                      {String(r.name || "W").charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900 truncate">
+                        {r.name}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">
+                        Shared via: {r.taskTitle}
+                      </p>
+                    </div>
+                    {isActive ? (
+                      <CheckCircle2 size={16} className="text-violet-600 flex-shrink-0" />
+                    ) : (
+                      <ArrowRight size={14} className="text-gray-300 flex-shrink-0" />
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* RIGHT — curated work of the selected workspace */}
+          <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 min-h-[260px]">
+            {!selectedRow ? (
+              <div className="h-full flex flex-col items-center justify-center text-center py-10">
+                <FolderKanban className="mb-3 text-gray-300" size={32} />
+                <p className="text-sm text-gray-500">
+                  Select a workspace on the left to see its curated work.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    {selectedRow.name} · Curated work
+                  </h3>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Projects shared in this workspace
+                  </p>
+                </div>
+
+                {panelLoading ? (
+                  <div className="py-10 text-center">
+                    <Loader2 className="mx-auto mb-2 animate-spin text-violet-500" size={22} />
+                    <p className="text-xs text-gray-500">Loading projects…</p>
+                  </div>
+                ) : curated.length === 0 ? (
+                  <div className="py-10 text-center">
+                    <FolderKanban className="mx-auto mb-3 text-gray-300" size={30} />
+                    <p className="text-sm text-gray-500">No curated projects yet</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {curated.slice(0, 6).map((p: any) => {
+                      const total = Number(p?.taskCount ?? 0);
+                      const done = Number(p?.completedTaskCount ?? 0);
+                      const pct =
+                        typeof p?.progress === "number"
+                          ? p.progress
+                          : total > 0
+                            ? Math.round((done / total) * 100)
+                            : 0;
+                      return (
+                        <div
+                          key={p.id}
+                          className="border border-gray-200 rounded-xl p-3"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <div
+                              className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
+                              style={{ backgroundColor: p?.color ?? "#3b82f6" }}
+                            >
+                              {String(p?.name || "P").charAt(0).toUpperCase()}
+                            </div>
+                            <p className="text-sm font-semibold text-gray-800 truncate">
+                              {String(p?.name || "Untitled Project")}
+                            </p>
+                          </div>
+                          {p?.description && (
+                            <p className="text-xs text-gray-400 truncate mb-2">
+                              {String(p.description)}
+                            </p>
+                          )}
+                          <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1">
+                            <span>{total} task{total === 1 ? "" : "s"}</span>
+                            <span>{pct}%</span>
+                          </div>
+                          <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full transition-all"
+                              style={{ width: `${pct}%`, backgroundColor: p?.color ?? "#3b82f6" }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
