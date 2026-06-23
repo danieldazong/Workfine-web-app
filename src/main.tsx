@@ -12,7 +12,6 @@ import App from "./App.tsx";
 import "./index.css";
 import "./styles/scrollbar.css";
 
-
 // Fires once at app boot, result discarded, errors silenced.
 getDocs(query(collection(getFirestore(app), "_warmup"), limit(1))).catch(
   () => {}

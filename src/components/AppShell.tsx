@@ -18,7 +18,7 @@ import { useAppData } from '../context/AppDataContext';
 const MEMBER_ONLY_PATHS = ['/', '/dashboard', '/insights', '/team', '/workspace', '/calendar'];
 
 export default function AppShell() {
-  const { isGuestView, workspaceData } = useAppData();
+      const { isGuestView, workspaceData, loading, members } = useAppData();
   const { user } = useAuth();
   const location = useLocation();
 
@@ -92,10 +92,25 @@ export default function AppShell() {
     MEMBER_ONLY_PATHS.includes(location.pathname) ||
     location.pathname.startsWith('/workspace/');
 
+    // Only enforce the guest redirect AFTER workspace data has resolved.
+    // During auth/workspace warmup, membership is briefly unknown, which can
+    // momentarily flip isGuestView true and cause a one-frame bounce. Waiting
+    // for !loading prevents that flicker so a real owner lands on /workspace.
+        // Only enforce the guest redirect once the user's REAL workspace has fully
+    // resolved. During the self-heal warmup, `loading` briefly flips false on
+    // the corrupted workspace (before workspaceId switches to personal_<uid>),
+    // which momentarily makes isGuestView true and would bounce a real owner to
+    // /my-tasks via replace(). Requiring resolved workspaceData + at least one
+    // member guarantees we're past warmup and on the healed workspace, so a
+    // genuine owner lands on /workspace. True external guests still get
+    // redirected because for them isGuestView stays true after resolution.
+    const workspaceResolved = !loading && !!workspaceData && members.length > 0;
 
-    if (isGuestView && isMemberOnlyPath) {
+    if (workspaceResolved && isGuestView && isMemberOnlyPath) {
     return <Navigate to="/my-tasks" replace />;
   }
+
+
 
     return (
     <div className="flex flex-col flex-1 h-full w-full overflow-hidden">
@@ -143,12 +158,22 @@ export default function AppShell() {
             </div>
 
             <div className="px-6 pb-6 pt-4">
-              <button
-                onClick={() => window.location.reload()}
-                className="w-full py-3 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-colors"
-              >
-                Close
-              </button>
+                            <button
+  onClick={() => {
+    // Removed users are returned to their OWN Workspace page. A hard navigation
+    // to /workspace guarantees a clean reload so AuthContext self-heals the
+    // corrupted workspaceId back to personal_<uid> before the page renders.
+    // Because the user is the active owner/member of their own personal
+    // workspace, isGuestView is false, so the AppShell member-only guard does
+    // NOT bounce them — they land on /workspace as intended.
+    window.location.replace('/workspace');
+  }}
+  className="w-full py-3 bg-violet-600 text-white rounded-xl text-sm font-semibold hover:bg-violet-700 transition-colors"
+>
+  Close
+</button>
+
+
             </div>
           </div>
 
@@ -165,3 +190,6 @@ export default function AppShell() {
 }
 
 
+
+
+export const PROOF_MARKER_77 = 'proof77';
