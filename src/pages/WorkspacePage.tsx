@@ -42,6 +42,12 @@ import {
 } from "firebase/firestore";
 import { useEffect } from "react";
 import { subscribeToProjects } from "../lib/firebase/projects";
+import {
+  monogramGradient as sharedMonogramGradient,
+  monogramInitials as sharedMonogramInitials,
+  monogramSeed as sharedMonogramSeed,
+  resolveAvatarPhoto as sharedResolveAvatarPhoto,
+} from "../lib/monogram";
 import { useAppData } from "../context/AppDataContext";
 import InviteMemberModal from "../components/InviteMemberModal";
 import CreateProjectModal from "../components/CreateProjectModal";
@@ -2424,13 +2430,29 @@ function normalizeEmailLocal(email?: string | null): string {
 }
 
 function SharedWithMeTab() {
+  const navigate = useNavigate();
   const { user, workspaceId, personalWorkspaceId } = useAuth();
   const myEmailLower = normalizeEmailLocal(user?.email);
 
-  const [rows, setRows] = useState<
-    { workspaceId: string; name: string; taskTitle: string }[]
+
+   const [rows, setRows] = useState<
+    {
+      workspaceId: string;
+      name: string;
+      taskTitle: string;
+      ownerId: string;
+      ownerName: string;
+      ownerEmail: string;
+    }[]
   >([]);
   const [loading, setLoading] = useState(true);
+
+  // Live owner photos, keyed by ownerId — read from users/{ownerId} so the
+  // card avatar updates in real time when the owner changes their photo,
+  // exactly like the Conversations comment avatars.
+  // exactly like the Conversations comment avatars.
+  const [ownerPhotoMap, setOwnerPhotoMap] = useState<Record<string, string>>({});
+
 
   // Which external workspace is selected in the right panel.
   const [selectedId, setSelectedId] = useState<string>("");
@@ -2470,24 +2492,46 @@ function SharedWithMeTab() {
           candidateIds.add(wid);
         });
 
-        const resolved: { workspaceId: string; name: string; taskTitle: string }[] =
-          [];
+        const resolved: {
+  workspaceId: string;
+  name: string;
+  taskTitle: string;
+  ownerId: string;
+  ownerName: string;
+  ownerEmail: string;
+}[] = [];
         for (const wid of candidateIds) {
-          let name = wid;
+                    let name = wid;
           let isExternal = true;
+          let ownerId = "";
+          let ownerName = "";
+          let ownerEmail = "";
           try {
             const wsSnap = await fsGetDoc(fsDoc(db, "workspaces", wid));
             if (wsSnap.exists()) {
               const wd = wsSnap.data() as any;
               name = String(wd.name || wid);
+              ownerId = String(wd.ownerId || "");
+              ownerName = String(wd.ownerName || wd.ownerDisplayName || "");
+              ownerEmail = String(
+                wd.ownerEmail || wd.ownerEmailLower || ""
+              ).toLowerCase();
               if (wd.ownerId === user.uid) isExternal = false;
             }
           } catch {
             // keep id as label
           }
           if (isExternal) {
-            resolved.push({ workspaceId: wid, name, taskTitle: "Workspace member" });
+            resolved.push({
+              workspaceId: wid,
+              name,
+              taskTitle: "Workspace member",
+              ownerId,
+              ownerName,
+              ownerEmail,
+            });
           }
+
         }
 
         setRows(resolved);
@@ -2506,6 +2550,50 @@ function SharedWithMeTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, myEmailLower]);
 
+    // Subscribe live to every workspace owner's users/{ownerId} doc so the card
+  // avatar shows their CURRENT photo and updates in real time — same source
+  // (users/{uid}.photoURL) and same Firebase-Storage-only policy the
+  // Conversations feed uses.
+  useEffect(() => {
+    const ownerIds = Array.from(
+      new Set(rows.map((r) => r.ownerId).filter(Boolean))
+    );
+    if (ownerIds.length === 0) {
+      setOwnerPhotoMap({});
+      return;
+    }
+
+    const unsubs = ownerIds.map((oid) =>
+      fsOnSnapshot(
+        fsDoc(db, "users", oid),
+        (snap) => {
+          const u = (snap.exists() ? snap.data() : {}) as any;
+          const raw = String(
+            u.photoURL ||
+              u.avatarUrl ||
+              u.googlePhotoURL ||
+              u.providerPhotoURL ||
+              ""
+          ).trim();
+          const real = raw.includes("firebasestorage") ? raw : "";
+          setOwnerPhotoMap((prev) => {
+            if (prev[oid] === real) return prev;
+            return { ...prev, [oid]: real };
+          });
+        },
+        (err) => {
+          console.warn(
+            "[SharedWithMeTab] owner photo listener:",
+            oid,
+            (err as any)?.message || err
+          );
+        }
+      )
+    );
+
+        return () => unsubs.forEach((u) => u && u());
+  }, [rows]);
+
   // Load the selected workspace's projects into the right panel.
   useEffect(() => {
     if (!selectedId) {
@@ -2519,6 +2607,7 @@ function SharedWithMeTab() {
     });
     return () => unsub();
   }, [selectedId]);
+
 
   const selectedRow = rows.find((r) => r.workspaceId === selectedId) || null;
   const curated = panelProjects.filter((p: any) => p?.pinnedToWorkspace === true);
@@ -2565,12 +2654,39 @@ function SharedWithMeTab() {
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg flex-shrink-0"
-                      style={{ background: monogramGradient(r.name) }}
-                    >
-                      {String(r.name || "W").charAt(0).toUpperCase()}
-                    </div>
+                                        {(() => {
+                      // Owner person-avatar — same seed + live photo source as
+                      // the Conversations comment avatars.
+                      const seed = sharedMonogramSeed(r.ownerEmail, r.ownerName);
+                      const livePhoto = sharedResolveAvatarPhoto(
+                        ownerPhotoMap[r.ownerId]
+                      );
+                      return (
+                        <div className="relative w-10 h-10 flex-shrink-0">
+                          <div
+                            className="absolute inset-0 w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm select-none"
+                            style={{
+                              background: sharedMonogramGradient(seed),
+                              letterSpacing: "0.02em",
+                            }}
+                          >
+                            {sharedMonogramInitials(r.ownerName, r.ownerEmail)}
+                          </div>
+                          {livePhoto ? (
+                            <img
+                              src={livePhoto}
+                              alt={r.ownerName || r.name}
+                              referrerPolicy="no-referrer"
+                              className="absolute inset-0 w-10 h-10 rounded-xl object-cover"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.display =
+                                  "none";
+                              }}
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-gray-900 truncate">
                         {r.name}
@@ -2631,12 +2747,28 @@ function SharedWithMeTab() {
                           : total > 0
                             ? Math.round((done / total) * 100)
                             : 0;
-                      return (
+                                            return (
                         <div
                           key={p.id}
-                          className="border border-gray-200 rounded-xl p-3"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() =>
+                            navigate(`/projects/${p.id}`, {
+                              state: { prefetchedProject: p },
+                            })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              navigate(`/projects/${p.id}`, {
+                                state: { prefetchedProject: p },
+                              });
+                            }
+                          }}
+                          className="border border-gray-200 rounded-xl p-3 cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all group"
                         >
                           <div className="flex items-center gap-2 mb-2">
+
                             <div
                               className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
                               style={{ backgroundColor: p?.color ?? "#3b82f6" }}

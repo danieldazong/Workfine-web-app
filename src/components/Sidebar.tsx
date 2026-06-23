@@ -3,8 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
+import {
+  collectionGroup,
+  query as fsQuery,
+  where as fsWhere,
+  onSnapshot as fsOnSnapshot,
+  limit as fsLimit,
+} from "firebase/firestore";
+import { db } from "../lib/firebase/config";
+import { subscribeToProjects } from "../lib/firebase/projects";
 import {
   LayoutDashboard,
   BarChart2,
@@ -109,6 +118,80 @@ export default function Sidebar() {
           project.collaboratorUids.includes(user.uid)))
     );
   }
+    // ── Externally-shared workspaces' projects ──────────────────────────────
+  // Self-contained: the sidebar loads these directly so it never depends on
+  // the "Shared with me" tab. Reuses the SAME members collection-group query
+  // and subscribeToProjects listener that the tab uses.
+  const [externalWorkspaceIds, setExternalWorkspaceIds] = useState<string[]>([]);
+  const [externalProjects, setExternalProjects] = useState<any[]>([]);
+
+  const myOwnWorkspaceIds = useMemo(
+    () =>
+      new Set(
+        [personalWorkspaceId, user?.uid ? `personal_${user.uid}` : ""].filter(
+          Boolean
+        ) as string[]
+      ),
+    [personalWorkspaceId, user?.uid]
+  );
+
+  // Find external workspaces where I'm an active member (not my own).
+  useEffect(() => {
+    if (!user?.uid) {
+      setExternalWorkspaceIds([]);
+      return;
+    }
+
+    const membersQuery = fsQuery(
+      collectionGroup(db, "members"),
+      fsWhere("userId", "==", user.uid),
+      fsLimit(200)
+    );
+
+    const unsub = fsOnSnapshot(
+      membersQuery,
+      (snap) => {
+        const ids = new Set<string>();
+        snap.docs.forEach((d) => {
+          const data = d.data() as any;
+          const status = String(data.status || "active").toLowerCase();
+          if (status !== "active") return;
+          const wid = String(data.workspaceId || "").trim();
+          if (!wid) return;
+          if (myOwnWorkspaceIds.has(wid)) return;
+          ids.add(wid);
+        });
+        setExternalWorkspaceIds(Array.from(ids));
+      },
+      (err) => {
+        console.warn("[Sidebar] external members listener:", err.message);
+      }
+    );
+
+    return () => unsub();
+  }, [user?.uid, myOwnWorkspaceIds]);
+
+  // Subscribe to each external workspace's projects and merge them.
+  useEffect(() => {
+    if (externalWorkspaceIds.length === 0) {
+      setExternalProjects([]);
+      return;
+    }
+
+    const byWorkspace: Record<string, any[]> = {};
+    const unsubs = externalWorkspaceIds.map((wid) =>
+      subscribeToProjects(wid, (list) => {
+        byWorkspace[wid] = (Array.isArray(list) ? list : []).filter(
+          (p: any) => p?.pinnedToWorkspace === true
+        );
+        const merged = Object.values(byWorkspace).flat();
+        setExternalProjects(merged);
+      })
+    );
+
+    return () => unsubs.forEach((u) => u && u());
+  }, [externalWorkspaceIds]);
+
 
   const { privateProjects, sharedProjects } = useMemo(() => {
     const privateList: any[] = [];
@@ -157,11 +240,34 @@ export default function Sidebar() {
       return bt - at;
     });
 
+        // Append externally-shared (curated) projects from other workspaces,
+    // de-duplicated against what's already in the shared list.
+    const sharedSeen = new Set(
+      sharedList.map(
+        (p: any) =>
+          `${p.workspaceId || p.projectWorkspaceId || p.sourceWorkspaceId || ""}:${p.id}`
+      )
+    );
+
+        (Array.isArray(externalProjects) ? externalProjects : []).forEach((p: any) => {
+      const wid =
+        p.workspaceId || p.projectWorkspaceId || p.sourceWorkspaceId || "";
+      const key = `${wid}:${p.id}`;
+      if (sharedSeen.has(key)) return;
+      sharedSeen.add(key);
+      // Mark as read-only: these belong to another owner's workspace, so the
+      // guest must never see Edit/Delete on them. Backend rules already block
+      // the action; this hides the kebab for correct UX.
+      sharedList.push({ ...p, __isExternalReadOnly: true });
+    });
+
+
     return {
       privateProjects: privateList,
       sharedProjects: sharedList,
     };
-  }, [projects, workspaceId, effectivePersonalWorkspaceId, user?.uid]);
+  }, [projects, workspaceId, effectivePersonalWorkspaceId, user?.uid, externalProjects]);
+
 
 
     // Opens the reusable ConfirmDialog instead of the native browser confirm().
@@ -398,14 +504,21 @@ function SidebarContent({
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
 
 
-  function renderProject(project: any) {
+    function renderProject(project: any) {
     const privateProject = isPrivateProject(project);
 
-    const canDeleteThisProject = privateProject
-      ? isProjectOwner(project)
-      : canDeleteSharedProjects;
+    // Projects shared from another owner's workspace are read-only for guests:
+    // never show Edit/Delete (and the backend rules block it anyway).
+    const isExternalReadOnly = project.__isExternalReadOnly === true;
 
-    const canEditThisProject = canEditProject(project);
+    const canDeleteThisProject = isExternalReadOnly
+      ? false
+      : privateProject
+        ? isProjectOwner(project)
+        : canDeleteSharedProjects;
+
+    const canEditThisProject = isExternalReadOnly ? false : canEditProject(project);
+
 
     const rowKey = `${project.workspaceId || project.projectWorkspaceId || ""}:${project.id}`;
     const menuOpen = openMenuKey === rowKey;
