@@ -1166,9 +1166,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
 
   // True guest = on own personal workspace, has shared tasks, and is NOT a
-  // recognized member/owner of this workspace.
+  // recognized member/owner of this workspace. (FIX)
   const isGuestView =
   !isOnOwnPersonalWorkspace && !isWorkspaceMember;
+
+
+
 
 
 
