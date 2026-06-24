@@ -221,6 +221,22 @@ const emptyTask = () => ({
   assigneeId: "", assigneeEmail: "",
 });
 
+// ─── Note color palette (MUST match NOTE_COLORS in src/components/TakeANote.tsx)
+// GLOBAL: same keys/values for every account so the Dashboard "My Notes" card
+// shows the exact soft color the user picked in the Take-a-note panel.
+const NOTE_CARD_COLORS: Record<string, { bg: string; border: string }> = {
+  yellow: { bg: "#FFF8C5", border: "#FCE38A" },
+  pink:   { bg: "#FCE4EC", border: "#F8BBD0" },
+  blue:   { bg: "#E3F2FD", border: "#BBDEFB" },
+  green:  { bg: "#E8F5E9", border: "#C8E6C9" },
+  purple: { bg: "#EDE7F6", border: "#D1C4E9" },
+  gray:   { bg: "#F3F4F6", border: "#E5E7EB" },
+};
+
+// Default matches DEFAULT_COLOR_KEY ("pink") in TakeANote.tsx. Falls back
+// safely for any legacy note that has no `color` field.
+const noteCardColor = (key?: string): { bg: string; border: string } =>
+  NOTE_CARD_COLORS[String(key || "pink")] || NOTE_CARD_COLORS.pink;
 
 
 const DashboardPage = () => {
@@ -1176,25 +1192,30 @@ const DashboardPage = () => {
               <span className="text-xs text-gray-400">{notes.length} notes</span>
             </div>
                                                             {notes.length > 0 ? (
-              <div className="space-y-2 max-h-[160px] overflow-y-auto">
-                {notes.slice(0,5).map(n => (
-                  <div key={n.id}
-                       onClick={() =>
-                         window.dispatchEvent(
-                           new CustomEvent("open-note-panel", {
-                             detail: { noteId: n.id },
-                           })
-                         )
-                       }
-                       className="py-1.5 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50 rounded-lg px-2 -mx-2 transition-colors">
-                    <p className="text-xs font-medium text-gray-700 truncate">
-                      {String(n.title ?? "Untitled")}
-                    </p>
-                    <p className="text-[10px] text-gray-400 truncate mt-0.5">
-                      {String(n.content ?? n.body ?? "")}
-                    </p>
-                  </div>
-                ))}
+                            <div className="space-y-2 max-h-[150px] overflow-y-auto overflow-x-hidden pr-1 wf-scroll">
+                                {notes.map(n => {
+                  const nc = noteCardColor((n as any).color);
+                  return (
+                    <div key={n.id}
+                         onClick={() =>
+                           window.dispatchEvent(
+                             new CustomEvent("open-note-panel", {
+                               detail: { noteId: n.id },
+                             })
+                           )
+                         }
+                         className="py-1.5 border last:border rounded-lg px-2 cursor-pointer transition-shadow hover:shadow-sm"
+                         style={{ backgroundColor: nc.bg, borderColor: nc.border }}>
+                      <p className="text-xs font-medium text-gray-800 truncate">
+                        {String(n.title ?? "Untitled")}
+                      </p>
+                      <p className="text-[10px] text-gray-600 truncate mt-0.5">
+                        {String(n.content ?? n.body ?? "")}
+                      </p>
+                    </div>
+                  );
+                })}
+
               </div>
             ) : (
               <div className="h-[120px] flex flex-col items-center justify-center">
