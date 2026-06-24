@@ -69,6 +69,7 @@
      GLOBAL: add className="wf-scroll" to ANY scrollable container (My Notes,
      Upcoming Tasks, Team Members, Project Progress, etc.) for one consistent,
      on-brand scrollbar. Indigo (#4C28EE) thumb matches the app accent.
+     Purely cosmetic — no layout, markup, or design change. 
      Purely cosmetic — no layout, markup, or design change. */
   .wf-scroll {
     scrollbar-width: thin;                 /* Firefox */
