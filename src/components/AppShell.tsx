@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
+import DueAlertHost from "./DueAlertHost";
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, Navigate } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
@@ -10,6 +10,7 @@ import { db } from '../lib/firebase/config';
 import { useAuth } from '../context/AuthContext';
 import Navbar from './Navbar';
 import { useAppData } from '../context/AppDataContext';
+
 
 
 
@@ -185,6 +186,12 @@ export default function AppShell() {
           `}</style>
         </div>
       )}
+
+      {/* GLOBAL: in-app "task time elapsed" popup host. Listens for the
+          "wf-due-elapsed" event fired by DueCountdown the instant a task's
+          deadline passes, and shows a small bottom-right popup. Pure UI,
+          no Firestore, no protected-region logic. */}
+      <DueAlertHost />
     </div>
   );
 }

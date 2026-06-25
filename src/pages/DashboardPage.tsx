@@ -13,6 +13,8 @@ import {
 import CreateProjectModal from "../components/CreateProjectModal";
 import { getOverdueTasks } from "../utils/overdueUtils";
 import { FolderKanban } from "lucide-react";
+import DueCountdown from "../components/DueCountdown";
+
 
 
 
@@ -780,7 +782,7 @@ const DashboardPage = () => {
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5">
+                                            <div className="flex items-center gap-2 mt-0.5">
                         {projName && (
                           <p className="text-[10px] text-gray-400 truncate">{projName}</p>
                         )}
@@ -789,7 +791,15 @@ const DashboardPage = () => {
                             📅 {fmtDate((t as any).dueDate)}
                           </p>
                         )}
+                        {(t as any).dueDate && (
+                          <DueCountdown
+                            dueDate={(t as any).dueDate}
+                            dueTime={(t as any).dueTime}
+                            status={(t as any).status}
+                          />
+                        )}
                       </div>
+
                     </div>
                   );
                 })}

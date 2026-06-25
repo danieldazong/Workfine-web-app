@@ -32,6 +32,7 @@ src\hooks\usePresenceHeartbeat.ts
 src\lib\monogram.ts
 src\lib\projectAccess.ts
 src\lib\taskAccessLabels.ts
+src\lib\taskVisibility.ts
 src\lib\utils.ts
 src\lib\firebase\auth.ts
 src\lib\firebase\cleanup.ts

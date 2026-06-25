@@ -22,6 +22,7 @@ import { db } from "../lib/firebase/config";
 import { useAuth } from "./AuthContext";
 import { subscribeToProjects } from "../lib/firebase/projects";
 import { Project } from "../types";
+import { isTaskVisibleToUser } from "../lib/taskVisibility";
 
 interface Task {
   id: string;
@@ -1307,39 +1308,89 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   // True guest = on own personal workspace, has shared tasks, and is NOT a
   // recognized member/owner of this workspace. (FIX)
-  const isGuestView =
-  !isOnOwnPersonalWorkspace && !isWorkspaceMember;
+    const isGuestView =
+    isOnOwnPersonalWorkspace && hasSharedTasks && !isWorkspaceMember;
+
     // GLOBAL: merge externally-shared projects/tasks into the app-wide arrays so
   // Navbar search (and any consumer) finds them. De-duped by composite id; the
   // existing (canonical) entry wins on collision. Read-only merge — does NOT
   // change guest-view logic, membership logic, or any write path.
   const mergedProjects = React.useMemo(() => {
     const map = new Map<string, Project>();
+
+    // READ-PATH SCOPING (global): only merge external projects this user can
+    // actually access. Private projects must belong to the user; workspace
+    // projects are allowed (they were already gated by membership to even be
+    // subscribed). Mirrors the existing canAccessWorkspaceProject intent
+    // WITHOUT changing any role/permission write logic.
+    const isExternalAccessible = (p: any): boolean => {
+      const isPrivate =
+        p?.visibility === "private" ||
+        p?.projectScope === "private" ||
+        p?.isPrivateProject === true;
+
+      if (!isPrivate) return true; // shared workspace project
+
+      // Private external project: only if the user owns / collaborates on it.
+      return (
+        p?.createdBy === uid ||
+        p?.ownerId === uid ||
+        p?.uid === uid ||
+        (Array.isArray(p?.memberIds) && p.memberIds.includes(uid)) ||
+        (Array.isArray(p?.collaboratorUids) && p.collaboratorUids.includes(uid))
+      );
+    };
+
     (Array.isArray(sharedExternalProjects) ? sharedExternalProjects : []).forEach(
       (p: any) => {
-        const key = `${p.workspaceId || ""}:${p.id}`;
-        if (p?.id) map.set(key, p);
+        if (p?.id && isExternalAccessible(p)) {
+          const key = `${p.workspaceId || ""}:${p.id}`;
+          map.set(key, p);
+        }
       }
     );
+
     (Array.isArray(projects) ? projects : []).forEach((p: any) => {
       const key = `${p.workspaceId || ""}:${p.id}`;
       if (p?.id) map.set(key, p); // canonical wins
     });
+
     return Array.from(map.values());
-  }, [projects, sharedExternalProjects]);
+  }, [projects, sharedExternalProjects, uid]);
+
 
   const mergedTasks = React.useMemo(() => {
     const map = new Map<string, Task>();
+
+    // READ-PATH SCOPING (global): externally-merged workspace tasks must be
+    // filtered by what THIS user is allowed to see, exactly like the canonical
+    // `tasks` array already is. Without this, every member sees the whole
+    // external workspace's tasks (the leak). We DO NOT touch role/invite logic.
+    const myEmailLower = String(user?.email || "").trim().toLowerCase();
+    const accessibleProjectIds = new Set(
+      (Array.isArray(projects) ? projects : [])
+        .map((p: any) => String(p?.id || "").trim())
+        .filter(Boolean)
+    );
+    const ctx = { uid, email: myEmailLower, accessibleProjectIds };
+
     (Array.isArray(sharedExternalTasks) ? sharedExternalTasks : []).forEach(
       (t: any) => {
-        if (t?.id) map.set(String(t.id), t);
+        if (t?.id && isTaskVisibleToUser(t, ctx)) {
+          map.set(String(t.id), t);
+        }
       }
     );
+
+    // `tasks` is already permission-filtered by publishAccessibleData(); keep it
+    // canonical so it always wins on id collision.
     (Array.isArray(tasks) ? tasks : []).forEach((t: any) => {
-      if (t?.id) map.set(String(t.id), t); // canonical wins
+      if (t?.id) map.set(String(t.id), t);
     });
+
     return Array.from(map.values());
-  }, [tasks, sharedExternalTasks]);
+  }, [tasks, sharedExternalTasks, projects, uid, user?.email]);
+
 
 
 

@@ -16,6 +16,8 @@ import { db } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
 import TaskDetailPanel from "../components/TaskDetailPanel";
+import DueCountdown from "../components/DueCountdown";
+
 
 // ─── Types ────────────────────────────────────────────────────────────────
 type TaskStatus = "To Do" | "In Progress" | "In Review" | "Done";
@@ -47,8 +49,10 @@ interface TaskForm {
   priority: TaskPriority;
   assignee: string;
   dueDate: string;
+  dueTime: string;
   description: string;
 }
+
 
 const STATUS_COLUMNS = ["To Do", "In Progress", "In Review", "Done"] as const;
 
@@ -78,8 +82,10 @@ const emptyTask = (): TaskForm => ({
   priority: "Medium",
   assignee: "",
   dueDate: "",
+  dueTime: "",
   description: "",
 });
+
 
 function getTimeMs(value: any): number {
   if (!value) return 0;
@@ -452,14 +458,16 @@ const ProjectPage = () => {
     if (!canEditProjectContent) return;
 
     setEditTask(task);
-    setForm({
+        setForm({
       title: task.title || "",
       status: task.status || "To Do",
       priority: task.priority || "Medium",
       assignee: task.assignee || "",
       dueDate: task.dueDate || "",
+      dueTime: (task as any).dueTime || "",
       description: task.description || "",
     });
+
     setShowModal(true);
   };
 
@@ -895,22 +903,36 @@ const ProjectPage = () => {
                     )}
                   </div>
 
-                  <span
-                    className={`text-xs ${
-                      task.dueDate &&
-                      new Date(task.dueDate) < new Date() &&
-                      task.status !== "Done"
-                        ? "text-red-500 font-medium"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    {task.dueDate
-                      ? new Date(task.dueDate + "T12:00:00").toLocaleDateString(
-                          "en-US",
-                          { month: "short", day: "numeric" }
-                        )
-                      : "—"}
-                  </span>
+                                    <div className="flex flex-col items-start gap-1">
+                    <span
+                      className={`text-xs ${
+                        task.dueDate &&
+                        new Date(task.dueDate) < new Date() &&
+                        task.status !== "Done"
+                          ? "text-red-500 font-medium"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      {task.dueDate
+                        ? new Date(
+                            task.dueDate + "T12:00:00"
+                          ).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })
+                        : "—"}
+                    </span>
+
+                    {/* Live countdown chip — augments the date, never replaces it. */}
+                    <DueCountdown
+  dueDate={task.dueDate}
+  dueTime={(task as any).dueTime}
+  status={task.status}
+  title={task.title}
+/>
+
+                  </div>
+
 
                                     {canEditProjectContent && (
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1025,16 +1047,26 @@ const ProjectPage = () => {
                             {task.priority}
                           </span>
 
-                          {task.dueDate && (
-                            <span className="text-xs text-gray-400">
-                              {new Date(
-                                task.dueDate + "T12:00:00"
-                              ).toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                              })}
+                                                    {task.dueDate && (
+                            <span className="flex items-center gap-1.5">
+                              <span className="text-xs text-gray-400">
+                                {new Date(
+                                  task.dueDate + "T12:00:00"
+                                ).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                })}
+                              </span>
+                              <DueCountdown
+  dueDate={task.dueDate}
+  dueTime={(task as any).dueTime}
+  status={task.status}
+  title={task.title}
+/>
+
                             </span>
                           )}
+
                         </div>
 
                         {task.assignee && (
@@ -1193,7 +1225,7 @@ const ProjectPage = () => {
                   />
                 </div>
 
-                <div>
+                                <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
                     Due Date
                   </label>
@@ -1206,7 +1238,20 @@ const ProjectPage = () => {
                     }
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+
+                  {/* Optional reminder time. Kept SEPARATE from dueDate so the
+                      existing "T12:00:00" date parsing is never affected. */}
+                  <input
+                    type="time"
+                    value={form.dueTime}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, dueTime: e.target.value }))
+                    }
+                    className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Optional time"
+                  />
                 </div>
+
               </div>
             </div>
 

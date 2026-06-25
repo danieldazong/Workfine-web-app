@@ -30,6 +30,8 @@
     Task as DetailTask,
   } from "../components/TaskDetailPanel";
   import ConfirmDialog from "../components/ConfirmDialog";
+  import DueCountdown from "../components/DueCountdown";
+
 
 
   type FilterType =
@@ -1473,7 +1475,7 @@
                           <span className="text-xs text-gray-300">·</span>
                         )}
 
-                        {task.dueDate && (
+                                                {task.dueDate && (
                           <p
                             className={`text-xs ${
                               overdueIds.has(task.id)
@@ -1484,6 +1486,15 @@
                             Due: {formatDueDate(task.dueDate)}
                           </p>
                         )}
+
+                        {task.dueDate && (
+                          <DueCountdown
+                            dueDate={task.dueDate}
+                            dueTime={(task as any).dueTime}
+                            status={task.status}
+                          />
+                        )}
+
 
                         {shared && task.sharedByName && (
                           <>
