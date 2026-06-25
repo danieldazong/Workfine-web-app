@@ -3114,12 +3114,43 @@ function formatFullLocalDateTime(timestamp: any): string {
     // GLOBAL: the viewer is a "task guest" only when they are NOT a real
     // workspace member/owner AND a share grants them access. Defined here so
     // both currentGuestShareId and currentGuestRole can rely on it.
-    const isTaskGuest =
-      Boolean(currentUserShare) &&
-      !currentWorkspaceMember &&
-      !isWorkspaceOwner &&
-      !isTaskOwner &&
-      !isProjectOwner;
+        // GLOBAL: A share-accessed user's guestRole is the source of truth for
+    // THIS task, even if they also hold a workspace member doc (every invitee
+    // is auto-added as a "member" on accept). Only true owners/admins of THIS
+    // task's workspace, the task owner, or the project owner are exempt.
+    // GLOBAL FIX: a "manager here" must be an owner/admin of THIS task's
+    // workspace, verified via the workspace member list (currentWorkspaceMember).
+    // The standalone isWorkspaceOwner reads appData.workspaceData, which for a
+    // guest is THEIR OWN default workspace — so it must NOT be trusted here.
+    // A guest who only holds a share is never in this workspace's member list
+    // as owner/admin, so they are correctly treated as a guest.
+      // GLOBAL FIX: appData (members, workspaceData, currentWorkspaceRole) always
+    // describes the SIGNED-IN user's OWN workspace — NOT necessarily this task's
+    // workspace. A guest viewing a shared task from another workspace is the
+    // "owner" of their own workspace, which previously leaked in here and made
+    // them a false manager. We therefore only trust the owner/admin role when
+    // this task actually belongs to the user's active workspace.
+    const taskBelongsToMyWorkspace =
+      Boolean(taskWorkspaceId) &&
+      Boolean(workspaceId) &&
+      String(taskWorkspaceId) === String(workspaceId);
+
+    const isWorkspaceManagerHere =
+      taskBelongsToMyWorkspace &&
+      Boolean(currentWorkspaceMember) &&
+      (currentWorkspaceRole === "owner" || currentWorkspaceRole === "admin");
+
+
+
+   
+
+const isTaskGuest =
+  Boolean(currentUserShare) &&
+  !isWorkspaceManagerHere &&
+  !isTaskOwner &&
+  !isProjectOwner;
+
+
 
     // GLOBAL: the signed-in guest's OWN share-doc id. Stamped onto every
     // comment this user creates so firestore.rules can verify their access
@@ -3223,6 +3254,61 @@ function formatFullLocalDateTime(timestamp: any): string {
 
     const canReplyToCommentsFinal =
       canCommentOnTaskFinal && taskParticipantCount > 1;
+          useEffect(() => {
+      if (!user?.uid) return;
+      console.log("[VIEWER DEBUG]", {
+        myUid: user.uid,
+        myEmail: user.email,
+        taskSharesCount: taskShares.length,
+        shares: taskShares.map((s) => ({
+          id: s.id,
+          guestRole: s.guestRole,
+          sharedWithEmail: s.sharedWithEmail,
+          invitedEmail: s.invitedEmail,
+          acceptedByEmail: s.acceptedByEmail,
+          acceptedByUid: s.acceptedByUid,
+          status: s.status,
+        })),
+                currentUserShareId: currentUserShare?.id || null,
+        currentUserShareRole: currentUserShare?.guestRole || null,
+        isTaskGuest,
+        isGuestViewer,
+             isWorkspaceManagerHere,
+        taskBelongsToMyWorkspace,
+        taskWorkspaceId,
+        workspaceId,
+        isWorkspaceOwner,
+
+        isTaskOwner,
+        isProjectOwner,
+        currentWorkspaceRole,
+        isWorkspaceMemberRole,
+        canCommentOnTask,
+        canCommentOnTaskFinal,
+        canUseCommentComposerFinal,
+      });
+
+        }, [
+      user?.uid,
+      taskShares,
+      currentUserShare,
+      isTaskGuest,
+      isGuestViewer,
+           isWorkspaceManagerHere,
+        taskBelongsToMyWorkspace,
+        taskWorkspaceId,
+        workspaceId,
+        isWorkspaceOwner,
+      isTaskOwner,
+      isProjectOwner,
+      currentWorkspaceRole,
+      isWorkspaceMemberRole,
+      canCommentOnTask,
+      canCommentOnTaskFinal,
+      canUseCommentComposerFinal,
+    ]);
+
+
 
 
 
