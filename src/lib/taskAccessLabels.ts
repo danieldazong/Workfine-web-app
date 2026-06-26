@@ -26,11 +26,12 @@ export const GUEST_ROLE_LABELS: Record<
     short: "Can comment",
     description: "Can read, comment, like and copy. Cannot edit the task.",
   },
-  viewer: {
+    viewer: {
     label: "Viewer",
     short: "View only",
-    description: "Read-only. Cannot comment, like, copy or edit.",
+    description: "Read-only. Cannot comment, like, copy or edit, Cannot Delete.",
   },
+
 };
 
 /** SCOPE — who is allowed to open this task at all. */

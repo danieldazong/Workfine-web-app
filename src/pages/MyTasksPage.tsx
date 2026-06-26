@@ -25,6 +25,8 @@
 
 
   import { db } from "../lib/firebase/config";
+    import { normalizeGuestRole } from "../lib/taskAccessLabels";
+
   import { getOverdueTasks } from "../utils/overdueUtils";
    import TaskDetailPanel, {
     Task as DetailTask,
@@ -138,6 +140,25 @@
     })();
 
     const isViewerOnly = myRole === "viewer";
+         // Holds the resolved guest role per shared task: { [taskId]: "viewer" | "commenter" }
+    const [sharedRoleById, setSharedRoleById] = useState<Record<string, string>>(
+      {}
+    );
+
+    // Per-row read-only check. For SHARED tasks the workspace-level
+    // isViewerOnly does not apply (they live in another workspace), so the
+    // task's own guest role (resolved from its share doc) is the source of truth.
+    const isReadOnlyRow = (task: any): boolean => {
+      if (isViewerOnly) return true;
+      if (!isSharedTask(task)) return false;
+      const resolved = sharedRoleById[String(task.id || "")];
+      const rawRole =
+        resolved ?? task?.guestRole ?? task?.role ?? task?.accessRole ?? "";
+      if (!rawRole) return false; // unknown role → don't hide (safe default)
+      return normalizeGuestRole(rawRole) === "viewer";
+    };
+
+
 
     const location = useLocation();
     const navigate = useNavigate();
@@ -252,6 +273,64 @@
         );
       });
     }, [workspaceTasks, userTaskIndex, workspaceId]);
+        // Resolve each shared task's guest role from its share document, since the
+    // personal task copy in users/{uid}/tasks does not store the role.
+    useEffect(() => {
+      if (!user?.uid) return;
+
+      let cancelled = false;
+
+      const resolveRoles = async () => {
+        const shared = tasks.filter(
+          (t: any) => isSharedTask(t) && t.shareId && t.workspaceId
+        );
+        if (shared.length === 0) return;
+
+        const next: Record<string, string> = {};
+
+        await Promise.all(
+          shared.map(async (t: any) => {
+            const wsId = String(t.workspaceId || "").trim();
+            const canonicalId = String(
+              t.originalTaskId || t.sharedTaskId || t.taskId || t.id || ""
+            ).trim();
+            const shareId = String(t.shareId || "").trim();
+            if (!wsId || !canonicalId || !shareId) return;
+
+            try {
+              const shareSnap = await getDoc(
+                doc(
+                  db,
+                  "workspaces",
+                  wsId,
+                  "tasks",
+                  canonicalId,
+                  "shares",
+                  shareId
+                )
+              );
+              if (!shareSnap.exists()) return;
+              const s = shareSnap.data() as any;
+              const role =
+                s.role ?? s.guestRole ?? s.accessRole ?? s.permission ?? "";
+              if (role) next[String(t.id || "")] = String(role);
+            } catch {
+              // ignore — leave unknown (delete stays visible, safe default)
+            }
+          })
+        );
+
+        if (!cancelled && Object.keys(next).length > 0) {
+          setSharedRoleById((prev) => ({ ...prev, ...next }));
+        }
+      };
+
+      resolveRoles();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [tasks, user?.uid]);
 
 
       /**
@@ -1526,22 +1605,26 @@
                       {task.priority ?? "Low"}
                     </span>
 
-                                        {/* Delete */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        requestDeleteTask(task);
-                      }}
-                      className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none flex-shrink-0"
-                      title={
-                        shared
-                          ? "Remove from My Tasks"
-                          : "Delete task"
-                      }
-                    >
-                      &times;
-                    </button>
+                                                             {/* Delete — hidden for read-only Viewers (per-row) */}
+                    {!isReadOnlyRow(task) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          requestDeleteTask(task);
+                        }}
+                        className="text-gray-300 hover:text-red-400 transition-colors text-lg leading-none flex-shrink-0"
+                        title={
+                          shared
+                            ? "Remove from My Tasks"
+                            : "Delete task"
+                        }
+                      >
+                        &times;
+                      </button>
+                    )}
+
+
 
                   </div>
                 );

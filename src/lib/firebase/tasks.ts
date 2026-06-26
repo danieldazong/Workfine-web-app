@@ -176,9 +176,18 @@ export const taskService = {
 
 
 
-  async deleteTask(taskId: string, workspaceId?: string) {
-    if (!workspaceId) {
-      throw new Error("workspaceId is required to delete task");
+    // >>> PROTECTED FIX: VIEWER_NO_DELETE_GUARD — DO NOT MODIFY <<<
+  async deleteTask(
+    taskId: string,
+    workspaceId?: string,
+    opts?: { isViewer?: boolean }
+  ) {
+    // VIEWER_NO_DELETE_GUARD (global): a read-only Viewer can never delete a
+    // task they are a member of. firestore.rules already rejects this for any
+    // non-owner/admin, this is the matching client-side guard so the UI never
+    // even attempts the write. No behavior change for owners/admins/members.
+    if (opts?.isViewer === true) {
+      throw new Error("Viewers have read-only access and cannot delete tasks.");
     }
 
     const taskRef = doc(
@@ -191,6 +200,8 @@ export const taskService = {
 
     await deleteDoc(taskRef);
   },
+  // <<< END PROTECTED FIX: VIEWER_NO_DELETE_GUARD >>>
+
 };
 
 /**
