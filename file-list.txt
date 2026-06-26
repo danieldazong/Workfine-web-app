@@ -6,6 +6,8 @@ src\components\AppShell.tsx
 src\components\ChartWrapper.tsx
 src\components\ConfirmDialog.tsx
 src\components\CreateProjectModal.tsx
+src\components\DueAlertHost.tsx
+src\components\DueCountdown.tsx
 src\components\FloatingNoteButton.tsx
 src\components\InviteMemberModal.tsx
 src\components\Navbar.tsx
@@ -25,6 +27,7 @@ src\features\project\views\ProjectCalendarView.tsx
 src\features\project\views\ProjectListView.tsx
 src\features\project\views\ProjectTimelineView.tsx
 src\hooks\useConversations.ts
+src\hooks\useDueDateReminders.ts
 src\hooks\useMentionableUsers.ts
 src\hooks\useNotifications.ts
 src\hooks\usePageTitle.ts
