@@ -269,6 +269,16 @@ const ProjectPage = () => {
   // Kept for backward compatibility with existing references.
   const canEditProjectContent = canEditTasks;
   const canManageTasksHere = canEditTasks;
+    console.log("[REFRESH DEBUG]", {
+    uid: user?.uid,
+    workspaceOwnerId: workspaceData?.ownerId,
+    activeProjectWorkspaceId,
+    authWorkspaceId: workspaceId,
+    myRole,
+    canEditTasks,
+    canDeleteTasks,
+  });
+
 
 
 
