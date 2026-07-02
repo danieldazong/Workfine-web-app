@@ -192,39 +192,93 @@ const ProjectPage = () => {
   const myMembership = Array.isArray(members)
     ? members.find((member: any) => {
         const memberUid = member.userId || member.uid || member.id;
-        return !!user?.uid && memberUid === user.uid;
+        const memberEmail = String(
+          member.emailLower || member.email || member.emailAddress || ""
+        )
+          .trim()
+          .toLowerCase();
+        const currentEmail = String(user?.email || "").trim().toLowerCase();
+
+        // GLOBAL FIX: only match a membership that is genuinely ACTIVE. A
+        // removed/suspended/pending member doc must NOT grant an editing role,
+        // otherwise the client shows edit/delete icons that Firestore then
+        // rejects with "Missing or insufficient permissions".
+        const status = String(member.status || "").trim().toLowerCase();
+        if (status && status !== "active") return false;
+
+        return (
+          (!!user?.uid && memberUid === user.uid) ||
+          (!!currentEmail && memberEmail === currentEmail)
+        );
       })
     : null;
+
+  // GLOBAL FIX: distinguish "role not resolved yet" from "resolved as viewer".
+  // Until membership resolves (members still loading), treat the user as
+  // read-only so edit/delete icons never flash in and then throw a permission
+  // error. Owner is only trusted via the authoritative workspace owner id.
+  const roleResolved =
+    workspaceData?.ownerId === user?.uid || !!myMembership;
 
   const myRole = (
     workspaceData?.ownerId === user?.uid
       ? "owner"
       : String(myMembership?.role || "viewer").toLowerCase()
   ) as "owner" | "admin" | "member" | "viewer";
-
+  
+  
   const isProjectOwner =
     !!user?.uid &&
     ((activeProject as any)?.ownerId === user.uid ||
       (activeProject as any)?.createdBy === user.uid ||
       (activeProject as any)?.uid === user.uid);
 
+   // Role is the single source of truth. A workspace VIEWER or MEMBER can never
+  // edit/create/delete tasks in a workspace project — only owner/admin (or the
+  // genuine owner of a PRIVATE project) may. We deliberately do NOT let
+  // isProjectOwner or a stale permissions map override the workspace role,
+  // because that was the bug: members/viewers who created a task were being
+  // treated like owners.
   const isViewerOnly =
     myRole === "viewer" ||
     myMembership?.permissions?.canViewOnly === true;
 
-  const canEditProjectContent =
-    !isViewerOnly &&
-    (myRole === "owner" ||
-      myRole === "admin" ||
-      isProjectOwner ||
-      myMembership?.permissions?.canEdit === true ||
-      myMembership?.permissions?.canManageTasks === true);
+  const isMemberOnly = myRole === "member";
+
+  const isPrivateProject =
+    (activeProject as any)?.visibility === "private" ||
+    (activeProject as any)?.projectScope === "private" ||
+    (activeProject as any)?.isPrivateProject === true;
+
+   // ── Capability model (single source of truth = workspace role) ─────────
+  // owner/admin: full control.  member: create+edit+comment, NO delete.
+  // viewer: view + read comments only. Firestore rules are the real security
+  // boundary; this only governs what the UI offers.
+  const canCreateTasks =
+    roleResolved &&
+    (myRole === "owner" || myRole === "admin" || myRole === "member");
+
+  const canEditTasks =
+    roleResolved &&
+    (myRole === "owner" || myRole === "admin" || myRole === "member");
+
+  const canDeleteTasks =
+    roleResolved && (myRole === "owner" || myRole === "admin");
+
+
+  // Kept for backward compatibility with existing references.
+  const canEditProjectContent = canEditTasks;
+  const canManageTasksHere = canEditTasks;
+
+
+
 
   const canCommentOnProject =
     !isViewerOnly &&
     (canEditProjectContent ||
       myRole === "member" ||
       myMembership?.permissions?.canComment === true);
+
 
 
   // ── Real-time tasks listener ───────────────────────────────────────────
@@ -293,9 +347,11 @@ const ProjectPage = () => {
     }
   }, [notificationTaskId, tasks]);
 
-  // ── Live progress update on Firestore project doc ─────────────────────
+    // ── Live progress update on Firestore project doc ─────────────────────
   useEffect(() => {
-        if (!activeProjectWorkspaceId || !projectId || !canEditProjectContent) return;
+                if (!activeProjectWorkspaceId || !projectId || !canManageTasksHere) return;
+
+
 
 
     const doneCount = tasks.filter((t) => t.status === "Done").length;
@@ -384,43 +440,60 @@ const ProjectPage = () => {
 
     return list;
   }, [tasks, filter, search, user?.uid, user?.email]);
-
-  // ── Save task ──────────────────────────────────────────────────────────
+    // ── Save task ──────────────────────────────────────────────────────────
   const handleSave = async () => {
-        if (
+    console.log("[DEBUG] role check", {
+      uid: user?.uid,
+      workspaceOwnerId: workspaceData?.ownerId,
+      myRole,
+      membersLoaded: Array.isArray(members) ? members.length : "not array",
+      activeProjectWorkspaceId,
+      projectId,
+      canEditProjectContent,
+    });
+
+    if (
       !user?.uid ||
       !activeProjectWorkspaceId ||
       !projectId ||
       !form.title.trim() ||
-      !canEditProjectContent
+                    !canManageTasksHere
     ) {
       return;
     }
+
+
 
 
     setSaving(true);
 
     try {
       if (editTask) {
-                await updateDoc(doc(db, "workspaces", activeProjectWorkspaceId, "tasks", editTask.id), {
-          ...form,
-          updatedAt: serverTimestamp(),
-        });
+        await updateDoc(
+          doc(db, "workspaces", activeProjectWorkspaceId, "tasks", editTask.id),
+          {
+            ...form,
+            updatedAt: serverTimestamp(),
+          }
+        );
       } else {
         const pCode = String((activeProject as any)?.code || "WF-000");
         const taskCode = `${pCode}-T${tasks.length + 1}`;
 
-                await addDoc(collection(db, "workspaces", activeProjectWorkspaceId, "tasks"), {
-          ...form,
-          taskCode,
-          assignee: form.assignee.trim(),
-          projectId,
-          workspaceId: activeProjectWorkspaceId,
-          ownerId: user.uid,
-          createdBy: user.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
+        await addDoc(
+          collection(db, "workspaces", activeProjectWorkspaceId, "tasks"),
+          {
+            ...form,
+            taskCode,
+            assignee: form.assignee.trim(),
+            projectId,
+            workspaceId: activeProjectWorkspaceId,
+            ownerId: user.uid,
+            createdBy: user.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
+        );
       }
 
       setShowModal(false);
@@ -433,19 +506,36 @@ const ProjectPage = () => {
     }
   };
 
-  // ── Delete task ────────────────────────────────────────────────────────
+
+
+    // ── Delete task ────────────────────────────────────────────────────────
   const handleDelete = async (taskId: string) => {
-        if (!activeProjectWorkspaceId || !taskId || !canEditProjectContent) return;
+    console.log("[DEBUG] delete role check", {
+      uid: user?.uid,
+      workspaceOwnerId: workspaceData?.ownerId,
+      myRole,
+      membersLoaded: Array.isArray(members) ? members.length : "not array",
+      activeProjectWorkspaceId,
+      projectId,
+      taskId,
+      canEditProjectContent,
+    });
+
+             if (!activeProjectWorkspaceId || !projectId || !canManageTasksHere) return;
+
 
     await deleteDoc(doc(db, "workspaces", activeProjectWorkspaceId, "tasks", taskId));
   };
+
+
 
   // ── Toggle task status ─────────────────────────────────────────────────
   const cycleStatus = async (task: Task) => {
     const order: TaskStatus[] = ["To Do", "In Progress", "In Review", "Done"];
     const next = order[(order.indexOf(task.status) + 1) % order.length];
 
-        if (!activeProjectWorkspaceId || !task.id || !canEditProjectContent) return;
+                if (!activeProjectWorkspaceId || !projectId || !canManageTasksHere) return;
+
 
     await updateDoc(doc(db, "workspaces", activeProjectWorkspaceId, "tasks", task.id), {
       status: next,
@@ -455,7 +545,8 @@ const ProjectPage = () => {
 
   // ── Open edit modal ────────────────────────────────────────────────────
     const openEdit = (task: Task) => {
-    if (!canEditProjectContent) return;
+        if (!canManageTasksHere) return;
+
 
     setEditTask(task);
         setForm({
@@ -934,29 +1025,34 @@ const ProjectPage = () => {
                   </div>
 
 
-                                    {canEditProjectContent && (
+                                                    {(canEditTasks || canDeleteTasks) && (
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEdit(task);
-                        }}
-                        className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-xs"
-                      >
-                        ✏️
-                      </button>
+                      {canEditTasks && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEdit(task);
+                          }}
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-xs"
+                        >
+                          ✏️
+                        </button>
+                      )}
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(task.id);
-                        }}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors text-xs"
-                      >
-                        🗑
-                      </button>
+                      {canDeleteTasks && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(task.id);
+                          }}
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors text-xs"
+                        >
+                          🗑
+                        </button>
+                      )}
                     </div>
                   )}
+
                 </div>
               ))
             ) : (

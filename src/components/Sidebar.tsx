@@ -627,10 +627,11 @@ function SidebarContent({
             alt="Workfine Logo"
             className="h-8 w-8 rounded-lg object-contain shadow-lg shadow-indigo-500/20"
           />
-          <span className="text-2xl tracking-tight">
-            <span className="font-extrabold text-white">Wurk</span>
-            <span className="font-light text-white">fine</span>
+                    <span className="text-2xl tracking-tight">
+            <span className="font-extrabold text-white">Work</span>
+            <span className="font-light text-white">Fine</span>
           </span>
+
         </Link>
 
         {showCloseButton && (

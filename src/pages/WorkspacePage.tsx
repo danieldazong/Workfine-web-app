@@ -338,10 +338,9 @@ const currentWorkspaceRole: WorkspaceRole | "" = isOwnerFromWorkspaceDoc
   : exactUidMembership && isActiveWorkspaceMember(exactUidMembership)
     ? ((exactUidRole || "member") as WorkspaceRole)
     : emailFallbackMembership && isActiveWorkspaceMember(emailFallbackMembership)
-      ? emailFallbackRole === "viewer"
-        ? "viewer"
-        : "member"
+      ? ((emailFallbackRole || "member") as WorkspaceRole)
       : "";
+
 
 const isCurrentWorkspaceOwner =
   !!user?.uid &&

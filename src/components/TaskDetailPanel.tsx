@@ -3245,8 +3245,15 @@ const isTaskGuest =
     const canManageTaskSharingFinal = canManageTaskSharing && !isTaskGuest;
 
     // Commenter guests keep commenting; viewer guests lose it.
-    const canCommentOnTaskFinal =
-      isGuestViewer ? false : isGuestCommenter ? true : canCommentOnTask;
+        const canCommentOnTaskFinal =
+      isGuestViewer
+        ? false
+        : isWorkspaceViewerRole
+          ? false
+          : isGuestCommenter
+            ? true
+            : canCommentOnTask;
+
 
     const canReactToCommentsFinal = canCommentOnTaskFinal;
 

@@ -372,7 +372,7 @@ export default function Navbar({ title }: NavbarProps) {
 
 
   useEffect(() => {
-    document.title = `${navbarTitle} | Wurkfine`;
+    document.title = `${navbarTitle} | workine`;
   }, [navbarTitle]);
 
   const filteredTasks = useMemo(() => {

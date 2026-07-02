@@ -946,12 +946,16 @@ service cloud.firestore {
         allow list: if isSignedIn()
           && isActiveWorkspaceMember(workspaceId, request.auth.uid);
 
-        allow create: if isSignedIn()
-          && canEditWorkspaceContent(workspaceId)
+                allow create: if isSignedIn()
+          && canCommentInWorkspace(workspaceId)
           && request.resource.data.workspaceId == workspaceId;
 
-        allow update, delete: if isSignedIn()
+        allow update: if isSignedIn()
+          && canCommentInWorkspace(workspaceId);
+
+        allow delete: if isSignedIn()
           && canEditWorkspaceContent(workspaceId);
+
 
         match /shares/{shareId} {
           allow get: if isSignedIn()

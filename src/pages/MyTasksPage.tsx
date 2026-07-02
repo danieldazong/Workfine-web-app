@@ -148,15 +148,42 @@
     // Per-row read-only check. For SHARED tasks the workspace-level
     // isViewerOnly does not apply (they live in another workspace), so the
     // task's own guest role (resolved from its share doc) is the source of truth.
+      // Owners/admins can always delete. Everyone else is restricted:
+    //  - workspace viewers: never
+    //  - shared-task viewers: never (read-only guest)
+    //  - members/viewers deleting a NON-shared workspace task = a real delete → block
+    // Shared "commenter" guests keep the ×, since for a shared task the × only
+    // removes THEIR personal copy (a safe, personal "leave" action).
     const isReadOnlyRow = (task: any): boolean => {
+      // Owners and admins are never restricted.
+      if (myRole === "owner" || myRole === "admin") return false;
+
+      // Workspace viewers are always read-only.
       if (isViewerOnly) return true;
-      if (!isSharedTask(task)) return false;
-      const resolved = sharedRoleById[String(task.id || "")];
-      const rawRole =
-        resolved ?? task?.guestRole ?? task?.role ?? task?.accessRole ?? "";
-      if (!rawRole) return false; // unknown role → don't hide (safe default)
-      return normalizeGuestRole(rawRole) === "viewer";
+
+      const shared = isSharedTask(task);
+
+             if (shared) {
+        // Shared task: only the guest's resolved role matters.
+        const resolved = sharedRoleById[String(task.id || "")];
+        const rawRole =
+          resolved ?? task?.guestRole ?? task?.role ?? task?.accessRole ?? "";
+        // GLOBAL FIX: until the guest role resolves, default to read-only so the
+        // delete (×) never flashes in for viewers/commenters and then vanishes.
+        // Only once a role is known do we permit the action per that role.
+        if (!rawRole) return true;
+        const normalized = normalizeGuestRole(rawRole);
+        // Hide delete for BOTH viewers and commenters on shared tasks.
+        return normalized === "viewer" || normalized === "commenter";
+      }
+
+
+
+      // Non-shared workspace task: the × here is a REAL delete.
+      // Members and viewers must not delete workspace tasks — only owner/admin.
+      return true;
     };
+
 
 
 
