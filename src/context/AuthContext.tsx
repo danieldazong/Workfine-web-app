@@ -846,41 +846,98 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
       const myUid = firebaseUser.uid;
       const myPersonalWid = `personal_${myUid}`;
 
-      if (
+            if (
         typeof existingWid === "string" &&
         existingWid.startsWith("personal_") &&
         existingWid !== myPersonalWid
       ) {
-        console.warn(
-          "[Auth] 🩹 Detected leaked personal workspace pointer — self-healing:",
-          { wrongWorkspaceId: existingWid, correctWorkspaceId: myPersonalWid }
-        );
+        // A "personal_<otherUid>" workspace CAN be a legitimately shared
+        // workspace this user was invited into. We must NOT reset the pointer
+        // just because the id starts with "personal_". First verify whether
+        // this user has an active member doc in that workspace. Only if they
+        // genuinely have NO membership do we treat the pointer as leaked.
+        let hasMembershipInForeignPersonal = false;
 
-        // Recreate/repair THIS user's own personal workspace, then point to it.
-        await ensurePersonalWorkspace(firebaseUser);
+        try {
+          const foreignMemberRef = doc(
+            db,
+            "workspaces",
+            existingWid,
+            "members",
+            myUid
+          );
+          const foreignMemberSnap = await getDoc(foreignMemberRef);
 
-        existingWid = myPersonalWid;
+          if (foreignMemberSnap.exists()) {
+            const md = foreignMemberSnap.data() as any;
+            const status = String(md?.status || "").toLowerCase();
+            if (status === "active") {
+              hasMembershipInForeignPersonal = true;
+            }
+          }
+        } catch (verifyErr: any) {
+          // Auth-warmup race (permission-denied/unauthenticated): we cannot
+          // prove the pointer is corrupt, so we must NOT reset it. The live
+          // listeners in AppDataContext will verify membership afterwards.
+          const code = String(verifyErr?.code || "").toLowerCase();
+          const isAuthWarmupRace =
+            code === "permission-denied" ||
+            code === "unauthenticated" ||
+            code === "failed-precondition";
 
-        await setDoc(
-          userRef,
-          {
-            workspaceId: myPersonalWid,
-            personalWorkspaceId: myPersonalWid,
-            workspaceDisplayId: deriveWorkspaceDisplayId(myUid),
-            updatedAt: serverTimestamp(),
-            lastActive: serverTimestamp(),
-          },
-          { merge: true }
-        );
+          if (isAuthWarmupRace) {
+            console.info(
+              "[Auth] ℹ️ Foreign personal workspace membership unverifiable during warmup — keeping pointer (no reset):",
+              { workspaceId: existingWid, uid: myUid, code: verifyErr?.code }
+            );
+            hasMembershipInForeignPersonal = true; // treat as valid, do NOT heal
+          } else {
+            console.warn(
+              "[Auth] ⚠️ Foreign personal workspace membership check failed:",
+              { workspaceId: existingWid, uid: myUid, code: verifyErr?.code }
+            );
+          }
+        }
 
-        console.log(
-          "[Auth] ✅ Self-heal complete — workspaceId reset to:",
-          myPersonalWid
-        );
+        if (hasMembershipInForeignPersonal) {
+          // Legitimate shared personal workspace — keep it and continue the
+          // normal verification path below (do NOT self-heal / reset).
+          console.log(
+            "[Auth] ✅ Foreign personal workspace is a valid shared membership — keeping:",
+            existingWid
+          );
+        } else {
+          // Genuinely leaked pointer (no active membership) — heal to our own.
+          console.warn(
+            "[Auth] 🩹 Detected leaked personal workspace pointer — self-healing:",
+            { wrongWorkspaceId: existingWid, correctWorkspaceId: myPersonalWid }
+          );
 
-        // Already corrected and persisted to our OWN workspace — return now.
-        return existingWid;
+          await ensurePersonalWorkspace(firebaseUser);
+
+          existingWid = myPersonalWid;
+
+          await setDoc(
+            userRef,
+            {
+              workspaceId: myPersonalWid,
+              personalWorkspaceId: myPersonalWid,
+              workspaceDisplayId: deriveWorkspaceDisplayId(myUid),
+              updatedAt: serverTimestamp(),
+              lastActive: serverTimestamp(),
+            },
+            { merge: true }
+          );
+
+          console.log(
+            "[Auth] ✅ Self-heal complete — workspaceId reset to:",
+            myPersonalWid
+          );
+
+          return existingWid;
+        }
       }
+
 
       const hasValidWorkspaceAccess = await ensureWorkspaceAndMembership(
         firebaseUser,

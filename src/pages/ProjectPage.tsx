@@ -278,6 +278,7 @@ const ProjectPage = () => {
     canEditTasks,
     canDeleteTasks,
   });
+  
 
 
 
