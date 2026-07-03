@@ -308,6 +308,7 @@
       let cancelled = false;
 
       const resolveRoles = async () => {
+                const revokedTaskIds: string[] = [];
         const shared = tasks.filter(
           (t: any) => isSharedTask(t) && t.shareId && t.workspaceId
         );
@@ -336,11 +337,28 @@
                   shareId
                 )
               );
-              if (!shareSnap.exists()) return;
+                            const taskKey = String(t.id || "");
+
+              // Share doc gone, or explicitly revoked/removed → this guest no
+              // longer has access. Drop the stale personal copy in real time.
+              const shareStatus = shareSnap.exists()
+                ? String((shareSnap.data() as any)?.status || "").toLowerCase()
+                : "missing";
+
+              if (
+                shareStatus === "missing" ||
+                shareStatus === "revoked" ||
+                shareStatus === "removed"
+              ) {
+                revokedTaskIds.push(taskKey);
+                return;
+              }
+
               const s = shareSnap.data() as any;
               const role =
                 s.role ?? s.guestRole ?? s.accessRole ?? s.permission ?? "";
-              if (role) next[String(t.id || "")] = String(role);
+              if (role) next[taskKey] = String(role);
+
             } catch {
               // ignore — leave unknown (delete stays visible, safe default)
             }
@@ -350,6 +368,37 @@
         if (!cancelled && Object.keys(next).length > 0) {
           setSharedRoleById((prev) => ({ ...prev, ...next }));
         }
+                // Real-time self-cleanup: a revoked guest deletes only their own
+        // personal copy. Owner-side deletes aren't possible (no write access
+        // into another user's /users subtree), so cleanup runs guest-side.
+        if (!cancelled && revokedTaskIds.length > 0) {
+          await Promise.all(
+            revokedTaskIds.map(async (id) => {
+              try {
+                await deleteDoc(doc(db, "users", user.uid!, "tasks", id));
+              } catch {
+                // ignore — listener will reconcile
+              }
+            })
+          );
+          setUserTaskIndex((prev) =>
+            prev.filter((t: any) => !revokedTaskIds.includes(String(t.id || "")))
+          );
+        }
+                  // If the revoked task's detail drawer is still open, close it so the
+          // stale "Viewer access" panel doesn't linger after access is removed.
+          setDetailTask((prev) => {
+            if (!prev) return prev;
+            const openId = String(
+              (prev as any).id ||
+                (prev as any).originalTaskId ||
+                (prev as any).sharedTaskId ||
+                ""
+            );
+            return revokedTaskIds.includes(openId) ? null : prev;
+          });
+
+
       };
 
       resolveRoles();
@@ -703,15 +752,23 @@
 
     const backfillOwners = async () => {
       // Only look at the user's own copies that are shared and missing owner.
-      const needsRepair = (Array.isArray(userTaskIndex) ? userTaskIndex : [])
+            const needsRepair = (Array.isArray(userTaskIndex) ? userTaskIndex : [])
         .filter((t: any) => isSharedTask(t))
         .filter((t: any) => {
           const hasOwnerId = String(t.ownerId || t.createdBy || "").trim();
           const hasOwnerEmail = String(
             t.ownerEmail || t.createdByEmail || ""
           ).trim();
-          return !hasOwnerId || !hasOwnerEmail;
+
+          // GLOBAL FIX: only repair when the OWNER ID is missing. The email is
+          // best-effort — many personal-workspace owners have no ownerEmail
+          // anywhere to recover, so requiring it here caused an infinite
+          // backfill loop (repair writes ownerId, snapshot re-fires, email
+          // still empty, repair again...). Once ownerId is present we consider
+          // the copy repaired and stop.
+          return !hasOwnerId;
         });
+
 
       if (cancelled || needsRepair.length === 0) return;
 
@@ -786,6 +843,14 @@
             ownerName = ownerName || t.sharedByName || "";
 
             if (!ownerId && !ownerEmail) return; // nothing recoverable
+                        // GLOBAL FIX: if the copy already has this ownerId, skip the write
+            // entirely. Prevents a no-op setDoc from bumping updatedAt and
+            // re-triggering the snapshot → effect loop.
+            const existingOwnerId = String(t.ownerId || t.createdBy || "").trim();
+            if (existingOwnerId && existingOwnerId === String(ownerId).trim()) {
+              return;
+            }
+
 
             await setDoc(
               doc(db, "users", user.uid!, "tasks", t.id),

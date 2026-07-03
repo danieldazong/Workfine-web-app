@@ -3244,15 +3244,20 @@ const isTaskGuest =
 
     const canManageTaskSharingFinal = canManageTaskSharing && !isTaskGuest;
 
-    // Commenter guests keep commenting; viewer guests lose it.
+       // Commenter guests keep commenting; viewer guests lose it.
+    // GLOBAL FIX: for a task GUEST, the task-level guest role is the source of
+    // truth — not their workspace role. Every invitee is auto-added as a
+    // workspace "viewer/member", so the workspace-viewer check must NOT
+    // short-circuit a commenter guest. Guest role is therefore evaluated first.
         const canCommentOnTaskFinal =
       isGuestViewer
         ? false
-        : isWorkspaceViewerRole
-          ? false
-          : isGuestCommenter
-            ? true
+        : isGuestCommenter
+          ? true
+          : isWorkspaceViewerRole
+            ? false
             : canCommentOnTask;
+
 
 
     const canReactToCommentsFinal = canCommentOnTaskFinal;
