@@ -8,6 +8,10 @@ import {
   serverTimestamp,
   Unsubscribe,
   arrayUnion,
+  query,
+  where,
+  getDocs,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "./config";
 import { Project, ProjectVisibility } from "../../types";
@@ -176,9 +180,45 @@ export async function deleteProject(
   if (!workspaceId) throw new Error("Workspace ID is required.");
   if (!projectId) throw new Error("Project ID is required.");
 
+  // 1. Delete all workspace-level tasks that belong to this project.
+  //    Per-user mirror copies under users/{uid}/tasks cannot be deleted from
+  //    the client (rules forbid writing to another user's tree). They are
+  //    reconciled by each client's own listeners after the source is removed.
+  try {
+    const tasksRef = collection(db, "workspaces", workspaceId, "tasks");
+    const projectTasksQuery = query(
+      tasksRef,
+      where("projectId", "==", projectId)
+    );
+    const snap = await getDocs(projectTasksQuery);
+
+    // Firestore batches are limited to 500 writes; chunk to stay safe.
+    const docs = snap.docs;
+    for (let i = 0; i < docs.length; i += 450) {
+      const batch = writeBatch(db);
+      docs.slice(i, i + 450).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    console.log(
+      "[Projects] 🧹 Deleted",
+      docs.length,
+      "workspace tasks for project:",
+      projectId
+    );
+  } catch (err: any) {
+    // Do not block project deletion if task cleanup partially fails.
+    console.error(
+      "[Projects] ⚠️ Task cleanup error (continuing to delete project):",
+      err?.code,
+      err?.message
+    );
+  }
+
+  // 2. Delete the project document itself.
   await deleteDoc(doc(db, "workspaces", workspaceId, "projects", projectId));
 
-  console.log("[Projects] 🗑️ Deleted:", projectId);
+  console.log("[Projects] 🗑️ Deleted project:", projectId);
 }
 
 function getSeconds(value: any): number {

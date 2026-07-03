@@ -1,6 +1,12 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppData } from "../context/AppDataContext";
+import { useAuth } from "../context/AuthContext";
+import { deleteProject } from "../lib/firebase/projects";
+import ConfirmDialog from "../components/ConfirmDialog";
+import { MoreVertical, Trash2, Pencil } from "lucide-react";
+
+
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -28,15 +34,135 @@ const txt = (v: unknown, fallback = ""): string => {
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   return fallback;
 };
+// ─────────────────────────────────────────────────────────────────────────────
+// PROJECT CARD MENU (Projects overview) — owner/admin/project-owner only.
+// Pure UI mirror of the Curated Work kebab. Reuses the SAME deleteProject()
+// which already cascades workspace tasks + fans out per-user copies via the
+// deployed Cloud Functions. subscribeToProjects listens live, so the card
+// vanishes on its own once the doc is deleted. No layout change.
+// ─────────────────────────────────────────────────────────────────────────────
+function ProjectCardMenu({
+  workspaceId,
+  projectId,
+  projectName,
+  onEdit,
+}: {
+  workspaceId?: string;
+  projectId: string;
+  projectName: string;
+  onEdit: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onClickAway = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onClickAway);
+    return () => window.removeEventListener("mousedown", onClickAway);
+  }, [open]);
+
+  async function handleDelete() {
+    if (!workspaceId) {
+      alert("Workspace is still loading. Please refresh and try again.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await deleteProject(workspaceId, projectId);
+      setConfirmDelete(false);
+      setOpen(false);
+    } catch (err) {
+      console.error("[ProjectsOverview ProjectCardMenu] delete failed:", err);
+      alert(err instanceof Error ? err.message : "Failed to delete project.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      ref={menuRef}
+      className="absolute top-2 right-2 z-10"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="opacity-0 group-hover:opacity-100 p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all"
+        title="Project options"
+        aria-label="Project options"
+      >
+        <MoreVertical size={14} />
+      </button>
+
+            {open && (
+        <div className="absolute right-0 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-left">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+              onEdit();
+            }}
+            className="w-full px-3 py-2 text-left text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+          >
+            <Pencil size={13} />
+            Edit project
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmDelete(true);
+              setOpen(false);
+            }}
+            disabled={busy}
+            className="w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 flex items-center gap-2"
+          >
+            <Trash2 size={13} />
+            Delete project
+          </button>
+        </div>
+      )}
+
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="Delete this project?"
+        message={`"${projectName}" and its tasks will be permanently deleted for everyone in this workspace. This cannot be undone.`}
+        confirmLabel="Delete project"
+        tone="danger"
+        busy={busy}
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={handleDelete}
+      />
+    </div>
+  );
+}
 
 const ProjectsOverviewPage = () => {
   const { projects, tasks, loading } = useAppData();
+  const { user } = useAuth();
   const navigate = useNavigate();
+
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "completed" | "at-risk">("all");
   const [sortBy, setSortBy] = useState<"recent" | "progress" | "tasks" | "name">("recent");
-  const [showCreateProject, setShowCreateProject] = useState(false);
+    const [showCreateProject, setShowCreateProject] = useState(false);
+  const [editProject, setEditProject] = useState<any | null>(null);
+
 
   const now = new Date();
 
@@ -351,11 +477,28 @@ const ProjectsOverviewPage = () => {
         {/* ── PROJECT GRID ────────────────────────────────────────────── */}
         {grid.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {grid.map((p: any) => (
+                        {grid.map((p: any) => {
+              const myUid = String(user?.uid || "");
+              const projectOwnerId = String(p.ownerId || p.createdBy || p.uid || "");
+              const canManageThisProject = !!myUid && myUid === projectOwnerId;
+              const wsIdForProject = String(
+                p.workspaceId || p.projectWorkspaceId || p.sourceWorkspaceId || ""
+              );
+              return (
               <div key={p.id} onClick={() => navigate(`/projects/${p.id}`)}
                 className="relative bg-white rounded-2xl shadow-sm border border-slate-100 p-5 cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-violet-200 transition-all duration-200 group">
+                                {canManageThisProject && (
+                  <ProjectCardMenu
+                    workspaceId={wsIdForProject}
+                    projectId={p.id}
+                    projectName={txt(p.name, "Untitled project")}
+                    onEdit={() => setEditProject(p)}
+                  />
+                )}
+
                 {/* top accent line */}
                 <div className="absolute top-0 left-5 right-5 h-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity" style={{ backgroundColor: txt(p.color, "#3b82f6") }} />
+
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold shadow-sm flex-shrink-0" style={{ backgroundColor: txt(p.color, "#3b82f6") }}>
                     {txt(p.name, "U").charAt(0).toUpperCase()}
@@ -402,10 +545,12 @@ const ProjectsOverviewPage = () => {
                   {p._overdue > 0
                     ? <span className="text-rose-500 font-medium flex items-center gap-1"><AlertTriangle size={11} /> {p._overdue} overdue</span>
                     : <span className="text-slate-300 group-hover:text-violet-500 transition-colors flex items-center gap-0.5">Open <ArrowRight size={11} /></span>}
-                </div>
+                               </div>
               </div>
-            ))}
+              );
+            })}
           </div>
+
         ) : (
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 py-24 flex flex-col items-center gap-3">
             <div className="w-14 h-14 rounded-2xl bg-violet-50 flex items-center justify-center">
@@ -423,9 +568,16 @@ const ProjectsOverviewPage = () => {
         )}
       </div>
 
-      <CreateProjectModal isOpen={showCreateProject} onClose={() => setShowCreateProject(false)} />
+            <CreateProjectModal isOpen={showCreateProject} onClose={() => setShowCreateProject(false)} />
+
+      <CreateProjectModal
+        isOpen={!!editProject}
+        onClose={() => setEditProject(null)}
+        editProject={editProject}
+      />
     </div>
   );
 };
+
 
 export default ProjectsOverviewPage;

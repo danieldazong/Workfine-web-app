@@ -59,7 +59,13 @@ import {
   WorkspaceRole,
 } from "../lib/firebase/workspaceMembers";
 import { isProjectPinnedToWorkspace } from "../lib/projectAccess";
-import { addExistingProjectToWorkspace } from "../lib/firebase/projects";
+import {
+  addExistingProjectToWorkspace,
+  deleteProject,
+  removeProjectFromWorkspaceCuratedWork,
+} from "../lib/firebase/projects";
+import { MoreVertical } from "lucide-react";
+
 
 
 type TabId = "overview" | "members" | "settings" | "shared";
@@ -844,12 +850,19 @@ function OverviewTab({
                 const done = pt.filter((t: any) => t.status === "Done").length;
                 const pct  = pt.length > 0 ? Math.round((done / pt.length) * 100) : 0;
                 return (
-                                    <div
+                                                 <div
                     key={p.id}
                     onClick={() => navigate(`/projects/${p.id}`)}
-                    className="border border-gray-200 rounded-xl p-3 cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all group"
+                    className="relative border border-gray-200 rounded-xl p-3 cursor-pointer hover:border-violet-300 hover:shadow-sm transition-all group"
                   >
-                    <div className="flex items-center gap-2 mb-2">
+                    {canManage && (
+                      <ProjectCardMenu
+                        workspaceId={workspaceData?.id}
+                        projectId={p.id}
+                        projectName={String(p?.name || "Untitled Project")}
+                      />
+                    )}
+                    <div className="flex items-center gap-2 mb-2 pr-6">
                       <div
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-white font-bold text-xs flex-shrink-0"
                                                style={{ backgroundColor: p?.color ?? "#3b82f6" }}
@@ -860,6 +873,7 @@ function OverviewTab({
                         {String(p?.name || "Untitled Project")}
                       </p>
                     </div>
+
                     {p?.description && (
                       <p className="text-xs text-gray-400 truncate mb-2">
                         {String(p.description)}
@@ -1029,6 +1043,128 @@ function StatRow({ label, value }: { label: string; value: number }) {
     </div>
   );
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// PROJECT CARD MENU (curated work) — owner/admin only. Reuses existing
+// deleteProject / removeProjectFromWorkspaceCuratedWork + local ConfirmDialog.
+// Real-time: subscribeToProjects already listens live, so the card vanishes
+// on its own once the Firestore doc is deleted/unpinned. No layout change.
+// ─────────────────────────────────────────────────────────────────────────────
+function ProjectCardMenu({
+  workspaceId,
+  projectId,
+  projectName,
+}: {
+  workspaceId?: string;
+  projectId: string;
+  projectName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onClickAway = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onClickAway);
+    return () => window.removeEventListener("mousedown", onClickAway);
+  }, [open]);
+
+  async function handleUnpin(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!workspaceId) return;
+    setBusy(true);
+    try {
+      await removeProjectFromWorkspaceCuratedWork(workspaceId, projectId);
+      setOpen(false);
+    } catch (err) {
+      console.error("[ProjectCardMenu] unpin failed:", err);
+      alert(err instanceof Error ? err.message : "Failed to remove from curated work.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!workspaceId) return;
+    setBusy(true);
+    try {
+      await deleteProject(workspaceId, projectId);
+      setConfirmDelete(false);
+      setOpen(false);
+    } catch (err) {
+      console.error("[ProjectCardMenu] delete failed:", err);
+      alert(err instanceof Error ? err.message : "Failed to delete project.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      ref={menuRef}
+      className="absolute top-2 right-2 z-10"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="opacity-0 group-hover:opacity-100 p-1 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-all"
+        title="Project options"
+        aria-label="Project options"
+      >
+        <MoreVertical size={14} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-left">
+          <button
+            type="button"
+            onClick={handleUnpin}
+            disabled={busy}
+            className="w-full px-3 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2"
+          >
+            <FolderKanban size={13} className="text-gray-400" />
+            Remove from curated work
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmDelete(true);
+              setOpen(false);
+            }}
+            disabled={busy}
+            className="w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 flex items-center gap-2"
+          >
+            <Trash2 size={13} />
+            Delete project
+          </button>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          icon={<Trash2 className="text-red-600" size={22} />}
+          title="Delete this project?"
+          message={`"${projectName}" and all its tasks will be permanently deleted for everyone in this workspace. This cannot be undone.`}
+          confirmLabel="Delete project"
+          confirmWord=""
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={handleDelete}
+        />
+      )}
+    </div>
+  );
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EDITABLE DESCRIPTION

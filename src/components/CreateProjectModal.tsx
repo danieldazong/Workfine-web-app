@@ -444,67 +444,71 @@ export default function CreateProjectModal({
             </div>
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-[11px] font-semibold text-slate-600">
-              Visibility
-            </label>
+                    {!isEditMode && (
+            <>
+              <div>
+                <label className="mb-1.5 block text-[11px] font-semibold text-slate-600">
+                  Visibility
+                </label>
 
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setVisibility("workspace")}
-                disabled={saving}
-                className={`rounded-lg border p-2 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                  visibility === "workspace"
-                    ? "border-violet-400 bg-violet-50"
-                    : "border-slate-200 hover:bg-slate-50"
-                }`}
-              >
-                <Globe2 className="mb-1 text-violet-600" size={14} />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setVisibility("workspace")}
+                    disabled={saving}
+                    className={`rounded-lg border p-2 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      visibility === "workspace"
+                        ? "border-violet-400 bg-violet-50"
+                        : "border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    <Globe2 className="mb-1 text-violet-600" size={14} />
 
-                <p className="text-xs font-semibold text-slate-800">
-                  Workspace
-                </p>
+                    <p className="text-xs font-semibold text-slate-800">
+                      Workspace
+                    </p>
 
-                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
-                  Visible to active shared workspace members.
-                </p>
-              </button>
+                    <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                      Visible to active shared workspace members.
+                    </p>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => setVisibility("private")}
-                disabled={saving}
-                className={`rounded-lg border p-2 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                  visibility === "private"
-                    ? "border-violet-400 bg-violet-50"
-                    : "border-slate-200 hover:bg-slate-50"
-                }`}
-              >
-                <Lock className="mb-1 text-violet-600" size={14} />
+                  <button
+                    type="button"
+                    onClick={() => setVisibility("private")}
+                    disabled={saving}
+                    className={`rounded-lg border p-2 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      visibility === "private"
+                        ? "border-violet-400 bg-violet-50"
+                        : "border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    <Lock className="mb-1 text-violet-600" size={14} />
 
-                <p className="text-xs font-semibold text-slate-800">Private</p>
+                    <p className="text-xs font-semibold text-slate-800">Private</p>
 
-                <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
-                  Saved only in your own private account sidebar.
-                </p>
-              </button>
-            </div>
-          </div>
+                    <p className="mt-0.5 text-[10px] leading-snug text-slate-500">
+                      Saved only in your own private account sidebar.
+                    </p>
+                  </button>
+                </div>
+              </div>
 
-          {visibility === "workspace" && (
-            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                checked={pinnedToWorkspace}
-                onChange={(event) =>
-                  setPinnedToWorkspace(event.target.checked)
-                }
-                disabled={saving}
-                className="rounded border-slate-300 text-violet-600 disabled:cursor-not-allowed"
-              />
-              Show in Workspace curated work
-            </label>
+              {visibility === "workspace" && (
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={pinnedToWorkspace}
+                    onChange={(event) =>
+                      setPinnedToWorkspace(event.target.checked)
+                    }
+                    disabled={saving}
+                    className="rounded border-slate-300 text-violet-600 disabled:cursor-not-allowed"
+                  />
+                  Show in Workspace curated work
+                </label>
+              )}
+            </>
           )}
         </div>
 
@@ -537,4 +541,3 @@ export default function CreateProjectModal({
     </div>
   );
 }
-

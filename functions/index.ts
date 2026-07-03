@@ -21,28 +21,28 @@ function getDb() {
 
 export const cleanupGuestsOnProjectDelete = onDocumentDeleted(
   {
-    document: "projects/{projectId}",
+    document: "workspaces/{workspaceId}/projects/{projectId}",
     region: "us-central1",
   },
   async (event) => {
     const db = getDb();
-    const projectId = event.params.projectId;
+    const { workspaceId, projectId } = event.params;
     const before = event.data?.data();
 
-    if (!before) {
-      logger.warn("[cleanupGuests] No before-data for deleted project", {
-        projectId,
-      });
-      return;
-    }
-
-    const workspaceId: string | undefined = before.workspaceId;
     if (!workspaceId || typeof workspaceId !== "string") {
       logger.warn("[cleanupGuests] Deleted project has no workspaceId, skipping", {
         projectId,
       });
       return;
     }
+
+    if (!before) {
+      logger.warn("[cleanupGuests] No before-data for deleted project (continuing)", {
+        projectId,
+        workspaceId,
+      });
+    }
+
 
     logger.info("[cleanupGuests] Project deleted, scanning guests", {
       projectId,
