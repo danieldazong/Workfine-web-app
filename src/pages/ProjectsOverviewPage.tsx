@@ -42,21 +42,14 @@ const txt = (v: unknown, fallback = ""): string => {
 // vanishes on its own once the doc is deleted. No layout change.
 // ─────────────────────────────────────────────────────────────────────────────
 function ProjectCardMenu({
-  workspaceId,
-  projectId,
-  projectName,
   onEdit,
+  onRequestDelete,
 }: {
-  workspaceId?: string;
-  projectId: string;
-  projectName: string;
   onEdit: () => void;
+  onRequestDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [busy, setBusy] = useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);
-
 
   React.useEffect(() => {
     if (!open) return;
@@ -68,24 +61,6 @@ function ProjectCardMenu({
     window.addEventListener("mousedown", onClickAway);
     return () => window.removeEventListener("mousedown", onClickAway);
   }, [open]);
-
-  async function handleDelete() {
-    if (!workspaceId) {
-      alert("Workspace is still loading. Please refresh and try again.");
-      return;
-    }
-    setBusy(true);
-    try {
-      await deleteProject(workspaceId, projectId);
-      setConfirmDelete(false);
-      setOpen(false);
-    } catch (err) {
-      console.error("[ProjectsOverview ProjectCardMenu] delete failed:", err);
-      alert(err instanceof Error ? err.message : "Failed to delete project.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div
@@ -106,7 +81,7 @@ function ProjectCardMenu({
         <MoreVertical size={14} />
       </button>
 
-            {open && (
+      {open && (
         <div className="absolute right-0 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-left">
           <button
             type="button"
@@ -124,32 +99,20 @@ function ProjectCardMenu({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              setConfirmDelete(true);
               setOpen(false);
+              onRequestDelete();
             }}
-            disabled={busy}
-            className="w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50 disabled:opacity-50 flex items-center gap-2"
+            className="w-full px-3 py-2 text-left text-xs text-red-600 hover:bg-red-50 flex items-center gap-2"
           >
             <Trash2 size={13} />
             Delete project
           </button>
         </div>
       )}
-
-
-      <ConfirmDialog
-        open={confirmDelete}
-        title="Delete this project?"
-        message={`"${projectName}" and its tasks will be permanently deleted for everyone in this workspace. This cannot be undone.`}
-        confirmLabel="Delete project"
-        tone="danger"
-        busy={busy}
-        onCancel={() => setConfirmDelete(false)}
-        onConfirm={handleDelete}
-      />
     </div>
   );
 }
+
 
 const ProjectsOverviewPage = () => {
   const { projects, tasks, loading } = useAppData();
@@ -162,6 +125,35 @@ const ProjectsOverviewPage = () => {
   const [sortBy, setSortBy] = useState<"recent" | "progress" | "tasks" | "name">("recent");
     const [showCreateProject, setShowCreateProject] = useState(false);
   const [editProject, setEditProject] = useState<any | null>(null);
+    // Page-level delete confirmation. The ConfirmDialog is rendered ONCE at the
+  // bottom of the page (outside every clickable project card) so its backdrop
+  // clicks never bubble into a card's navigate handler. `deleteTarget` holds the
+  // project awaiting confirmation.
+  const [deleteTarget, setDeleteTarget] = useState<{
+    workspaceId: string;
+    projectId: string;
+    projectName: string;
+  } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  async function handleConfirmDelete() {
+    if (!deleteTarget) return;
+    if (!deleteTarget.workspaceId) {
+      alert("Workspace is still loading. Please refresh and try again.");
+      return;
+    }
+    setDeleteBusy(true);
+    try {
+      await deleteProject(deleteTarget.workspaceId, deleteTarget.projectId);
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error("[ProjectsOverview] delete failed:", err);
+      alert(err instanceof Error ? err.message : "Failed to delete project.");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
 
 
   const now = new Date();
@@ -487,14 +479,19 @@ const ProjectsOverviewPage = () => {
               return (
               <div key={p.id} onClick={() => navigate(`/projects/${p.id}`)}
                 className="relative bg-white rounded-2xl shadow-sm border border-slate-100 p-5 cursor-pointer hover:shadow-lg hover:-translate-y-1 hover:border-violet-200 transition-all duration-200 group">
-                                {canManageThisProject && (
+                                                {canManageThisProject && (
                   <ProjectCardMenu
-                    workspaceId={wsIdForProject}
-                    projectId={p.id}
-                    projectName={txt(p.name, "Untitled project")}
                     onEdit={() => setEditProject(p)}
+                    onRequestDelete={() =>
+                      setDeleteTarget({
+                        workspaceId: wsIdForProject,
+                        projectId: p.id,
+                        projectName: txt(p.name, "Untitled project"),
+                      })
+                    }
                   />
                 )}
+
 
                 {/* top accent line */}
                 <div className="absolute top-0 left-5 right-5 h-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity" style={{ backgroundColor: txt(p.color, "#3b82f6") }} />
@@ -568,16 +565,30 @@ const ProjectsOverviewPage = () => {
         )}
       </div>
 
-            <CreateProjectModal isOpen={showCreateProject} onClose={() => setShowCreateProject(false)} />
+                        <CreateProjectModal isOpen={showCreateProject} onClose={() => setShowCreateProject(false)} />
 
       <CreateProjectModal
         isOpen={!!editProject}
         onClose={() => setEditProject(null)}
         editProject={editProject}
       />
+
+      {/* Single, page-level delete confirmation — rendered OUTSIDE every clickable
+          card so backdrop/cancel clicks can never bubble into card navigation. */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete this project?"
+        message={`"${deleteTarget?.projectName ?? "This project"}" and its tasks will be permanently deleted for everyone in this workspace. This cannot be undone.`}
+        confirmLabel="Delete project"
+        tone="danger"
+        busy={deleteBusy}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
     </div>
   );
 };
+
 
 
 export default ProjectsOverviewPage;

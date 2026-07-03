@@ -23,9 +23,11 @@ export default function InsightsPage() {
   const {
     tasks,
     teamMembers,
+    members,
     loading,
     projects,
   } = useAppData();
+
 
   // Count only projects with status "active" — updates in real-time
   const activeProjectsCount = projects.filter(
@@ -185,23 +187,122 @@ export default function InsightsPage() {
 
   const overdueCount = overdueTasksList.length;
 
-  const teamPerformance = teamMembers.map((member: any) => {
-    const memberTasks = filteredTasks.filter((t: any) => t.assignee === member.name);
-    const doneTasks = memberTasks.filter((t: any) => t.status === "Done");
-    const overdueMemberTasks = memberTasks.filter((t: any) => {
-      if (!t.dueDate || t.status === "Done") return false;
-      return new Date(t.dueDate) < new Date();
-    });
-    const rate = memberTasks.length > 0 ? Math.round((doneTasks.length / memberTasks.length) * 100) : 0;
+  // TEAM PERFORMANCE — driven by REAL workspace members (the same `members`
+  // source the Workspace/Team pages use), not the legacy users/{uid}/teamMembers
+  // collection. Read-only: derives counts from the existing `tasks` array.
+  // Falls back to teamMembers only if the workspace members list is unavailable,
+  // so no environment regresses.
+  const performanceSource: any[] =
+    Array.isArray(members) && members.length > 0 ? members : teamMembers;
 
-    return {
-      ...member,
-      total: memberTasks.length,
-      done: doneTasks.length,
-      overdue: overdueMemberTasks.length,
-      rate,
-    };
-  }).sort((a: any, b: any) => b.rate - a.rate);
+  const teamPerformance = performanceSource
+    .map((member: any) => {
+      // A member can be identified by uid, email, or display name depending on
+      // how the task assignee was stored. Match against all of them.
+      const memberUid = String(
+        member.userId || member.uid || member.id || ""
+      ).trim();
+      const memberEmail = String(
+        member.emailLower ||
+          member.email_lowercase ||
+          member.email ||
+          member.emailAddress ||
+          ""
+      )
+        .trim()
+        .toLowerCase();
+      const memberName = String(
+        member.displayName || member.name || member.email || "Member"
+      ).trim();
+
+            // Does this task carry ANY explicit assignee across all known fields?
+      const hasAnyAssignee = (t: any): boolean => {
+        if (String(t.assignee || "").trim()) return true;
+        if (String(t.assigneeId || "").trim()) return true;
+        if (String(t.assignedToUid || "").trim()) return true;
+        if (String(t.assigneeEmail || "").trim()) return true;
+        if (Array.isArray(t.assigneeIds) && t.assigneeIds.length > 0) return true;
+        if (Array.isArray(t.assignedTo) && t.assignedTo.length > 0) return true;
+        if (Array.isArray(t.assigneeEmails) && t.assigneeEmails.length > 0)
+          return true;
+        return false;
+      };
+
+      const isMine = (t: any): boolean => {
+        // ── 1. EXPLICIT ASSIGNMENT (the assignee always wins if one exists) ──
+        // uid-based assignment
+        if (memberUid) {
+          if (t.assigneeId === memberUid) return true;
+          if (t.assignedToUid === memberUid) return true;
+          if (Array.isArray(t.assigneeIds) && t.assigneeIds.includes(memberUid))
+            return true;
+          if (Array.isArray(t.assignedTo) && t.assignedTo.includes(memberUid))
+            return true;
+        }
+        // email-based assignment
+        if (memberEmail) {
+          if (String(t.assignee || "").toLowerCase().trim() === memberEmail)
+            return true;
+          if (String(t.assigneeEmail || "").toLowerCase().trim() === memberEmail)
+            return true;
+          if (
+            Array.isArray(t.assigneeEmails) &&
+            t.assigneeEmails
+              .map((e: any) => String(e).toLowerCase().trim())
+              .includes(memberEmail)
+          )
+            return true;
+        }
+        // display-name assignment (legacy)
+        if (
+          memberName &&
+          String(t.assignee || "").trim().toLowerCase() ===
+            memberName.toLowerCase()
+        )
+          return true;
+
+        // ── 2. OWNERSHIP FALLBACK (only when NOBODY is assigned) ──
+        // If a task has no assignee at all, credit it to the member who owns /
+        // created it, so completed-but-unassigned tasks are still attributed
+        // (matches how this workspace actually works). This never overrides an
+        // explicit assignment above — it only runs when hasAnyAssignee is false.
+        if (!hasAnyAssignee(t)) {
+          const ownerUid = String(t.ownerId || t.createdBy || t.uid || "").trim();
+          if (memberUid && ownerUid && ownerUid === memberUid) return true;
+        }
+
+        return false;
+      };
+
+
+      const memberTasks = filteredTasks.filter(isMine);
+      const doneTasks = memberTasks.filter((t: any) => t.status === "Done");
+      const overdueMemberTasks = memberTasks.filter((t: any) => {
+        if (!t.dueDate || t.status === "Done") return false;
+        return new Date(t.dueDate) < new Date();
+      });
+      const rate =
+        memberTasks.length > 0
+          ? Math.round((doneTasks.length / memberTasks.length) * 100)
+          : 0;
+
+      return {
+        ...member,
+        id: memberUid || memberEmail || member.id || memberName,
+        name: memberName,
+        total: memberTasks.length,
+        done: doneTasks.length,
+        overdue: overdueMemberTasks.length,
+        rate,
+      };
+    })
+    // Only real, active members. Keep everyone if status isn't tracked.
+    .filter((m: any) => {
+      const status = String(m.status || "active").toLowerCase();
+      return status === "active";
+    })
+    .sort((a: any, b: any) => b.rate - a.rate || b.done - a.done);
+
 
   const totalTasksVal = filteredTasks.length;
   const donePct = totalTasksVal > 0 ? (filteredTasks.filter((t: any) => t.status === "Done").length / totalTasksVal) * 100 : 0;
