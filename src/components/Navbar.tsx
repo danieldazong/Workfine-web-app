@@ -315,12 +315,15 @@ export default function Navbar({ title }: NavbarProps) {
   const navigate = useNavigate();
   const location = useLocation();
 
-    const [query, setQuery] = useState("");
+       const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const helpRef = useRef<HTMLDivElement>(null);
+
 
   const {
     notifications,
@@ -343,6 +346,7 @@ export default function Navbar({ title }: NavbarProps) {
       if (e.key === "Escape") {
         setIsOpen(false);
         setNotificationsOpen(false);
+        setHelpOpen(false);
       }
     }
 
@@ -359,7 +363,12 @@ export default function Navbar({ title }: NavbarProps) {
       ) {
         setNotificationsOpen(false);
       }
+
+      if (helpRef.current && !helpRef.current.contains(target)) {
+        setHelpOpen(false);
+      }
     }
+
 
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("mousedown", handleClickOutside);
@@ -759,9 +768,71 @@ export default function Navbar({ title }: NavbarProps) {
             )}
           </div>
 
-          <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors">
-            <HelpCircle size={20} />
-          </button>
+                    <div ref={helpRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setHelpOpen((open) => !open)}
+              className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"
+              title="Help & support"
+              aria-label="Help & support"
+            >
+              <HelpCircle size={20} />
+            </button>
+
+            {helpOpen && (
+              <div className="absolute right-0 top-[calc(100%+10px)] w-[260px] max-w-[calc(100vw-24px)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl z-[80]">
+                <div className="border-b border-slate-100 px-4 py-3">
+                  <h3 className="text-sm font-semibold text-slate-800">
+                    Help &amp; support
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Guides, shortcuts and contact
+                  </p>
+                </div>
+
+                <div className="py-1">
+                  <a
+                    href="https://support.workfine.app"
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={() => setHelpOpen(false)}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    <HelpCircle size={16} className="text-slate-400" />
+                    Help &amp; documentation
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHelpOpen(false);
+                      window.dispatchEvent(new CustomEvent("wf-open-shortcuts"));
+                    }}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    <CheckCheck size={16} className="text-slate-400" />
+                    Keyboard shortcuts
+                  </button>
+
+                  <a
+                    href="mailto:support@workfine.app"
+                    onClick={() => setHelpOpen(false)}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    <MessageCircle size={16} className="text-slate-400" />
+                    Contact support
+                  </a>
+                </div>
+
+                <div className="border-t border-slate-100 px-4 py-2.5">
+                  <p className="text-[10px] text-slate-400">
+                    WorkFine · you're all set
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
         </div>
 
                 {user && (
