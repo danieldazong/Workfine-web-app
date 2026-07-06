@@ -95,6 +95,10 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
   const [priority, setPriority] = useState<TaskPriority>(task?.priority || 'Medium');
   const [status, setStatus] = useState<TaskStatus>(task?.status || 'To Do');
   const [dueDate, setDueDate] = useState(task?.dueDate || '');
+    const [dueTime, setDueTime] = useState(task?.dueTime || '');
+  const [startDate, setStartDate] = useState(task?.startDate || '');
+  const [startTime, setStartTime] = useState(task?.startTime || '');
+
   // Assignee: defaults to the task's existing assignee, else the current user.
   const [assigneeId, setAssigneeId] = useState<string>(
     String(task?.assigneeId || user?.uid || '')
@@ -127,12 +131,15 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
       ).trim();
 
       if (task) {
-        await taskService.updateTask(task.id, {
+                await taskService.updateTask(task.id, {
           title,
           description,
           priority,
           status,
           dueDate,
+          dueTime,
+          startDate,
+          startTime,
           // Persist (re)assignment on edit too.
           assignee: finalAssigneeName,
           assigneeId: finalAssigneeId,
@@ -154,7 +161,10 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
           assigneeIds: [finalAssigneeId],
           assigneeEmail: finalAssigneeEmail,
           assigneeEmails: finalAssigneeEmail ? [finalAssigneeEmail] : [],
-          dueDate: dueDate || null,
+                    dueDate: dueDate || null,
+          dueTime: dueTime || null,
+          startDate: startDate || null,
+          startTime: startTime || null,
           priority,
           status,
           sectionId: status,
@@ -273,18 +283,47 @@ export default function TaskModal({ task, projectId, isOpen, onClose }: TaskModa
                      })()}
                    </div>
 
+                                      <div className="flex items-center gap-4">
+                     <div className="w-24 text-sm font-medium text-muted-text flex items-center gap-2">
+                       <Calendar size={16} /> Start Date
+                     </div>
+                     <div className="flex items-center gap-2">
+                       <input 
+                         type="date"
+                         value={startDate}
+                         onChange={(e) => setStartDate(e.target.value)}
+                         className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-3 py-1.5 text-xs font-semibold dark:text-white outline-none cursor-pointer"
+                       />
+                       <input 
+                         type="time"
+                         value={startTime}
+                         onChange={(e) => setStartTime(e.target.value)}
+                         className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-3 py-1.5 text-xs font-semibold dark:text-white outline-none cursor-pointer"
+                       />
+                     </div>
+                   </div>
+
                    <div className="flex items-center gap-4">
                      <div className="w-24 text-sm font-medium text-muted-text flex items-center gap-2">
                        <Calendar size={16} /> Due Date
                      </div>
-                     <input 
-                       type="date"
-                       value={dueDate}
-                       onChange={(e) => setDueDate(e.target.value)}
-                       className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-3 py-1.5 text-xs font-semibold dark:text-white outline-none cursor-pointer"
-                     />
+                     <div className="flex items-center gap-2">
+                       <input 
+                         type="date"
+                         value={dueDate}
+                         onChange={(e) => setDueDate(e.target.value)}
+                         className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-3 py-1.5 text-xs font-semibold dark:text-white outline-none cursor-pointer"
+                       />
+                                              <input 
+                         type="time"
+                         value={dueTime}
+                         onChange={(e) => setDueTime(e.target.value)}
+                         className="bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-3 py-1.5 text-xs font-semibold dark:text-white outline-none cursor-pointer"
+                       />
+                     </div>
                    </div>
                 </div>
+
 
                 <div className="space-y-4">
                    <div className="flex items-center gap-4">

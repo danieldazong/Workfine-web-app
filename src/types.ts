@@ -134,7 +134,10 @@ export interface Task {
   assigneeId?: string;
   assigneeIds?: string[];
 
-  dueDate?: any;
+   dueDate?: any;
+  dueTime?: string | null;
+  startDate?: string | null;
+  startTime?: string | null;
   createdAt?: any;
   updatedAt?: any;
   completedAt?: any;

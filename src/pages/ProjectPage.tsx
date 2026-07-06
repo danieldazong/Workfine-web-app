@@ -48,10 +48,13 @@ interface TaskForm {
   status: TaskStatus;
   priority: TaskPriority;
   assignee: string;
+  startDate: string;
+  startTime: string;
   dueDate: string;
   dueTime: string;
   description: string;
 }
+
 
 
 const STATUS_COLUMNS = ["To Do", "In Progress", "In Review", "Done"] as const;
@@ -81,10 +84,13 @@ const emptyTask = (): TaskForm => ({
   status: "To Do",
   priority: "Medium",
   assignee: "",
+  startDate: "",
+  startTime: "",
   dueDate: "",
   dueTime: "",
   description: "",
 });
+
 
 
 function getTimeMs(value: any): number {
@@ -560,15 +566,18 @@ const ProjectPage = () => {
 
 
     setEditTask(task);
-        setForm({
+            setForm({
       title: task.title || "",
       status: task.status || "To Do",
       priority: task.priority || "Medium",
       assignee: task.assignee || "",
+      startDate: (task as any).startDate || "",
+      startTime: (task as any).startTime || "",
       dueDate: task.dueDate || "",
       dueTime: (task as any).dueTime || "",
       description: task.description || "",
     });
+
 
     setShowModal(true);
   };
@@ -876,12 +885,14 @@ const ProjectPage = () => {
         {/* ── LIST VIEW ─────────────────────────────────────────────────── */}
         {view === "list" && (
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-4 px-5 py-3 border-b border-gray-100 bg-gray-50">
-              {["Task Name", "Status", "Priority", "Assignee", "Due Date", ""].map(
+                        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_5rem] gap-4 px-5 py-3 border-b border-gray-100 bg-gray-50">
+                            {["Task Name", "Status", "Priority", "Assignee", "Due Date", ""].map(
                 (h) => (
                   <span
                     key={h}
-                    className="text-xs font-semibold text-gray-400 uppercase tracking-wide"
+                    className={`text-xs font-semibold text-gray-400 uppercase tracking-wide ${
+                      h === "Task Name" ? "pl-8" : ""
+                    }`}
                   >
                     {h}
                   </span>
@@ -891,11 +902,12 @@ const ProjectPage = () => {
 
             {filtered.length > 0 ? (
               filtered.map((task) => (
-                <div
+                                                <div
                   key={task.id}
                   onClick={() => openDrawer(task)}
-                  className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] gap-4 px-5 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors items-center group cursor-pointer"
+                  className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_5rem] gap-4 px-5 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors items-start group cursor-pointer"
                 >
+
                   <div className="flex items-center gap-3">
                                         <button
                       disabled={!canEditProjectContent}
@@ -1004,8 +1016,7 @@ const ProjectPage = () => {
                       </span>
                     )}
                   </div>
-
-                                    <div className="flex flex-col items-start gap-1">
+                                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span
                       className={`text-xs ${
                         task.dueDate &&
@@ -1027,13 +1038,15 @@ const ProjectPage = () => {
 
                     {/* Live countdown chip — augments the date, never replaces it. */}
                     <DueCountdown
+  startDate={(task as any).startDate}
+  startTime={(task as any).startTime}
   dueDate={task.dueDate}
   dueTime={(task as any).dueTime}
   status={task.status}
   title={task.title}
 />
-
                   </div>
+
 
 
                                                     {(canEditTasks || canDeleteTasks) && (
@@ -1164,7 +1177,9 @@ const ProjectPage = () => {
                                   day: "numeric",
                                 })}
                               </span>
-                              <DueCountdown
+                                                            <DueCountdown
+  startDate={(task as any).startDate}
+  startTime={(task as any).startTime}
   dueDate={task.dueDate}
   dueTime={(task as any).dueTime}
   status={task.status}
@@ -1234,13 +1249,12 @@ const ProjectPage = () => {
                 ✕
               </button>
             </div>
-
-            <div className="px-6 py-5 space-y-4">
+                        <div className="px-6 py-4 space-y-4">
+              {/* Title */}
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">
-                  Task Name <span className="text-red-500">*</span>
+                  Task Name
                 </label>
-
                 <input
                   type="text"
                   placeholder="What needs to be done?"
@@ -1249,15 +1263,14 @@ const ProjectPage = () => {
                     setForm((f) => ({ ...f, title: e.target.value }))
                   }
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoFocus
                 />
               </div>
 
+              {/* Description — full width */}
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1">
                   Description
                 </label>
-
                 <textarea
                   placeholder="Add more details..."
                   value={form.description}
@@ -1269,12 +1282,12 @@ const ProjectPage = () => {
                 />
               </div>
 
+              {/* Status | Priority */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
                     Status
                   </label>
-
                   <select
                     value={form.status}
                     onChange={(e) =>
@@ -1297,7 +1310,6 @@ const ProjectPage = () => {
                   <label className="text-xs font-medium text-gray-600 block mb-1">
                     Priority
                   </label>
-
                   <select
                     value={form.priority}
                     onChange={(e) =>
@@ -1315,28 +1327,50 @@ const ProjectPage = () => {
                 </div>
               </div>
 
+              {/* Assignee — full width (single field only) */}
+              <div>
+                <label className="text-xs font-medium text-gray-600 block mb-1">
+                  Assignee
+                </label>
+                <input
+                  type="text"
+                  placeholder="Name or email"
+                  value={form.assignee}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, assignee: e.target.value }))
+                  }
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {/* Start Date | Due Date */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
-                    Assignee
+                    Start Date
                   </label>
-
                   <input
-                    type="text"
-                    placeholder="Name or email"
-                    value={form.assignee}
+                    type="date"
+                    value={form.startDate}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, assignee: e.target.value }))
+                      setForm((f) => ({ ...f, startDate: e.target.value }))
                     }
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+                  <input
+                    type="time"
+                    value={form.startTime}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, startTime: e.target.value }))
+                    }
+                    className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
 
-                                <div>
+                <div>
                   <label className="text-xs font-medium text-gray-600 block mb-1">
                     Due Date
                   </label>
-
                   <input
                     type="date"
                     value={form.dueDate}
@@ -1345,9 +1379,6 @@ const ProjectPage = () => {
                     }
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-
-                  {/* Optional reminder time. Kept SEPARATE from dueDate so the
-                      existing "T12:00:00" date parsing is never affected. */}
                   <input
                     type="time"
                     value={form.dueTime}
@@ -1355,10 +1386,8 @@ const ProjectPage = () => {
                       setForm((f) => ({ ...f, dueTime: e.target.value }))
                     }
                     className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Optional time"
                   />
                 </div>
-
               </div>
             </div>
 

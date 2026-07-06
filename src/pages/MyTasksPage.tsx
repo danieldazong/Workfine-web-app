@@ -1659,11 +1659,14 @@
                         )}
 
                         {task.dueDate && (
-                          <DueCountdown
-                            dueDate={task.dueDate}
-                            dueTime={(task as any).dueTime}
-                            status={task.status}
-                          />
+                                              <DueCountdown
+  startDate={(task as any).startDate}
+  startTime={(task as any).startTime}
+  dueDate={task.dueDate}
+  dueTime={(task as any).dueTime}
+  status={task.status}
+  title={task.title}
+/>
                         )}
 
 

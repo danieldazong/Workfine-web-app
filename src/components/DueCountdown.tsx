@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from "react";
 
 interface DueCountdownProps {
+  startDate?: string;
+  startTime?: string;
   dueDate?: string;
   dueTime?: string;
   status?: string;
   title?: string;
   className?: string;
 }
+
 
 // Fires a one-time global event the instant a task's deadline elapses.
 // Listened to by <DueAlertHost/>. Purely presentational signalling — no data logic.
@@ -26,6 +29,16 @@ function resolveDueMs(dueDate?: string, dueTime?: string): number {
   const ms = new Date(composed).getTime();
   return Number.isFinite(ms) ? ms : 0;
 }
+// Additive helper for the START-phase countdown. Deliberately SEPARATE from
+// the protected resolveDueMs() so DUE_ELAPSED_FIRE_LOGIC is never touched.
+function resolveStartMs(startDate?: string, startTime?: string): number {
+  const dateStr = String(startDate || "").trim();
+  if (!dateStr) return 0;
+  const timeStr = String(startTime || "").trim();
+  const composed = timeStr ? `${dateStr}T${timeStr}:00` : `${dateStr}T00:00:00`;
+  const ms = new Date(composed).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
 
 function formatRemaining(ms: number): string {
   const abs = Math.abs(ms);
@@ -41,6 +54,8 @@ function formatRemaining(ms: number): string {
 }
 
 export default function DueCountdown({
+  startDate,
+  startTime,
   dueDate,
   dueTime,
   status,
@@ -50,7 +65,14 @@ export default function DueCountdown({
 
   const [now, setNow] = useState(() => Date.now());
   const dueMs = resolveDueMs(dueDate, dueTime);
+  const startMs = resolveStartMs(startDate, startTime);
   const isDone = /done|completed/i.test(status || "");
+
+  // START-PHASE: if a start time is set and has NOT yet arrived, show an
+  // amber "Starts in ..." chip that ticks every second. Additive only —
+  // this runs BEFORE the protected due logic and never interferes with it.
+  const inStartPhase = !isDone && startMs > 0 && now < startMs;
+
 
     const firedRef = React.useRef(false);
 
@@ -59,11 +81,14 @@ export default function DueCountdown({
     firedRef.current = false;
   }, [dueMs]);
 
-  useEffect(() => {
-    if (!dueMs || isDone) return;
+   useEffect(() => {
+    // Tick while counting down to START or to DUE.
+    if (isDone) return;
+    if (!dueMs && !startMs) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [dueMs, isDone]);
+  }, [dueMs, startMs, isDone]);
+
 
   // Fire the popup the instant we cross zero (once per deadline).
   useEffect(() => {
@@ -75,6 +100,18 @@ export default function DueCountdown({
     }
   }, [now, dueMs, isDone, status, title]);
 
+  // START-PHASE render — takes precedence until the start moment passes.
+  if (inStartPhase) {
+    const startRemaining = startMs - now;
+    return (
+      <span
+        className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md border font-medium whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200 ${className}`}
+        title="Time until start"
+      >
+        ⏳ Starts in {formatRemaining(startRemaining)}
+      </span>
+    );
+  }
 
   if (!dueMs || isDone) return null;
 
