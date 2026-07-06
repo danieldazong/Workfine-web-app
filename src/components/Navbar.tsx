@@ -790,39 +790,41 @@ export default function Navbar({ title }: NavbarProps) {
                   </p>
                 </div>
 
-                <div className="py-1">
-                  <a
-                    href="https://support.workfine.app"
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => setHelpOpen(false)}
-                    className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                               <div className="py-1">
+                  {/* Help & documentation — target page lives on the Landing Page,
+                      which is not built yet. Shown as disabled "Coming soon" so no
+                      user is sent to a dead URL. Wire the href once the page exists. */}
+                  <div
+                    className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-slate-400 cursor-not-allowed select-none"
+                    aria-disabled="true"
+                    title="Coming soon"
                   >
-                    <HelpCircle size={16} className="text-slate-400" />
-                    Help &amp; documentation
-                  </a>
+                    <span className="flex items-center gap-3">
+                      <HelpCircle size={16} className="text-slate-300" />
+                      Help &amp; documentation
+                    </span>
+                    <span className="text-[10px] font-medium text-slate-300">
+                      Coming soon
+                    </span>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHelpOpen(false);
-                      window.dispatchEvent(new CustomEvent("wf-open-shortcuts"));
-                    }}
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                  {/* Contact support — same: routes to Landing Page support form/inbox
+                      once built. Disabled for now to avoid a broken mailto target. */}
+                  <div
+                    className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-slate-400 cursor-not-allowed select-none"
+                    aria-disabled="true"
+                    title="Coming soon"
                   >
-                    <CheckCheck size={16} className="text-slate-400" />
-                    Keyboard shortcuts
-                  </button>
-
-                  <a
-                    href="mailto:support@workfine.app"
-                    onClick={() => setHelpOpen(false)}
-                    className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
-                  >
-                    <MessageCircle size={16} className="text-slate-400" />
-                    Contact support
-                  </a>
+                    <span className="flex items-center gap-3">
+                      <MessageCircle size={16} className="text-slate-300" />
+                      Contact support
+                    </span>
+                    <span className="text-[10px] font-medium text-slate-300">
+                      Coming soon
+                    </span>
+                  </div>
                 </div>
+
 
                 <div className="border-t border-slate-100 px-4 py-2.5">
                   <p className="text-[10px] text-slate-400">

@@ -49,6 +49,7 @@ src\lib\firebase\tasks.ts
 src\lib\firebase\users.ts
 src\lib\firebase\workspaceMembers.ts
 src\pages\AcceptTaskInvitePage.tsx
+src\pages\AuthActionPage.tsx
 src\pages\CalendarPage.tsx
 src\pages\ConversationsPage.tsx
 src\pages\DashboardPage.tsx

@@ -8,7 +8,8 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  fetchSignInMethodsForEmail,
+    fetchSignInMethodsForEmail,
+  sendPasswordResetEmail,
 } from 'firebase/auth';
 import { auth } from './config';
 
@@ -40,6 +41,11 @@ export const authService = {
     } catch {
       return [];
     }
+  },
+
+    /** Sends a password-reset email to the given address. Throws raw FirebaseError. */
+  async sendPasswordReset(email: string) {
+    await sendPasswordResetEmail(auth, email);
   },
 
   async signOut() {

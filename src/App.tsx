@@ -35,6 +35,7 @@ import JoinWorkspacePage from "./pages/JoinWorkspacePage";
 import AcceptTaskInvitePage from "./pages/AcceptTaskInvitePage";
 import PendingTaskInviteGate from "./components/PendingTaskInviteGate";
 import ConversationsPage from "./pages/ConversationsPage";
+import AuthActionPage from "./pages/AuthActionPage";
 
 
 function PresenceTracker() {
@@ -125,6 +126,10 @@ export default function App() {
           {/* Public task invite route.
               Important: this is OUTSIDE AppDataProvider and ProtectedRoute. */}
           <Route path="/accept-task-invite" element={<AcceptTaskInvitePage />} />
+                    {/* Public Firebase auth-action handler (password reset / email verify).
+              Branded replacement for the default Firebase action page.
+              Must stay OUTSIDE ProtectedRoute — users hit it while logged out. */}
+          <Route path="/auth/action" element={<AuthActionPage />} />
 
           {/* Protected app routes */}
           <Route element={<ProtectedRoute />}>
