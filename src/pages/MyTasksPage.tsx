@@ -229,14 +229,18 @@
 
 
 
-    const [editForm, setEditForm] = useState({
+        const [editForm, setEditForm] = useState({
       title: "",
       description: "",
       status: "To Do",
       priority: "Medium",
       assignee: "",
+      startDate: "",
+      startTime: "",
       dueDate: "",
+      dueTime: "",
     });
+
 
       const [editSaving, setEditSaving] = useState(false);
           // Confirmation modal state for task deletion.
@@ -1060,7 +1064,7 @@
       }
     }
 
-    function openEdit(t: DetailTask) {
+        function openEdit(t: DetailTask) {
       setEditTask(t);
 
       setEditForm({
@@ -1069,9 +1073,13 @@
         status: t.status ?? "To Do",
         priority: t.priority ?? "Medium",
         assignee: t.assignee ?? "",
+        startDate: (t as any).startDate ?? "",
+        startTime: (t as any).startTime ?? "",
         dueDate: t.dueDate ?? "",
+        dueTime: (t as any).dueTime ?? "",
       });
     }
+
       async function saveEdit() {
       if (!user?.uid || !editTask || !editForm.title.trim()) return;
       if (isViewerOnly) {
@@ -1082,16 +1090,29 @@
       setEditSaving(true);
 
 
-      try {
+            try {
+        // Write ONLY the clean form fields. We deliberately do NOT spread
+        // ...editTask here: that raw task object can contain `undefined`
+        // fields (e.g. isSharedTask), and Firestore setDoc rejects any
+        // undefined value. { merge: true } already preserves every existing
+        // field on the doc, so the spread was both unnecessary and the bug.
         await setDoc(
           doc(db, "users", user.uid, "tasks", editTask.id),
           {
-            ...editTask,
-            ...editForm,
+            title: editForm.title,
+            description: editForm.description,
+            status: editForm.status,
+            priority: editForm.priority,
+            assignee: editForm.assignee,
+            startDate: editForm.startDate,
+            startTime: editForm.startTime,
+            dueDate: editForm.dueDate,
+            dueTime: editForm.dueTime,
             updatedAt: serverTimestamp(),
           },
           { merge: true }
         );
+
 
         /**
          * Non-shared tasks can update the workspace source.
@@ -1853,23 +1874,55 @@
                   </div>
                 </div>
 
+                                {/* Assignee — full width (single field), matches Project modal */}
+                <div>
+                  <label className="text-xs font-medium text-gray-600 block mb-1">
+                    Assignee
+                  </label>
+
+                  <input
+                    type="text"
+                    placeholder="Name or email"
+                    value={editForm.assignee}
+                    onChange={(e) =>
+                      setEditForm((f) => ({
+                        ...f,
+                        assignee: e.target.value,
+                      }))
+                    }
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Start Date | Due Date (each with a time input), matches Project modal */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-medium text-gray-600 block mb-1">
-                      Assignee
+                      Start Date
                     </label>
 
                     <input
-                      type="text"
-                      placeholder="Name or email"
-                      value={editForm.assignee}
+                      type="date"
+                      value={editForm.startDate}
                       onChange={(e) =>
                         setEditForm((f) => ({
                           ...f,
-                          assignee: e.target.value,
+                          startDate: e.target.value,
                         }))
                       }
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+
+                    <input
+                      type="time"
+                      value={editForm.startTime}
+                      onChange={(e) =>
+                        setEditForm((f) => ({
+                          ...f,
+                          startTime: e.target.value,
+                        }))
+                      }
+                      className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
@@ -1888,6 +1941,18 @@
                         }))
                       }
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+
+                    <input
+                      type="time"
+                      value={editForm.dueTime}
+                      onChange={(e) =>
+                        setEditForm((f) => ({
+                          ...f,
+                          dueTime: e.target.value,
+                        }))
+                      }
+                      className="mt-2 w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
                 </div>
