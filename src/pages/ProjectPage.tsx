@@ -17,6 +17,22 @@ import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
 import TaskDetailPanel from "../components/TaskDetailPanel";
 import DueCountdown from "../components/DueCountdown";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical } from "lucide-react";
 
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -101,6 +117,52 @@ function getTimeMs(value: any): number {
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : 0;
 }
+// Sortable wrapper for a single task row. Presentational only — it provides
+// the drag transform + the grip handle; the row's content is passed as children.
+function SortableTaskRow({
+  id,
+  dragEnabled,
+  onOpen,
+  children,
+}: {
+  id: string;
+  dragEnabled: boolean;
+  onOpen: () => void;
+  // children is a render function so we can hand the drag props down into
+  // the SAME action column as the edit/delete icons (no extra grid child).
+  children: (dragHandleProps: {
+    attributes: any;
+    listeners: any;
+    dragEnabled: boolean;
+  }) => React.ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled: !dragEnabled });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      onClick={onOpen}
+      className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_7rem] gap-4 px-5 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors items-center group cursor-pointer bg-white"
+    >
+      {children({ attributes, listeners, dragEnabled })}
+    </div>
+  );
+}
+
 
 // ─── Main Component ───────────────────────────────────────────────────────
 const ProjectPage = () => {
@@ -318,7 +380,16 @@ const ProjectPage = () => {
           (d) => ({ id: d.id, ...d.data() } as Task)
         );
 
-        data.sort((a: any, b: any) => getTimeMs(b.createdAt) - getTimeMs(a.createdAt));
+              // Sort by persisted drag order when present; fall back to createdAt
+        // (newest first) so tasks never dragged keep their existing order.
+        data.sort((a: any, b: any) => {
+          const ao = typeof a.order === "number" ? a.order : null;
+          const bo = typeof b.order === "number" ? b.order : null;
+          if (ao !== null && bo !== null) return ao - bo;
+          if (ao !== null) return -1;
+          if (bo !== null) return 1;
+          return getTimeMs(b.createdAt) - getTimeMs(a.createdAt);
+        });
 
         setTasks(data);
       },
@@ -558,6 +629,52 @@ const ProjectPage = () => {
       status: next,
       updatedAt: serverTimestamp(),
     });
+  };
+  // ── Drag reorder (global per-project order) ──────────────────────────────
+  // Only owner/admin/member may reorder (canManageTasksHere). Disabled while a
+  // filter/search is active so we never reorder a partial subset. Persists an
+  // `order` number per task via the existing updateDoc write path.
+  const dragEnabled =
+    canManageTasksHere && filter === "all" && search.trim() === "";
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    if (!dragEnabled || !activeProjectWorkspaceId) return;
+
+    const oldIndex = filtered.findIndex((t) => t.id === active.id);
+    const newIndex = filtered.findIndex((t) => t.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const reordered = arrayMove(filtered, oldIndex, newIndex);
+
+    // Optimistic local update so the row snaps into place instantly.
+    setTasks((prev) => {
+      const byId = new Map(reordered.map((t, i) => [t.id, i]));
+      return [...prev].sort((a, b) => {
+        const ai = byId.has(a.id) ? (byId.get(a.id) as number) : 9999;
+        const bi = byId.has(b.id) ? (byId.get(b.id) as number) : 9999;
+        return ai - bi;
+      });
+    });
+
+    // Persist new order for every task (spacing by 10 leaves room for inserts).
+    try {
+      await Promise.all(
+        reordered.map((t, i) =>
+          updateDoc(
+            doc(db, "workspaces", activeProjectWorkspaceId, "tasks", t.id),
+            { order: (i + 1) * 10, updatedAt: serverTimestamp() }
+          )
+        )
+      );
+    } catch (e: any) {
+      console.error("[ProjectPage] reorder persist:", e?.message || e);
+    }
   };
 
   // ── Open edit modal ────────────────────────────────────────────────────
@@ -882,11 +999,11 @@ const ProjectPage = () => {
           </div>
         </div>
 
-        {/* ── LIST VIEW ─────────────────────────────────────────────────── */}
+                {/* ── LIST VIEW ─────────────────────────────────────────────────── */}
         {view === "list" && (
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-                        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_5rem] gap-4 px-5 py-3 border-b border-gray-100 bg-gray-50">
-                            {["Task Name", "Status", "Priority", "Assignee", "Due Date", ""].map(
+                        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_7rem] gap-4 px-5 py-3 border-b border-gray-100 bg-gray-50">
+              {["Task Name", "Status", "Priority", "Assignee", "Due Date", ""].map(
                 (h) => (
                   <span
                     key={h}
@@ -901,190 +1018,224 @@ const ProjectPage = () => {
             </div>
 
             {filtered.length > 0 ? (
-              filtered.map((task) => (
-                                                <div
-                  key={task.id}
-                  onClick={() => openDrawer(task)}
-                  className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_5rem] gap-4 px-5 py-3.5 border-b border-gray-50 last:border-0 hover:bg-gray-50/70 transition-colors items-start group cursor-pointer"
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={filtered.map((t) => t.id)}
+                  strategy={verticalListSortingStrategy}
                 >
-
-                  <div className="flex items-center gap-3">
-                                        <button
-                      disabled={!canEditProjectContent}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cycleStatus(task);
-                      }}
-                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
-                        task.status === "Done"
-                          ? "border-emerald-500 bg-emerald-500"
-                          : "border-gray-300 hover:border-blue-400"
-                      }`}
+                  {filtered.map((task) => (
+                                        <SortableTaskRow
+                      key={task.id}
+                      id={task.id}
+                      dragEnabled={dragEnabled}
+                      onOpen={() => openDrawer(task)}
                     >
-                      {task.status === "Done" && (
-                        <svg
-                          className="w-3 h-3 text-white"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={3}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
-                      )}
-                    </button>
+                      {({ attributes, listeners, dragEnabled }) => (
+                        <>
+                      {/* Column 1 — status circle + title */}
 
-                    <div className="min-w-0">
-                      <p
-                        className={`text-sm font-medium truncate ${
-                          task.status === "Done"
-                            ? "line-through text-gray-400"
-                            : "text-gray-800"
+                      <div className="flex items-center gap-3">
+                        <button
+                          disabled={!canEditProjectContent}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            cycleStatus(task);
+                          }}
+                          className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                            task.status === "Done"
+                              ? "border-emerald-500 bg-emerald-500"
+                              : "border-gray-300 hover:border-blue-400"
+                          }`}
+                        >
+                          {task.status === "Done" && (
+                            <svg
+                              className="w-3 h-3 text-white"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={3}
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          )}
+                        </button>
+
+                        <div className="min-w-0">
+                          <p
+                            className={`text-sm font-medium truncate ${
+                              task.status === "Done"
+                                ? "line-through text-gray-400"
+                                : "text-gray-800"
+                            }`}
+                          >
+                            {task.taskCode && (
+                              <span className="text-xs text-slate-400 mr-2">
+                                {task.taskCode}
+                              </span>
+                            )}
+                            {task.title}
+                          </p>
+
+                          {task.description && (
+                            <p className="text-xs text-gray-400 truncate mt-0.5">
+                              {task.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Column 2 — status */}
+                      <span
+                        className={`text-xs px-2.5 py-1 rounded-full font-medium w-fit ${
+                          STATUS_STYLE[task.status] || STATUS_STYLE["To Do"]
                         }`}
                       >
-                        {task.taskCode && (
-                          <span className="text-xs text-slate-400 mr-2">
-                            {task.taskCode}
+                        {task.status}
+                      </span>
+
+                      {/* Column 3 — priority */}
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            PRIORITY_DOT[task.priority] || PRIORITY_DOT.Medium
+                          }`}
+                        />
+                        <span
+                          className={`text-xs font-medium ${
+                            task.priority === "High"
+                              ? "text-red-600"
+                              : task.priority === "Medium"
+                              ? "text-amber-600"
+                              : "text-gray-500"
+                          }`}
+                        >
+                          {task.priority}
+                        </span>
+                      </div>
+
+                      {/* Column 4 — assignee */}
+                      <div className="flex items-center gap-1.5">
+                        {task.assignee && task.assignee !== "Unassigned" ? (
+                          <>
+                            <div
+                              style={{ backgroundColor: "#4C28EE" }}
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                            >
+                              {task.assignee.charAt(0).toUpperCase()}
+                            </div>
+
+                            <span className="text-xs text-gray-600 truncate max-w-[140px]">
+                              {assignedToMe(task) ? (
+                                <span className="text-violet-600 font-medium">
+                                  {user?.displayName ?? user?.email ?? "You"}
+                                </span>
+                              ) : (
+                                task.assignee
+                              )}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-gray-400 italic">
+                            Unassigned
                           </span>
                         )}
-                        {task.title}
-                      </p>
+                      </div>
 
-                      {task.description && (
-                        <p className="text-xs text-gray-400 truncate mt-0.5">
-                          {task.description}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <span
-                    className={`text-xs px-2.5 py-1 rounded-full font-medium w-fit ${
-                      STATUS_STYLE[task.status] || STATUS_STYLE["To Do"]
-                    }`}
-                  >
-                    {task.status}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        PRIORITY_DOT[task.priority] || PRIORITY_DOT.Medium
-                      }`}
-                    />
-                    <span
-                      className={`text-xs font-medium ${
-                        task.priority === "High"
-                          ? "text-red-600"
-                          : task.priority === "Medium"
-                          ? "text-amber-600"
-                          : "text-gray-500"
-                      }`}
-                    >
-                      {task.priority}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    {task.assignee && task.assignee !== "Unassigned" ? (
-                                            <>
-                        <div
-                          style={{ backgroundColor: "#4C28EE" }}
-                          className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                      {/* Column 5 — due date + countdown (inline) */}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span
+                          className={`text-xs ${
+                            task.dueDate &&
+                            new Date(task.dueDate) < new Date() &&
+                            task.status !== "Done"
+                              ? "text-red-500 font-medium"
+                              : "text-gray-500"
+                          }`}
                         >
-                          {task.assignee.charAt(0).toUpperCase()}
-                        </div>
-
-
-                        <span className="text-xs text-gray-600 truncate max-w-[140px]">
-                          {assignedToMe(task) ? (
-                            <span className="text-violet-600 font-medium">
-                              {user?.displayName ?? user?.email ?? "You"}
-                            </span>
-                          ) : (
-                            task.assignee
-                          )}
+                          {task.dueDate
+                            ? new Date(
+                                task.dueDate + "T12:00:00"
+                              ).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                              })
+                            : "—"}
                         </span>
-                      </>
-                    ) : (
-                      <span className="text-xs text-gray-400 italic">
-                        Unassigned
-                      </span>
-                    )}
-                  </div>
-                                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span
-                      className={`text-xs ${
-                        task.dueDate &&
-                        new Date(task.dueDate) < new Date() &&
-                        task.status !== "Done"
-                          ? "text-red-500 font-medium"
-                          : "text-gray-500"
-                      }`}
-                    >
-                      {task.dueDate
-                        ? new Date(
-                            task.dueDate + "T12:00:00"
-                          ).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })
-                        : "—"}
-                    </span>
 
-                    {/* Live countdown chip — augments the date, never replaces it. */}
-                    <DueCountdown
-  startDate={(task as any).startDate}
-  startTime={(task as any).startTime}
-  dueDate={task.dueDate}
-  dueTime={(task as any).dueTime}
-  status={task.status}
-  title={task.title}
-/>
-                  </div>
+                        {/* Live countdown chip — augments the date, never replaces it. */}
+                        <DueCountdown
+                          startDate={(task as any).startDate}
+                          startTime={(task as any).startTime}
+                          dueDate={task.dueDate}
+                          dueTime={(task as any).dueTime}
+                          status={task.status}
+                          title={task.title}
+                        />
+                      </div>
 
+                                            {/* Column 6 — action cell: edit, delete, and drag grip
+                          all live together on ONE line (no extra grid child).
+                          Icons/grip fade in on hover. Roles are unchanged. */}
+                      <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {canEditTasks && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEdit(task);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-xs"
+                            >
+                              ✏️
+                            </button>
+                          )}
 
+                          {canDeleteTasks && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(task.id);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors text-xs"
+                            >
+                              🗑
+                            </button>
+                          )}
 
-                                                    {(canEditTasks || canDeleteTasks) && (
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {canEditTasks && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEdit(task);
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-xs"
-                        >
-                          ✏️
-                        </button>
+                          {dragEnabled && (
+                            <button
+                              type="button"
+                              {...attributes}
+                              {...listeners}
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label="Drag to reorder"
+                              className="p-1.5 text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing"
+                            >
+                              <GripVertical size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                        </>
                       )}
-
-                      {canDeleteTasks && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(task.id);
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors text-xs"
-                        >
-                          🗑
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                </div>
-              ))
+                    </SortableTaskRow>
+                  ))}
+                </SortableContext>
+              </DndContext>
             ) : (
               <div className="py-20 flex flex-col items-center gap-2">
                 <p className="text-3xl">📋</p>
                 <p className="text-sm text-gray-400 font-medium">No tasks found</p>
-                                {canEditProjectContent && (
-                  <button
+                {canEditProjectContent && (
+                                    <button
                     onClick={() => {
                       setEditTask(null);
                       setForm(emptyTask());
@@ -1101,6 +1252,7 @@ const ProjectPage = () => {
         )}
 
         {/* ── BOARD VIEW ────────────────────────────────────────────────── */}
+
         {view === "board" && (
           <div className="grid grid-cols-4 gap-3">
             {STATUS_COLUMNS.map((col) => {
