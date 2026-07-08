@@ -30,7 +30,10 @@ import {
   MoreVertical,
   Pencil,
   Trash2,
+  PanelLeftClose,
+  PanelLeft,
 } from "lucide-react";
+
 import { motion, AnimatePresence } from "motion/react";
 import { useAuth } from "../context/AuthContext";
 import { cn } from "../lib/utils";
@@ -55,6 +58,28 @@ export default function Sidebar() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  // Desktop-only collapse state, persisted to localStorage so the choice is
+  // global across sessions/pages. Mobile drawer is unaffected (it always
+  // shows the full sidebar). Pure UI — touches no roles, data, or protected logic.
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("wf-sidebar-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = () => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("wf-sidebar-collapsed", next ? "1" : "0");
+      } catch {
+        // ignore storage failures (private mode, etc.)
+      }
+      return next;
+    });
+  };
 
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
@@ -352,7 +377,12 @@ export default function Sidebar() {
 
   return (
     <>
-      <div className="relative hidden h-screen w-64 flex-shrink-0 lg:block">
+            <div
+        className={cn(
+          "relative hidden h-screen flex-shrink-0 transition-[width] duration-200 ease-in-out lg:block",
+          isCollapsed ? "w-20" : "w-64"
+        )}
+      >
         <aside className="absolute inset-0 flex flex-col border-r border-slate-800 bg-[#0F172A]">
           <SidebarContent
             user={user}
@@ -371,10 +401,13 @@ export default function Sidebar() {
             isProjectOwner={isProjectOwner}
             isPrivateProject={isPrivateProject}
             isGuestView={isGuestView}
+            isCollapsed={isCollapsed}
+            onToggleCollapsed={toggleCollapsed}
             onClose={() => {}}
           />
         </aside>
       </div>
+
 
       <button
         type="button"
@@ -472,9 +505,11 @@ interface SidebarContentProps {
   canDeleteSharedProjects: boolean;
   isProjectOwner: (project: any) => boolean;
   isPrivateProject: (project: any) => boolean;
-  onClose: () => void;
+    onClose: () => void;
   showCloseButton?: boolean;
   isGuestView?: boolean;
+  isCollapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 
@@ -496,10 +531,13 @@ function SidebarContent({
   canDeleteSharedProjects,
   isProjectOwner,
   isPrivateProject,
-  onClose,
+    onClose,
   showCloseButton = false,
   isGuestView = false,
+  isCollapsed = false,
+  onToggleCollapsed,
 }: SidebarContentProps) {
+
   // Tracks which project's kebab menu is open (by composite key).
   const [openMenuKey, setOpenMenuKey] = useState<string | null>(null);
 
@@ -620,21 +658,44 @@ function SidebarContent({
 
   return (
     <>
-      <div className="flex flex-shrink-0 items-center justify-between p-6">
-        <Link to="/" onClick={onClose} className="flex items-center gap-3">
+                  <div
+        className={cn(
+          "flex flex-shrink-0",
+          isCollapsed
+            ? // COLLAPSED: stack logo + toggle vertically, centered on the
+              // same axis as the nav icons below.
+              "flex-col items-center gap-4 px-2 py-6"
+            : // EXPANDED: original horizontal row, logo left / toggle right.
+              "items-center justify-between p-6"
+        )}
+      >
+        <Link
+          to="/"
+          onClick={onClose}
+          className={cn(
+            "flex items-center overflow-hidden",
+            isCollapsed ? "justify-center" : "gap-3"
+          )}
+          title="WorkFine"
+        >
           <img
             src="/logo.png?v=2"
             alt="Workfine Logo"
-            className="h-8 w-8 rounded-lg object-contain shadow-lg shadow-indigo-500/20"
+            className={cn(
+              "flex-shrink-0 rounded-lg object-contain shadow-lg shadow-indigo-500/20",
+              // Bigger logo when collapsed so it anchors the rail cleanly.
+              isCollapsed ? "h-10 w-10" : "h-8 w-8"
+            )}
           />
-                    <span className="text-2xl tracking-tight">
-            <span className="font-extrabold text-white">Work</span>
-            <span className="font-light text-white">Fine</span>
-          </span>
-
+          {!isCollapsed && (
+            <span className="text-2xl tracking-tight whitespace-nowrap">
+              <span className="font-extrabold text-white">Work</span>
+              <span className="font-light text-white">Fine</span>
+            </span>
+          )}
         </Link>
 
-        {showCloseButton && (
+        {showCloseButton ? (
           <button
             type="button"
             onClick={onClose}
@@ -642,41 +703,75 @@ function SidebarContent({
           >
             <X size={20} />
           </button>
+        ) : (
+          // Desktop-only collapse toggle. Hidden when the mobile drawer is
+          // showing (showCloseButton === true) so it never overlaps the X.
+          onToggleCollapsed && (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              className={cn(
+                "hidden text-slate-400 transition-colors hover:text-white lg:flex lg:items-center lg:justify-center",
+                // When collapsed, give it a subtle hover surface so the
+                // centered icon reads as a real tap target in the rail.
+                isCollapsed ? "h-9 w-9 rounded-lg hover:bg-white/10" : ""
+              )}
+              title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {isCollapsed ? <PanelLeft size={20} /> : <PanelLeftClose size={18} />}
+            </button>
+          )
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto px-4">
-        <div className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
-          Workspace
-        </div>
 
-        {navItems.map((item) => (
+
+            <nav className="flex-1 space-y-1 overflow-y-auto px-4">
+        {!isCollapsed && (
+          <div className="mb-2 mt-4 px-2 text-xs font-semibold uppercase tracking-widest text-slate-500">
+            Workspace
+          </div>
+        )}
+
+
+                        {navItems.map((item) => (
           <NavLink
             key={item.path}
             to={item.path}
             onClick={onClose}
+            title={isCollapsed ? item.name : undefined}
             className={({ isActive }) =>
               cn(
-                "group flex items-center gap-3 rounded-xl px-3 py-2 transition-all",
+                "group flex items-center rounded-xl py-2 transition-all",
+                // COLLAPSED: center the icon in a square hit-area so the active
+                // blue chip reads as a clean square, matching the rail width.
+                // EXPANDED: original full-width pill with label.
+                isCollapsed ? "mx-auto h-10 w-10 justify-center px-0" : "gap-3 px-3",
                 isActive
                   ? "bg-blue-600/20 text-blue-300"
-                  : "text-slate-400 hover:text-white"
+                  : "text-slate-400 hover:bg-white/5 hover:text-white"
               )
             }
           >
             <item.icon
               size={18}
               className={cn(
-                "transition-transform group-hover:scale-110",
+                "flex-shrink-0 transition-transform group-hover:scale-110",
                 location.pathname === item.path ? "text-blue-300" : ""
               )}
             />
-            <span className="text-sm font-medium">{item.name}</span>
+            {!isCollapsed && (
+              <span className="text-sm font-medium">{item.name}</span>
+            )}
           </NavLink>
         ))}
 
-                                             {!isGuestView && (
+
+
+                                                                                          {!isGuestView && !isCollapsed && (
           <div className="mt-6 px-3">
+
             {/* Section divider — separates Workspace nav from My Projects */}
             <div className="mx-2 mb-4 h-px bg-slate-700/60" />
 
@@ -790,8 +885,13 @@ function SidebarContent({
 
       </nav>
 
-      <div className="flex-shrink-0 border-t border-slate-800 p-4">
-        <div className="flex items-center gap-3 rounded-xl bg-slate-800/30 p-2">
+            <div className="flex-shrink-0 border-t border-slate-800 p-4">
+        <div
+          className={cn(
+            "flex items-center rounded-xl bg-slate-800/30 p-2",
+            isCollapsed ? "justify-center" : "gap-3"
+          )}
+        >
                              <div className="relative flex-shrink-0">
             {resolveAvatarPhoto(user?.photoURL) ? (
               <img
@@ -834,26 +934,31 @@ function SidebarContent({
 
 
 
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-white">
-              {user?.displayName ??
-                (user?.email
-                  ? user.email.split("@")[0].replace(/[._-]/g, " ")
-                  : "User")}
-            </p>
-            <p className="truncate text-[10px] font-medium text-slate-500">
-              {user?.email ?? ""}
-            </p>
-          </div>
+                    {!isCollapsed && (
+            <>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-white">
+                  {user?.displayName ??
+                    (user?.email
+                      ? user.email.split("@")[0].replace(/[._-]/g, " ")
+                      : "User")}
+                </p>
+                <p className="truncate text-[10px] font-medium text-slate-500">
+                  {user?.email ?? ""}
+                </p>
+              </div>
 
-          <button
-            type="button"
-            onClick={signOutUser}
-            className="flex-shrink-0 text-slate-500 transition-colors hover:text-white"
-            title="Sign out"
-          >
-            <LogOut size={16} />
-          </button>
+              <button
+                type="button"
+                onClick={signOutUser}
+                className="flex-shrink-0 text-slate-500 transition-colors hover:text-white"
+                title="Sign out"
+              >
+                <LogOut size={16} />
+              </button>
+            </>
+          )}
+
         </div>
       </div>
     </>

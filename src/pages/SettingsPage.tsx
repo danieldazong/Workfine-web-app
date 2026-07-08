@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   User, Shield, Building2, Bell, Camera, Check,
   Copy, LogOut, Trash2, AlertTriangle, Loader2,
-  ChevronRight, Upload,
+  ChevronRight, Upload, Link as LinkIcon, Plus, X, Pencil,
 } from "lucide-react";
 import {
   doc, updateDoc, serverTimestamp, getDoc, setDoc,
@@ -18,6 +18,11 @@ import { db, auth, storage } from "../lib/firebase/config";
 import { useAuth } from "../context/AuthContext";
 import { useAppData } from "../context/AppDataContext";
 import { propagateUserPhotoURL } from "../lib/firebase/users";
+import {
+  subscribeUserLinks, addUserLink, updateUserLink, deleteUserLink, UserLink,
+} from "../lib/firebase/links";
+import { normalizeUrl } from "../lib/linkPlatform";
+import LinkAvatar from "../components/LinkAvatar";
 
 
 
@@ -106,7 +111,8 @@ function resolveWorkspaceDisplayId(
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Section = "profile" | "account" | "workspace" | "notifications";
+type Section = "profile" | "account" | "workspace" | "notifications" | "links";
+
 
 interface ProfileForm {
   displayName: string;
@@ -132,8 +138,10 @@ const NAV_ITEMS: { key: Section; label: string; icon: React.FC<any> }[] = [
   { key: "profile",       label: "Profile",            icon: User      },
   { key: "account",       label: "Account & Security", icon: Shield    },
   { key: "workspace",     label: "Workspace",          icon: Building2 },
+  { key: "links",         label: "Links",              icon: LinkIcon  },
   { key: "notifications", label: "Notifications",      icon: Bell      },
 ];
+
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
@@ -310,6 +318,66 @@ export default function SettingsPage() {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [showLeaveConfirm,  setShowLeaveConfirm]  = useState(false);
   const [dangerLoading,     setDangerLoading]     = useState(false);
+    // ── Links (per-user shortcuts) ────────────────────────────────────────────
+  const [links, setLinks]           = useState<UserLink[]>([]);
+  const [linkTitle, setLinkTitle]   = useState("");
+  const [linkUrl, setLinkUrl]       = useState("");
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [editingLinkId, setEditingLinkId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    const unsub = subscribeUserLinks(user.uid, setLinks);
+    return () => unsub();
+  }, [user?.uid]);
+
+  const resetLinkForm = () => {
+    setLinkTitle("");
+    setLinkUrl("");
+    setEditingLinkId(null);
+  };
+
+  const saveLink = async () => {
+    if (!user?.uid) return;
+    const t = linkTitle.trim();
+    const u = linkUrl.trim();
+    if (!t) { showToast("Link title cannot be empty.", "error"); return; }
+    if (!u) { showToast("Link URL cannot be empty.", "error"); return; }
+    setLinkSaving(true);
+    try {
+      if (editingLinkId) {
+        await updateUserLink(user.uid, editingLinkId, t, u);
+        showToast("Link updated.");
+      } else {
+        await addUserLink(user.uid, t, u);
+        showToast("Link added.");
+      }
+      resetLinkForm();
+    } catch (err) {
+      console.error("[Settings] saveLink error:", err);
+      showToast("Failed to save link. Please try again.", "error");
+    } finally {
+      setLinkSaving(false);
+    }
+  };
+
+  const startEditLink = (l: UserLink) => {
+    setEditingLinkId(l.id);
+    setLinkTitle(l.title);
+    setLinkUrl(l.url);
+  };
+
+  const removeLink = async (id: string) => {
+    if (!user?.uid) return;
+    try {
+      await deleteUserLink(user.uid, id);
+      if (editingLinkId === id) resetLinkForm();
+      showToast("Link removed.");
+    } catch (err) {
+      console.error("[Settings] removeLink error:", err);
+      showToast("Failed to remove link.", "error");
+    }
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   const showToast = useCallback(
@@ -1295,6 +1363,119 @@ export default function SettingsPage() {
             )}
 
           </div>
+                      {/* ════════════════════════════════════════════════════════════
+                LINKS SECTION
+            ════════════════════════════════════════════════════════════ */}
+            {section === "links" && (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                <h2 className="text-sm font-semibold text-slate-800 mb-1">
+                  Your Links
+                </h2>
+                <p className="text-xs text-slate-400 mb-5">
+                  Save external links (e.g. YouTube, Zoom, Facebook). They appear
+                  on your Dashboard.
+                </p>
+
+                {/* Add / edit form */}
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.5fr_auto] gap-3 mb-5">
+                  <input
+                    type="text"
+                    value={linkTitle}
+                    onChange={(e) => setLinkTitle(e.target.value)}
+                    maxLength={60}
+                    placeholder="Title (e.g. Team Zoom)"
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5
+                      text-sm text-slate-700 focus:outline-none focus:border-violet-400
+                      focus:bg-white transition-colors"
+                  />
+                  <input
+                    type="text"
+                    value={linkUrl}
+                    onChange={(e) => setLinkUrl(e.target.value)}
+                    placeholder="URL (e.g. https://zoom.us/j/123)"
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5
+                      text-sm text-slate-700 focus:outline-none focus:border-violet-400
+                      focus:bg-white transition-colors"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveLink}
+                      disabled={linkSaving}
+                      style={{ backgroundColor: "#4C28EE" }}
+                      className="flex items-center gap-2 px-4 py-2.5 hover:opacity-90
+                        disabled:opacity-50 text-white text-sm font-semibold rounded-xl
+                        transition-colors"
+                    >
+                      {linkSaving ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : editingLinkId ? (
+                        <><Check size={14} /> Update</>
+                      ) : (
+                        <><Plus size={14} /> Add</>
+                      )}
+                    </button>
+                    {editingLinkId && (
+                      <button
+                        onClick={resetLinkForm}
+                        className="flex items-center gap-1 px-3 py-2.5 bg-white border
+                          border-slate-200 hover:bg-slate-50 text-slate-600 text-sm
+                          rounded-xl transition-colors"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Links list */}
+                                {links.length > 0 ? (
+                  <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                    {links.map((l) => (
+                      <div
+                        key={l.id}
+                        className="flex items-center gap-3 p-3 border border-slate-100
+                          rounded-xl hover:bg-slate-50 transition-colors"
+                      >
+                        <LinkAvatar url={l.url} title={l.title} size={36} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-slate-700 truncate">
+                            {l.title || "Untitled"}
+                          </p>
+                          <a
+                            href={normalizeUrl(l.url)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-violet-600 hover:underline truncate block"
+                          >
+                            {l.url}
+                          </a>
+                        </div>
+                        <button
+                          onClick={() => startEditLink(l)}
+                          className="p-2 text-slate-400 hover:text-violet-600 transition-colors"
+                          title="Edit link"
+                        >
+                          <Pencil size={15} />
+                        </button>
+                        <button
+                          onClick={() => removeLink(l.id)}
+                          className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                          title="Remove link"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-8 flex flex-col items-center justify-center gap-1">
+                    <LinkIcon size={20} className="text-slate-300" />
+                    <p className="text-xs text-slate-400">No links yet.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
         </div>
       </div>
 

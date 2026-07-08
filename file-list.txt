@@ -10,9 +10,11 @@ src\components\DueAlertHost.tsx
 src\components\DueCountdown.tsx
 src\components\FloatingNoteButton.tsx
 src\components\InviteMemberModal.tsx
+src\components\LinkAvatar.tsx
 src\components\Navbar.tsx
 src\components\PageShell.tsx
 src\components\PendingTaskInviteGate.tsx
+src\components\QuickLinksCard.tsx
 src\components\Sidebar.tsx
 src\components\TakeANotePanel.tsx
 src\components\TaskDetailModal.tsx
@@ -32,6 +34,7 @@ src\hooks\useMentionableUsers.ts
 src\hooks\useNotifications.ts
 src\hooks\usePageTitle.ts
 src\hooks\usePresenceHeartbeat.ts
+src\lib\linkPlatform.ts
 src\lib\monogram.ts
 src\lib\projectAccess.ts
 src\lib\taskAccessLabels.ts
@@ -42,6 +45,7 @@ src\lib\firebase\cleanup.ts
 src\lib\firebase\cleanupProjects.ts
 src\lib\firebase\config.ts
 src\lib\firebase\files.ts
+src\lib\firebase\links.ts
 src\lib\firebase\notifications.ts
 src\lib\firebase\projects.ts
 src\lib\firebase\storage.ts

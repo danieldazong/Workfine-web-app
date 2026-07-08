@@ -14,6 +14,8 @@ import CreateProjectModal from "../components/CreateProjectModal";
 import { getOverdueTasks } from "../utils/overdueUtils";
 import { FolderKanban } from "lucide-react";
 import DueCountdown from "../components/DueCountdown";
+import QuickLinksCard from "../components/QuickLinksCard";
+
 
 
 
@@ -549,14 +551,23 @@ const DashboardPage = () => {
           </button>
         </div>
 
-        {/* ── Overdue Banner ───────────────────────────────────────────── */}
+                {/* ── Overdue Banner ───────────────────────────────────────────── */}
         {overdueTasks.length > 0 && !dismissed && (
           <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 mb-4">
             <p className="text-sm text-red-600 font-medium">
               ⚠️ {overdueTasks.length} Overdue{" "}
               {overdueTasks.length === 1 ? "Task" : "Tasks"}:{" "}
               <span className="font-normal">
-                {overdueTasks.map(t => toDisplayText((t as any).title, "Untitled task")).join(", ")}
+                {overdueTasks
+                  .slice(0, 3)
+                  .map((t) => toDisplayText((t as any).title, "Untitled task"))
+                  .join(", ")}
+                {overdueTasks.length > 3 && (
+                  <span className="text-red-400">
+                    {" "}
+                    +{overdueTasks.length - 3} more
+                  </span>
+                )}
               </span>
             </p>
             <div className="flex items-center gap-3">
@@ -1096,9 +1107,11 @@ const DashboardPage = () => {
           </div>
         )}
 
-        {/* ── ROW 6: Team Members + My Notes ──────────────────────────── */}
+                {/* ── ROW 6: Team Members + My Notes ──────────────────────────── */}
         <div className="grid grid-cols-2 gap-3 mb-4">
 
+          {/* Quick Links (per-user shortcuts) */}
+          <QuickLinksCard />
                   {/* Team Members */}
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-4">
             <div className="flex items-center justify-between mb-3">
