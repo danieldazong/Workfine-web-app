@@ -363,7 +363,7 @@ export default function Sidebar() {
         { name: "Settings", icon: Settings, path: "/settings" },
       ]
     : [
-        { name: "Dashboard", icon: LayoutDashboard, path: "/" },
+                { name: "Dashboard", icon: LayoutDashboard, path: "/dashboard" },
         { name: "Insights", icon: BarChart2, path: "/insights" },
         { name: "Calendar", icon: Calendar, path: "/calendar" },
         { name: "My Tasks", icon: CheckSquare, path: "/my-tasks" },

@@ -59,6 +59,7 @@ src\pages\ConversationsPage.tsx
 src\pages\DashboardPage.tsx
 src\pages\InsightsPage.tsx
 src\pages\JoinWorkspacePage.tsx
+src\pages\LandingPage.tsx
 src\pages\LoginPage.tsx
 src\pages\MyTasksPage.tsx
 src\pages\MyTasksPage.tsx.backup

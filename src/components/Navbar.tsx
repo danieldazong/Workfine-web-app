@@ -154,10 +154,11 @@ function getPageMeta(pathname: string, projects: any[]) {
     matchPath("/projects/:projectId", pathname) ||
     matchPath("/project/:projectId", pathname);
 
-  if (projectMatch?.params?.projectId) {
+
+      if (projectMatch?.params?.projectId) {
     const projectId = projectMatch.params.projectId;
 
-      const project = projects.find(
+    const project = projects.find(
       (x: any) => String(x?.id || "") === String(projectId || "")
     );
 
@@ -171,12 +172,16 @@ function getPageMeta(pathname: string, projects: any[]) {
       ? `${projectCode ? projectCode + " - " : ""}${projectName}`
       : "Project";
 
-
+    // The large project heading (name) is already rendered in the page body
+    // by ProjectPage.tsx. To avoid showing the same title twice within one
+    // viewport, the top-nav title stays generic ("Project") while the
+    // breadcrumb keeps the full project name for context.
     return {
-      title: projectTitle,
+      title: "Project",
       breadcrumbs: ["Projects", projectTitle],
     };
   }
+
 
   /**
    * Join workspace route
@@ -340,6 +345,7 @@ export default function Navbar({ title }: NavbarProps) {
 
   const navbarTitle = title || pageMeta.title;
 
+
     // Close dropdowns on click outside or Escape
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -477,14 +483,15 @@ export default function Navbar({ title }: NavbarProps) {
 
     return (
     <header className="h-16 flex-shrink-0 flex items-center justify-between px-8 bg-white border-b border-slate-200 sticky top-0 z-40">
-      <div className="flex items-center gap-6 min-w-0">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-slate-800 leading-tight truncate">
+         <div className="flex items-center gap-6 min-w-0">
+        {/* Title + breadcrumb on ONE horizontal line across all pages. */}
+        <div className="flex items-center gap-3 min-w-0">
+          <h1 className="text-xl font-semibold text-slate-800 leading-tight flex-shrink-0">
             {navbarTitle}
           </h1>
 
           <div className="flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap overflow-hidden">
-                        <span className="font-mono truncate max-w-[160px]">
+            <span className="font-mono truncate max-w-[160px]">
               {resolveWorkspaceDisplayId(workspaceId, workspaceData, user?.uid)}
             </span>
 
@@ -497,6 +504,8 @@ export default function Navbar({ title }: NavbarProps) {
           </div>
         </div>
       </div>
+
+
 
 
       <div className="flex items-center gap-6">

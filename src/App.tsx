@@ -36,6 +36,8 @@ import AcceptTaskInvitePage from "./pages/AcceptTaskInvitePage";
 import PendingTaskInviteGate from "./components/PendingTaskInviteGate";
 import ConversationsPage from "./pages/ConversationsPage";
 import AuthActionPage from "./pages/AuthActionPage";
+import LandingPage from "./pages/LandingPage";
+
 
 
 function PresenceTracker() {
@@ -59,9 +61,11 @@ function ProtectedRoute() {
     );
   }
 
+  // Not signed in → send to login (NOT to /dashboard, which would loop
+  // because /dashboard lives inside this very ProtectedRoute).
   if (!user) return <Navigate to="/login" replace />;
 
-    return (
+  return (
     <AppDataProvider>
       <PresenceTracker />
       <div className="flex h-screen w-screen overflow-hidden bg-white">
@@ -76,6 +80,7 @@ function ProtectedRoute() {
     </AppDataProvider>
   );
 }
+
 
 
 
@@ -99,7 +104,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
       return <Navigate to={`/join/${pendingInviteCode}`} replace />;
     }
 
-    return <Navigate to="/" replace />;
+     return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;
@@ -110,6 +115,14 @@ export default function App() {
     <AuthProvider>
       <Router>
         <Routes>
+                              {/* Public landing page at root — rendered DIRECTLY (not behind
+              PublicRoute), so logged-out visitors see marketing INSTANTLY with
+              no auth-loading blank screen. Logged-in users are redirected to
+              /dashboard by the LandingPage component's own guard.
+              Fully isolated — no AppDataProvider/Sidebar/Navbar. */}
+          <Route path="/" element={<LandingPage />} />
+
+
           {/* Public login route */}
           <Route
             path="/login"
@@ -119,6 +132,7 @@ export default function App() {
               </PublicRoute>
             }
           />
+
 
           {/* Public workspace invite route */}
           <Route path="/join/:inviteCode" element={<JoinWorkspacePage />} />
@@ -131,10 +145,10 @@ export default function App() {
               Must stay OUTSIDE ProtectedRoute — users hit it while logged out. */}
           <Route path="/auth/action" element={<AuthActionPage />} />
 
-          {/* Protected app routes */}
+                    {/* Protected app routes */}
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
-              <Route path="/" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/my-tasks" element={<MyTasksPage />} />
               <Route path="/conversations" element={<ConversationsPage />} />
               <Route path="/insights" element={<InsightsPage />} />
