@@ -34,6 +34,7 @@ src\hooks\useMentionableUsers.ts
 src\hooks\useNotifications.ts
 src\hooks\usePageTitle.ts
 src\hooks\usePresenceHeartbeat.ts
+src\hooks\useScrollReveal.ts
 src\lib\linkPlatform.ts
 src\lib\monogram.ts
 src\lib\projectAccess.ts

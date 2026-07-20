@@ -1036,9 +1036,9 @@ const ProjectPage = () => {
                     >
                       {({ attributes, listeners, dragEnabled }) => (
                         <>
-                      {/* Column 1 — status circle + title */}
+                                          {/* Column 1 — status circle + title */}
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
                         <button
                           disabled={!canEditProjectContent}
                           onClick={(e) => {
@@ -1294,13 +1294,14 @@ const ProjectPage = () => {
                         className="bg-gray-50 border border-gray-100 rounded-xl p-3 group hover:shadow-sm transition-all cursor-pointer"
                         onClick={() => openDrawer(task)}
                       >
-                        <p
-                          className={`text-sm font-medium text-gray-800 leading-snug mb-2 ${
+                                               <p
+                          className={`text-sm font-medium text-gray-800 leading-snug mb-2 break-words ${
                             task.status === "Done"
                               ? "line-through text-gray-400"
                               : ""
                           }`}
                         >
+
                           {task.taskCode && (
                             <span className="block text-[10px] text-slate-400 mb-0.5">
                               {task.taskCode}
