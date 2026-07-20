@@ -6643,7 +6643,9 @@ editedAt: serverTimestamp(),
           >
             {/* Compact task summary — clean modern layout */}
             <div className="sticky top-0 -mx-5 mb-2 px-5 py-2.5 bg-white/95 backdrop-blur border-b border-slate-200 z-30">
-              <div className="flex items-center gap-2 min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                {!detailsExpanded && (
+                <>
                 {/* Status */}
                 <span
                   className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
@@ -6703,8 +6705,10 @@ editedAt: serverTimestamp(),
                       className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                       style={{ backgroundColor: project.color ?? "#8b5cf6" }}
                     />
-                    <span className="truncate">{project.name}</span>
+                                        <span className="truncate">{project.name}</span>
                   </button>
+                )}
+                </>
                 )}
 
                 <button
@@ -6809,14 +6813,15 @@ editedAt: serverTimestamp(),
                       <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">
                         Project
                       </p>
-                      {project ? (
+                                           {project ? (
                         <button
                           type="button"
                           onClick={() => {
                             navigate("/projects/" + project.id);
                             handleClose();
                           }}
-                          className="flex items-center gap-1.5 text-xs text-slate-700 hover:text-violet-600 min-w-0"
+                          title={project.name}
+                          className="flex items-center gap-1.5 text-xs text-slate-700 hover:text-violet-600 min-w-0 max-w-full"
                         >
                           <span
                             className="w-2 h-2 rounded-full flex-shrink-0"
@@ -6827,6 +6832,7 @@ editedAt: serverTimestamp(),
                           <span className="truncate">{project.name}</span>
                         </button>
                       ) : (
+
                         <span className="text-slate-400 italic text-xs">
                           No project
                         </span>
