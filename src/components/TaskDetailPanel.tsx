@@ -82,6 +82,7 @@
 
   import data from "@emoji-mart/data";
   import Picker from "@emoji-mart/react";
+    import LinkPreviewCard from "./LinkPreviewCard";
   import { useMentionableUsers } from "../hooks/useMentionableUsers";
   import { storageService, UploadedAttachment } from "../lib/firebase/storage";
     import { createCommentNotifications } from "../lib/firebase/notifications";
@@ -2007,7 +2008,8 @@ function formatFullLocalDateTime(timestamp: any): string {
     const [descriptionDraft, setDescriptionDraft] = useState("");
     const [savingDescription, setSavingDescription] = useState(false);
     const [commentText, setCommentText] = useState("");
-    const [uploadingAttachment, setUploadingAttachment] = useState(false);
+        const [uploadingAttachment, setUploadingAttachment] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
     const [sending, setSending] = useState(false);
 
     const [mounted, setMounted] = useState(false);
@@ -2594,6 +2596,10 @@ function formatFullLocalDateTime(timestamp: any): string {
     const [composerExpanded, setComposerExpanded] = useState(false);
     const [showComposerEmojiPicker, setShowComposerEmojiPicker] = useState(false);
     const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
+        // Styled in-app "Paste link to preview" popup (replaces window.prompt).
+    const [showLinkPopup, setShowLinkPopup] = useState(false);
+    const [linkPopupUrl, setLinkPopupUrl] = useState("");
+
 
         // Comment actions state
     const [actionMenuCommentId, setActionMenuCommentId] = useState<string | null>(
@@ -2633,8 +2639,10 @@ function formatFullLocalDateTime(timestamp: any): string {
     const emojiSearchInputRef = useRef<HTMLInputElement>(null);
      const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
-    const composerRef = useRef<HTMLDivElement>(null);
+        const composerRef = useRef<HTMLDivElement>(null);
     const composerEmojiPickerRef = useRef<HTMLDivElement>(null);
+    const linkPopupRef = useRef<HTMLDivElement>(null);
+
     const didInitialCommentsScrollRef = useRef(false);
     const lastVisibleCommentIdRef = useRef("");
 
@@ -2789,6 +2797,27 @@ function formatFullLocalDateTime(timestamp: any): string {
         document.removeEventListener("mousedown", onDown);
       };
     }, [showComposerEmojiPicker]);
+        // Close the "Paste link to preview" popup on any outside click
+    // (e.g. clicking into the composer textarea), so the user doesn't
+    // have to re-toggle the T icon to dismiss it.
+    useEffect(() => {
+      if (!showLinkPopup) return;
+      const onDown = (e: MouseEvent) => {
+        const node = linkPopupRef.current;
+        if (node && !node.contains(e.target as Node)) {
+          setShowLinkPopup(false);
+          setLinkPopupUrl("");
+        }
+      };
+      const id = window.setTimeout(() => {
+        document.addEventListener("mousedown", onDown);
+      }, 0);
+      return () => {
+        window.clearTimeout(id);
+        document.removeEventListener("mousedown", onDown);
+      };
+    }, [showLinkPopup]);
+
 
         const project = useMemo(() => {
       const currentProjectId = String(
@@ -4239,7 +4268,8 @@ useEffect(() => {
         const text = normalizeLegacyStructuredMentions(commentText.trim());
         const nowMs = Date.now();
 
-        setUploadingAttachment(true);
+               setUploadingAttachment(true);
+        setUploadProgress(0);
 
 
         try {
@@ -4248,7 +4278,9 @@ useEffect(() => {
             uploadProjectId,
             uploadTaskId,
             file,
+            (progress) => setUploadProgress(progress.percent),
           );
+
 
           const cleanAttachment =
             removeUndefinedFields<UploadedAttachment>(attachment);
@@ -4364,10 +4396,12 @@ await notifyCommentRecipients({
           console.error("[TaskDetailPanel] upload attachment:", err);
           setToast("File upload failed");
           setTimeout(() => setToast(null), 2500);
-        } finally {
+               } finally {
           setUploadingAttachment(false);
+          setUploadProgress(0);
         }
       },
+
                        [
         user,
         task.id,
@@ -4666,34 +4700,44 @@ await notifyCommentRecipients({
       });
     }
 
-    function applyLinkFormat() {
-      const ta = inputRef.current;
-      const start = ta?.selectionStart ?? commentText.length;
-      const end = ta?.selectionEnd ?? commentText.length;
-      const selected = commentText.slice(start, end) || "link text";
+            function applyLinkFormat() {
+      setLinkPopupUrl("");
+      setShowLinkPopup(true);
+    }
 
-      const url = window.prompt("Enter URL");
-      if (!url) {
-        requestAnimationFrame(() => ta?.focus());
+
+    function confirmInsertLink() {
+      const rawUrl = String(linkPopupUrl || "").trim();
+
+      if (!rawUrl) {
+        setShowLinkPopup(false);
         return;
       }
 
       const safeUrl =
-        url.startsWith("http://") || url.startsWith("https://")
-          ? url
-          : `https://${url}`;
+        rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+          ? rawUrl
+          : `https://${rawUrl}`;
+
+      const ta = inputRef.current;
+      const start = ta?.selectionStart ?? commentText.length;
+      const end = ta?.selectionEnd ?? commentText.length;
+      const selected = commentText.slice(start, end) || safeUrl;
 
       const inserted = `[${selected}](${safeUrl})`;
       const next =
         commentText.slice(0, start) + inserted + commentText.slice(end);
 
       setCommentText(next);
+      setShowLinkPopup(false);
+      setLinkPopupUrl("");
 
       requestAnimationFrame(() => {
         ta?.focus();
         ta?.setSelectionRange(start, start + inserted.length);
       });
     }
+
 
     function renderInlineFormattedText(
       text: string,
@@ -4779,24 +4823,31 @@ await notifyCommentRecipients({
               {match[6]}
             </code>,
           );
-        } else if (token.startsWith("[")) {
+               } else if (token.startsWith("[")) {
           nodes.push(
-            <a
+            <LinkPreviewCard
               key={`${keyPrefix}-link-${idx}`}
               href={match[8]}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className={`font-medium underline underline-offset-2 ${
-                isMine
-                  ? "text-white hover:text-violet-100"
-                  : "text-violet-600 hover:text-violet-700"
-              }`}
+              label={match[7]}
+              isMine={isMine}
             >
-              {match[7]}
-            </a>,
+              <a
+                href={match[8]}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={`font-medium underline underline-offset-2 ${
+                  isMine
+                    ? "text-white hover:text-violet-100"
+                    : "text-violet-600 hover:text-violet-700"
+                }`}
+              >
+                {match[7]}
+              </a>
+            </LinkPreviewCard>,
           );
-        } else if (token.startsWith("#") || token.startsWith("@")) {
+        }
+ else if (token.startsWith("#") || token.startsWith("@")) {
   nodes.push(
     <React.Fragment key={`${keyPrefix}-mention-${idx}`}>
       {renderCommentText(token)}
@@ -7871,10 +7922,12 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                       <button
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
+                                                 onClick={() => {
                           setShowFormattingToolbar((v) => !v);
                           setShowComposerEmojiPicker(false);
+                          setShowLinkPopup(false);
                         }}
+
                         className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
                           showFormattingToolbar
                             ? "bg-violet-100 text-violet-600"
@@ -7986,14 +8039,69 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                             {"{ }"}
                           </button>
 
-                          <button
-                            type="button"
-                            onClick={applyLinkFormat}
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
-                            title="Link"
-                          >
-                            <LinkIcon size={15} />
-                          </button>
+                                                    <div className="relative">
+                            <button
+                              type="button"
+                              onClick={applyLinkFormat}
+                              className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-600 hover:bg-violet-50 hover:text-violet-600"
+                              title="Link"
+                            >
+                              <LinkIcon size={15} />
+                            </button>
+
+                                                                                    {showLinkPopup && (
+                              <div
+                                ref={linkPopupRef}
+                                className="absolute bottom-10 right-0 z-[70] w-72 max-w-[calc(100vw-48px)] rounded-2xl border border-slate-200 bg-white shadow-2xl p-3"
+                                role="dialog"
+                                aria-label="Paste link to preview"
+                              >
+
+                                <p className="text-xs font-semibold text-slate-700 mb-2">
+                                  Paste link to preview
+                                </p>
+
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    autoFocus
+                                    type="url"
+                                    value={linkPopupUrl}
+                                    onChange={(e) =>
+                                      setLinkPopupUrl(e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        confirmInsertLink();
+                                      } else if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setShowLinkPopup(false);
+                                        setLinkPopupUrl("");
+                                      }
+                                    }}
+                                    placeholder="https://..."
+                                    className="flex-1 min-w-0 h-9 rounded-lg border border-slate-200 px-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                                  />
+
+                                  <button
+                                    type="button"
+                                    onClick={confirmInsertLink}
+                                    disabled={!linkPopupUrl.trim()}
+                                    className="h-9 px-3 rounded-lg bg-violet-600 text-white text-xs font-semibold hover:bg-violet-700 transition-colors disabled:opacity-45 disabled:cursor-not-allowed flex-shrink-0"
+                                  >
+                                    Insert
+                                  </button>
+                                </div>
+
+                                <p className="mt-2 text-[11px] text-slate-400 leading-snug">
+                                  Paste a link to embed it.
+                                </p>
+                              </div>
+                            )}
+
+                          </div>
+
                         </div>
                       )}
                     </div>
@@ -8055,37 +8163,37 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                     />
 
 
-                    <button
+                                       <button
                       type="button"
                       disabled={uploadingAttachment}
                       onClick={() => fileInputRef.current?.click()}
                       className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
                         uploadingAttachment
-                          ? "text-violet-400 bg-violet-50 cursor-wait"
+                          ? "text-violet-300 bg-violet-50 cursor-wait"
                           : "text-slate-500 hover:bg-slate-100 hover:text-violet-600"
                       }`}
                       title={uploadingAttachment ? "Uploading..." : "Attach file"}
                       aria-label="Attach file"
                     >
-                      {uploadingAttachment ? (
-                        <span className="w-4 h-4 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
-                      ) : (
-                        <Paperclip size={16} />
-                      )}
+                      <Paperclip size={16} />
                     </button>
+
+
 
                     {/* Right side — hint + cancel + send */}
                     <div className="ml-auto flex items-center gap-2">
                                         <button
                         type="button"
                         onClick={() => {
-                          setCommentText("");
+                                                     setCommentText("");
                           setReplyingTo(null);
                           setComposerExpanded(false);
                           setShowComposerEmojiPicker(false);
                           setShowFormattingToolbar(false);
+                          setShowLinkPopup(false);
                           setShowSuggestions(false);
                           setShowUserSuggestions(false);
+
                         }}
                         className="text-xs px-3 py-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition-colors"
                       >
@@ -8119,6 +8227,21 @@ const fullTimeLabel = formatFullLocalDateTime(messageTimestamp);
                     </div>
                   </div>
 
+                  {uploadingAttachment && (
+                    <div className="px-4 pb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-violet-600 transition-[width] duration-200 ease-out"
+                            style={{ width: `${uploadProgress}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-semibold text-violet-600 tabular-nums w-9 text-right">
+                          {uploadProgress}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
                   {/* Composer emoji picker — emoji-mart (Asana-grade) */}
                   {showComposerEmojiPicker && (
                     <div

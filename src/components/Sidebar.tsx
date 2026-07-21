@@ -47,6 +47,7 @@ import { useAppData } from "../context/AppDataContext";
 import { deleteProject } from "../lib/firebase/projects";
 import CreateProjectModal from "./CreateProjectModal";
 import ConfirmDialog from "./ConfirmDialog";
+import TrialStatusCard from "./TrialStatusCard";
 
 
 
@@ -885,13 +886,16 @@ function SidebarContent({
 
       </nav>
 
-            <div className="flex-shrink-0 border-t border-slate-800 p-4">
+                  <div className="flex-shrink-0 border-t border-slate-800 p-4">
+        <TrialStatusCard isCollapsed={isCollapsed} />
+
         <div
           className={cn(
             "flex items-center rounded-xl bg-slate-800/30 p-2",
             isCollapsed ? "justify-center" : "gap-3"
           )}
         >
+
                              <div className="relative flex-shrink-0">
             {resolveAvatarPhoto(user?.photoURL) ? (
               <img

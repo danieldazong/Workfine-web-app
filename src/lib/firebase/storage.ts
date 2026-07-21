@@ -6,7 +6,7 @@
 import {
   getDownloadURL,
   ref,
-  uploadBytes,
+  uploadBytesResumable,
   deleteObject,
 } from "firebase/storage";
 import { storage } from "./config";
@@ -319,13 +319,51 @@ async function createImagePreview(file: File): Promise<ImagePreviewResult | null
     return null;
   }
 }
+export type UploadProgress = {
+  bytesTransferred: number;
+  totalBytes: number;
+  percent: number;
+};
+
+/**
+ * Uploads bytes with resumable transfer so progress can be reported.
+ * Returns the same result contract callers already expect.
+ * `onProgress` is optional — when omitted this behaves like a normal upload.
+ */
+function uploadWithProgress(
+  fileRef: ReturnType<typeof ref>,
+  data: Blob | File,
+  metadata: Parameters<typeof uploadBytesResumable>[2],
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(fileRef, data, metadata);
+
+    task.on(
+      "state_changed",
+      (snapshot) => {
+        const totalBytes = snapshot.totalBytes || 0;
+        const bytesTransferred = snapshot.bytesTransferred || 0;
+        const percent =
+          totalBytes > 0
+            ? Math.min(100, Math.round((bytesTransferred / totalBytes) * 100))
+            : 0;
+
+        onProgress?.({ bytesTransferred, totalBytes, percent });
+      },
+      (error) => reject(error),
+      () => resolve(),
+    );
+  });
+}
 
 export const storageService = {
-  async uploadFile(
+    async uploadFile(
     userId: string,
     projectId: string,
     taskId: string,
-    file: File
+    file: File,
+    onProgress?: (progress: UploadProgress) => void
   ): Promise<UploadedAttachment> {
     if (!userId) {
       throw new Error("userId is required");
@@ -354,20 +392,26 @@ export const storageService = {
     const path = `${userId}/projects/${projectId}/tasks/${taskId}/originals/${attachmentId}-${fileName}`;
     const fileRef = ref(storage, path);
 
-    await uploadBytes(fileRef, file, {
-      contentType,
-      cacheControl: ORIGINAL_CACHE_CONTROL,
-      contentDisposition: `inline; filename="${fileName}"`,
-      customMetadata: {
-        userId,
-        projectId,
-        taskId,
-        attachmentId,
-        originalName: file.name || fileName,
-        attachmentKind,
-        hasPreview: preview ? "true" : "false",
+       await uploadWithProgress(
+      fileRef,
+      file,
+      {
+        contentType,
+        cacheControl: ORIGINAL_CACHE_CONTROL,
+        contentDisposition: `inline; filename="${fileName}"`,
+        customMetadata: {
+          userId,
+          projectId,
+          taskId,
+          attachmentId,
+          originalName: file.name || fileName,
+          attachmentKind,
+          hasPreview: preview ? "true" : "false",
+        },
       },
-    });
+      onProgress,
+    );
+
 
     const url = await getDownloadURL(fileRef);
 
@@ -379,7 +423,7 @@ export const storageService = {
 
       const previewRef = ref(storage, previewPath);
 
-      await uploadBytes(previewRef, preview.blob, {
+           await uploadWithProgress(previewRef, preview.blob, {
         contentType: preview.type,
         cacheControl: PREVIEW_CACHE_CONTROL,
         contentDisposition: `inline; filename="${attachmentId}-preview.webp"`,
@@ -393,6 +437,7 @@ export const storageService = {
           previewFor: path,
         },
       });
+
 
       previewUrl = await getDownloadURL(previewRef);
     }
