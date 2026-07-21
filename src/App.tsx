@@ -37,6 +37,8 @@ import PendingTaskInviteGate from "./components/PendingTaskInviteGate";
 import ConversationsPage from "./pages/ConversationsPage";
 import AuthActionPage from "./pages/AuthActionPage";
 import LandingPage from "./pages/LandingPage";
+import BillingPage from "./pages/BillingPage";
+import TrialEndedGate from "./components/TrialEndedGate";
 
 
 
@@ -74,10 +76,14 @@ function ProtectedRoute() {
           <Outlet />
         </div>
       </div>
-      {/* Global "Take a note" button — same position on every page,
+            {/* Global "Take a note" button — same position on every page,
           hidden on Settings (handled inside the component). */}
       <FloatingNoteButton />
+      {/* Per-account trial gate. Renders nothing unless TRIAL_GATE_ENABLED
+          is true AND this account's trial is expired. Ships OFF by default. */}
+      <TrialEndedGate />
     </AppDataProvider>
+
   );
 }
 
@@ -155,6 +161,7 @@ export default function App() {
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/team" element={<TeamPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/billing" element={<BillingPage />} />
               <Route path="/projects" element={<ProjectsOverviewPage />} />
               <Route path="/projects/:id" element={<ProjectPage />} />
               <Route path="/workspace" element={<WorkspacePage />} />

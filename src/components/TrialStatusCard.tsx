@@ -3,9 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { cn } from "../lib/utils";
 import { useAppData } from "../context/AppDataContext";
+import { getTrialStatus } from "../lib/trial";
+
 
 const TRIAL_LENGTH_DAYS = 30;
 
@@ -27,8 +30,8 @@ export default function TrialStatusCard({
 }: {
   isCollapsed?: boolean;
 }) {
-  const { workspaceData } = useAppData();
-  const [toast, setToast] = useState<string | null>(null);
+    const { workspaceData } = useAppData();
+  const navigate = useNavigate();
 
   const { daysLeft, expired, ready } = useMemo(() => {
     const createdMs = resolveWorkspaceCreatedMs(workspaceData);
@@ -48,40 +51,31 @@ export default function TrialStatusCard({
 
   if (!ready) return null;
 
-  const handleClick = () => {
-    setToast("Billing is coming soon.");
-    window.setTimeout(() => setToast(null), 2200);
+    const handleClick = () => {
+    navigate("/billing");
   };
+
 
   // Collapsed rail: show a compact ring only, to match the sidebar's icon-rail.
   if (isCollapsed) {
     return (
-      <button
+            <button
         type="button"
         onClick={handleClick}
         title={expired ? "Trial ended" : `Advanced trial — ${daysLeft} days left`}
         aria-label={expired ? "Trial ended" : `Advanced trial — ${daysLeft} days left`}
         className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-800/40 transition-colors hover:bg-white/10"
       >
-        <span
-          className={cn(
-            "h-4 w-4 rounded-full border-2",
-            expired ? "border-rose-400" : "border-emerald-400"
-          )}
-        />
+        <TrialRing daysLeft={daysLeft} expired={expired} size={22} stroke={3} />
       </button>
+
     );
   }
 
   return (
     <div className="relative mb-3 rounded-xl border border-slate-700/70 bg-slate-800/40 p-3">
       <div className="flex items-center gap-2.5">
-        <span
-          className={cn(
-            "h-5 w-5 flex-shrink-0 rounded-full border-2",
-            expired ? "border-rose-400" : "border-emerald-400"
-          )}
-        />
+                <TrialRing daysLeft={daysLeft} expired={expired} size={22} stroke={3} />
         <div className="min-w-0 flex-1">
           <p
             className={cn(
@@ -107,11 +101,65 @@ export default function TrialStatusCard({
         {expired ? "Restore plan" : "Upgrade"}
       </button>
 
-      {toast && (
-        <div className="absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] text-white shadow-lg">
-          {toast}
-        </div>
-      )}
+    
     </div>
+  );
+}
+/**
+ * Progress ring that empties as the trial counts down.
+ * Full at 30 days, empty at 0. Pure SVG, presentational only.
+ */
+function TrialRing({
+  daysLeft,
+  expired,
+  size = 22,
+  stroke = 3,
+}: {
+  daysLeft: number;
+  expired: boolean;
+  size?: number;
+  stroke?: number;
+}) {
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  // Fraction of the trial remaining (0..1).
+  const fraction = expired
+    ? 0
+    : Math.max(0, Math.min(1, daysLeft / TRIAL_LENGTH_DAYS));
+
+  const dashOffset = circumference * (1 - fraction);
+  const color = expired ? "#fb7185" : "#34d399"; // rose-400 / emerald-400
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${size} ${size}`}
+      className="flex-shrink-0 -rotate-90"
+    >
+      {/* track */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke="#475569"
+        strokeWidth={stroke}
+      />
+      {/* progress */}
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        fill="none"
+        stroke={color}
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={dashOffset}
+        style={{ transition: "stroke-dashoffset 0.4s ease" }}
+      />
+    </svg>
   );
 }
