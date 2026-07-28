@@ -11,6 +11,7 @@ src\components\DueCountdown.tsx
 src\components\FloatingNoteButton.tsx
 src\components\InviteMemberModal.tsx
 src\components\LinkAvatar.tsx
+src\components\LinkPreviewCard.tsx
 src\components\Navbar.tsx
 src\components\PageShell.tsx
 src\components\PendingTaskInviteGate.tsx
@@ -19,6 +20,8 @@ src\components\Sidebar.tsx
 src\components\TakeANotePanel.tsx
 src\components\TaskDetailModal.tsx
 src\components\TaskDetailPanel.tsx
+src\components\TrialEndedGate.tsx
+src\components\TrialStatusCard.tsx
 src\components\WorkspaceModal.tsx
 src\components\modals\CreateProjectModal.tsx
 src\components\modals\TaskModal.tsx
@@ -40,6 +43,7 @@ src\lib\monogram.ts
 src\lib\projectAccess.ts
 src\lib\taskAccessLabels.ts
 src\lib\taskVisibility.ts
+src\lib\trial.ts
 src\lib\utils.ts
 src\lib\firebase\auth.ts
 src\lib\firebase\cleanup.ts
@@ -55,6 +59,7 @@ src\lib\firebase\users.ts
 src\lib\firebase\workspaceMembers.ts
 src\pages\AcceptTaskInvitePage.tsx
 src\pages\AuthActionPage.tsx
+src\pages\BillingPage.tsx
 src\pages\CalendarPage.tsx
 src\pages\ConversationsPage.tsx
 src\pages\DashboardPage.tsx

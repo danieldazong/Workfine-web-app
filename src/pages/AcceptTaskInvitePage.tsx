@@ -520,7 +520,7 @@ export default function AcceptTaskInvitePage() {
   // accept flow as soon as the user is signed in AND the invite
   // is ready. This makes first-click signup work end-to-end.
   // ============================================================
-  useEffect(() => {
+    useEffect(() => {
     if (!user) return;
     if (state !== "ready") return;
     if (!invite) return;
@@ -541,15 +541,43 @@ export default function AcceptTaskInvitePage() {
     // re-renders or fast-refresh in dev).
     localStorage.removeItem("pendingTaskInviteUrl");
 
-    // Tiny delay so AuthContext can finish ensureUserProfile()
-    // before we write users/{uid}/tasks/{taskId}.
-    const timer = setTimeout(() => {
-      handleAcceptInvite();
-    }, 600);
+    let cancelled = false;
 
-    return () => clearTimeout(timer);
+    // FIX: brand-new signups need AuthContext.ensureUserProfile() to finish
+    // creating users/{uid} + the personal workspace/member docs BEFORE we
+    // write users/{uid}/tasks/{taskId}. A fixed 600ms timer raced that setup,
+    // so on first signup the task copy landed before the profile/listeners
+    // were ready and the task did not appear until the invite link was
+    // re-opened. Instead of a fixed delay, we poll for the user profile doc
+    // to exist (bounded retries) and only THEN fire the accept flow. This is
+    // global (every invited signup) and changes no UI.
+    const waitForProfileThenAccept = async () => {
+      const maxAttempts = 12; // ~ up to 6s worst case
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (cancelled) return;
+        try {
+          const profileSnap = await getDoc(doc(db, "users", user.uid));
+          if (profileSnap.exists() && profileSnap.data()?.workspaceId) {
+            break;
+          }
+        } catch {
+          // Ignore transient auth-warmup permission errors and keep polling.
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      if (cancelled) return;
+      await handleAcceptInvite();
+    };
+
+    waitForProfileThenAccept();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid, state, invite?.id, workspaceId, taskId, shareId]);
+
 
 
 
