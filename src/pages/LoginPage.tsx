@@ -87,13 +87,16 @@ function redirectAfterAuth() {
     return;
   }
 
-  const pending = localStorage.getItem('pendingInviteCode');
+    const pending = localStorage.getItem('pendingInviteCode');
 
   if (pending) {
-    localStorage.removeItem('pendingInviteCode');
+    // Do NOT remove pendingInviteCode here — JoinWorkspacePage's auto-accept
+    // reads it to detect "this user just signed up via a workspace invite,
+    // accept now" and clears it itself after the accept fires.
     navigate('/join/' + pending, { replace: true });
     return;
   }
+
 
   navigate('/', { replace: true });
 }

@@ -425,6 +425,44 @@ export default function JoinWorkspacePage() {
       setPageState("valid");
     }
   }
+  // ============================================================
+  // AUTO-ACCEPT for first-time signups (workspace invites).
+  //
+  // When a brand-new user clicks a /join/<code> link, they:
+  //   1. See the invite screen, click "Sign In to Accept"
+  //      → storeAndGo saves pendingInviteCode + goes to /login
+  //   2. Sign up / sign in (Google or email)
+  //   3. redirectAfterAuth() sends them back to /join/<code>
+  //   4. This page loads and reaches pageState === "valid"
+  //
+  // Without this, the user has to MANUALLY click "Accept Invitation"
+  // again — and if they don't, the invite stays "pending" in the
+  // sender's Members list forever. This hook auto-fires the accept
+  // as soon as (a) the user is signed in, (b) the invite is valid,
+  // and (c) pendingInviteCode is still in localStorage (i.e. they
+  // just came through the signup flow). Global — every invited signup.
+  // ============================================================
+  useEffect(() => {
+    if (!user) return;
+    if (pageState !== "valid") return;
+    if (!invite || !inviteCode) return;
+
+    const pending = localStorage.getItem("pendingInviteCode");
+    if (!pending) return;
+    if (pending !== inviteCode) return;
+
+    // Clear immediately so we never auto-fire twice on re-render.
+    localStorage.removeItem("pendingInviteCode");
+
+    console.log(
+      "[JoinPage] Auto-accepting workspace invite for newly signed-in user",
+      user.uid
+    );
+
+    acceptInvite();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid, pageState, invite?.id, inviteCode]);
+
 
   function storeAndGo(path: string) {
     if (inviteCode) {
