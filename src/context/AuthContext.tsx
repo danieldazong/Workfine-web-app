@@ -1191,6 +1191,45 @@ setPersonalWorkspaceIdState(savedPersonalWorkspaceId);
                 restoreErr
               );
             }
+                        // ============================================================
+            // PENDING WORKSPACE INVITE RESTORE (mirrors task-invite restore)
+            //
+            // A brand-new user who signed up via a /join/<code> workspace
+            // invite may return from the Google OAuth round-trip WITHOUT
+            // JoinWorkspacePage ever re-mounting — so ensureUserProfile()
+            // defaults them into a personal workspace and the sender's invite
+            // stays "pending" forever. If a pendingInviteCode is present and
+            // we're not already on /join, hard-navigate back to the join page
+            // so its auto-accept can run. Do NOT clear pendingInviteCode here —
+            // JoinWorkspacePage consumes it after it accepts. Global.
+            // ============================================================
+            try {
+              const pendingInviteCode = localStorage.getItem("pendingInviteCode");
+
+              if (
+                pendingInviteCode &&
+                !window.location.pathname.startsWith("/join/")
+              ) {
+                console.log(
+                  "[Auth] 🔁 Restoring pending workspace invite after sign-in:",
+                  pendingInviteCode
+                );
+
+                hasResolvedOnce = true;
+                setLoading(false);
+
+                // Hard navigation so JoinWorkspacePage mounts fresh with the
+                // correct :inviteCode param and can auto-accept.
+                window.location.replace(`/join/${pendingInviteCode}`);
+                return;
+              }
+            } catch (restoreErr) {
+              console.warn(
+                "[Auth] ⚠️ Failed to restore pending workspace invite:",
+                restoreErr
+              );
+            }
+
 
             hasResolvedOnce = true;
             setLoading(false);
