@@ -104,9 +104,15 @@ export default function JoinWorkspacePage() {
   const { user, loading: authLoading, setWorkspaceId } = useAuth();
   const navigate = useNavigate();
 
-  const [pageState, setPageState] = useState<PageState>("loading");
+    const [pageState, setPageState] = useState<PageState>("loading");
   const [invite, setInvite] = useState<any>(null);
   const [joinError, setJoinError] = useState("");
+
+  // Tracks which inviteCode the auto-accept has already fired for, so it runs
+  // once per code but does NOT depend on clearing localStorage early. See the
+  // auto-accept effect below.
+  const autoAcceptFiredRef = React.useRef<string | null>(null);
+
 
   // ── 1. Fetch & validate invite ─────────────────────────────────────────────
   useEffect(() => {
@@ -413,10 +419,16 @@ export default function JoinWorkspacePage() {
       setTimeout(() => {
         navigate("/", { replace: true });
       }, 1200);
-    } catch (error: any) {
+         } catch (error: any) {
       console.error("[JoinPage] accept error:", error);
 
+      // Re-arm the auto-accept so a subsequent pass (e.g. after Firestore
+      // rules finish warming up post-signup) can retry. The localStorage key
+      // was never removed on failure, so it is still present to drive retry.
+      autoAcceptFiredRef.current = null;
+
       setJoinError(
+
         error?.code === "permission-denied"
           ? "Permission denied while joining. Please refresh and try again."
           : error?.message || "Failed to join workspace. Please try again."
@@ -442,7 +454,7 @@ export default function JoinWorkspacePage() {
   // and (c) pendingInviteCode is still in localStorage (i.e. they
   // just came through the signup flow). Global — every invited signup.
   // ============================================================
-  useEffect(() => {
+    useEffect(() => {
     if (!user) return;
     if (pageState !== "valid") return;
     if (!invite || !inviteCode) return;
@@ -451,8 +463,12 @@ export default function JoinWorkspacePage() {
     if (!pending) return;
     if (pending !== inviteCode) return;
 
-    // Clear immediately so we never auto-fire twice on re-render.
-    localStorage.removeItem("pendingInviteCode");
+    // Guard against double-fire on re-render WITHOUT removing the localStorage
+    // key early. If acceptInvite() throws (e.g. Firestore rules still warming
+    // up right after signup), the key must survive so a later pass can retry.
+    // The key is removed ONLY on a successful join (STEP 5 in acceptInvite).
+    if (autoAcceptFiredRef.current === inviteCode) return;
+    autoAcceptFiredRef.current = inviteCode;
 
     console.log(
       "[JoinPage] Auto-accepting workspace invite for newly signed-in user",

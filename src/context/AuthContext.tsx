@@ -1002,12 +1002,39 @@ async function ensureUserProfile(firebaseUser: User): Promise<string> {
 
 
 
-    /**
+                  /**
      * RULE 2:
-     * Pending invite: do not generate a workspace yet.
-     * JoinWorkspacePage will set the real workspaceId.
+     * Pending invite (workspace OR task): do not generate a personal
+     * workspace yet. JoinWorkspacePage / AcceptTaskInvitePage will set the
+     * real workspaceId. We check BOTH keys so a brand-new invited signup is
+     * never dropped into a personal workspace before the invite is claimed.
+     *
+     * SAFETY NET: if neither key is in localStorage but the user is physically
+     * sitting on a /join/<code> or /accept-task-invite URL, we STILL treat this
+     * as a pending invite. This closes the race where a previous auto-accept
+     * attempt cleared/consumed the key but the join had not yet finished — we
+     * must never drop a brand-new invited user into a personal workspace while
+     * they are on the invite page. JoinWorkspacePage / AcceptTaskInvitePage will
+     * finish the accept. Global; affects every invited signup.
      */
-    const pendingCode = localStorage.getItem("pendingInviteCode");
+    let pendingCode: string | null = null;
+    try {
+      pendingCode =
+        localStorage.getItem("pendingInviteCode") ||
+        localStorage.getItem("pendingTaskInviteUrl");
+
+      if (!pendingCode && typeof window !== "undefined") {
+        const path = window.location.pathname || "";
+        if (path.startsWith("/join/")) {
+          const fromUrl = path.split("/join/")[1] || "";
+          pendingCode = fromUrl.split("/")[0] || null;
+        } else if (path.startsWith("/accept-task-invite")) {
+          pendingCode = path;
+        }
+      }
+    } catch {
+      pendingCode = null;
+    }
 
     if (pendingCode) {
       console.log("[Auth] 🎫 Pending invite found:", pendingCode);
