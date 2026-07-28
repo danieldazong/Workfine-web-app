@@ -103,12 +103,16 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
       return <Navigate to={pendingTaskInviteUrl} replace />;
     }
 
-    const pendingInviteCode = localStorage.getItem("pendingInviteCode");
+        const pendingInviteCode = localStorage.getItem("pendingInviteCode");
 
     if (pendingInviteCode) {
-      localStorage.removeItem("pendingInviteCode");
+      // Do NOT remove pendingInviteCode here. JoinWorkspacePage's auto-accept
+      // reads it to detect "this user just signed up via a workspace invite,
+      // accept now" and clears it itself only AFTER the join succeeds.
+      // Removing it here raced the join and left the sender's invite Pending.
       return <Navigate to={`/join/${pendingInviteCode}`} replace />;
     }
+
 
      return <Navigate to="/dashboard" replace />;
   }
