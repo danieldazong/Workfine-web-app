@@ -581,7 +581,7 @@ export default function LandingPage() {
       <a href="#features" className="rounded-lg px-3 py-2 transition-colors hover:bg-slate-50 hover:text-slate-900">Features</a>
       <a href="#how" className="rounded-lg px-3 py-2 transition-colors hover:bg-slate-50 hover:text-slate-900">How it works</a>
       <a href="#features" className="rounded-lg px-3 py-2 transition-colors hover:bg-slate-50 hover:text-slate-900">Solutions</a>
-      <a href="#" className="rounded-lg px-3 py-2 transition-colors hover:bg-slate-50 hover:text-slate-900">Pricing</a>
+            <a href="#pricing" className="rounded-lg px-3 py-2 transition-colors hover:bg-slate-50 hover:text-slate-900">Pricing</a>
       <a href="#" className="rounded-lg px-3 py-2 transition-colors hover:bg-slate-50 hover:text-slate-900">Resources</a>
     </nav>
 
@@ -1104,6 +1104,89 @@ export default function LandingPage() {
 
 
       {/* ── Testimonial ─────────────────────────────────────────── */}
+            {/* ── Pricing ─────────────────────────────────────────────── */}
+      <section id="pricing" data-reveal className="scroll-mt-20 bg-white py-24">
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="mx-auto max-w-2xl text-center">
+            <span className="inline-flex items-center gap-2 rounded-full bg-violet-50 px-4 py-1.5 text-xs font-semibold uppercase tracking-widest text-violet-600 ring-1 ring-violet-100">
+              Pricing
+            </span>
+            <h2 className="mx-auto mt-7 max-w-3xl text-4xl font-bold tracking-tight text-slate-900 md:text-5xl">
+              Simple pricing that grows with your team
+            </h2>
+            <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-slate-500">
+              Start free — no credit card required. Upgrade only when your team is ready.
+            </p>
+          </div>
+
+          <div className="mt-14 grid gap-5 md:grid-cols-3">
+            {[
+              {
+                name: "Free",
+                price: "$0",
+                period: "forever",
+                features: ["Up to 10 members", "Basic projects & tasks", "Community support"],
+                highlight: false,
+              },
+              {
+                name: "Pro",
+                price: "$12",
+                period: "per user / month",
+                features: ["Unlimited members", "Advanced insights", "Priority support", "Guest sharing"],
+                highlight: true,
+              },
+              {
+                name: "Business",
+                price: "$29",
+                period: "per user / month",
+                features: ["Everything in Pro", "SSO & admin controls", "Audit logs", "Dedicated manager"],
+                highlight: false,
+              },
+            ].map((plan) => (
+              <div
+                key={plan.name}
+                className={`rounded-2xl border bg-white p-7 shadow-sm transition-shadow hover:shadow-md ${
+                  plan.highlight ? "border-violet-300 ring-1 ring-violet-200" : "border-slate-200"
+                }`}
+              >
+                {plan.highlight && (
+                  <span className="mb-3 inline-flex rounded-full bg-violet-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-violet-700">
+                    Most popular
+                  </span>
+                )}
+                <h3 className="text-lg font-semibold text-slate-800">{plan.name}</h3>
+                <div className="mt-2 flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold tracking-tight text-slate-900">{plan.price}</span>
+                  <span className="text-xs font-medium text-slate-400">{plan.period}</span>
+                </div>
+                <ul className="mt-6 space-y-3">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-center gap-2.5 text-sm text-slate-600">
+                      <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                        <Check size={12} strokeWidth={3} />
+                      </span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  to="/login"
+                  className={`mt-7 inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition-colors ${
+                    plan.highlight
+                      ? "bg-violet-600 text-white shadow-sm hover:bg-violet-700"
+                      : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  Get started free
+                  <ArrowRight size={15} />
+                </Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+
 <section data-reveal className="pt-4 pb-20">
   <div className="mx-auto max-w-3xl px-6">
     <figure className="rounded-3xl border border-slate-100 bg-slate-50 p-10 text-center md:p-14">
@@ -1327,7 +1410,7 @@ export default function LandingPage() {
                 links: [
                   { label: "Features", href: "#features" },
                   { label: "How it works", href: "#how" },
-                  { label: "Pricing", href: "#" },
+                                    { label: "Pricing", href: "#pricing" },
                   { label: "Solutions", href: "#features" },
                 ],
               },
