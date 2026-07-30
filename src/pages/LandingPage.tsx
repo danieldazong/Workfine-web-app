@@ -25,8 +25,10 @@ import {
   UsersRound,
   Settings,
   Plus,
-  Star,
+    Star,
   Play,
+  Menu,
+  X,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -42,7 +44,10 @@ export default function LandingPage() {
     if (user) navigate("/dashboard", { replace: true });
   }, [user, navigate]);
 
-            const [scrolled, setScrolled] = useState(false);
+                       const [scrolled, setScrolled] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const navRef = useRef<HTMLElement | null>(null);
+
 
   // Lenis smooth (momentum) scroll — scoped to this page only.
   useEffect(() => {
@@ -94,6 +99,23 @@ export default function LandingPage() {
 
 
   // <<< END non-blocking redirect guard >>>
+  
+  // Close the mobile menu when tapping/clicking outside the nav.
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handleOutside = (e: Event) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setMobileMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+    };
+  }, [mobileMenuOpen]);
+
 
   const features: { icon: typeof FolderKanban; title: string; body: string; tone: string; hero?: boolean; visual?: string; full?: boolean; caption?: string; }[] = [
   {
@@ -427,59 +449,59 @@ export default function LandingPage() {
         );
       }
 
-      // ── Dashboard (+ Timeline fallback): original kanban board ───
+           // ── Dashboard (+ Timeline fallback): original kanban board ───
       default:
   return (
-    <div className="grid grid-cols-3 gap-4 p-6">
+    <div className="grid grid-cols-3 gap-2 overflow-hidden p-3 sm:gap-4 sm:p-6">
             {/* To Do */}
-            <div className="rounded-xl bg-slate-50 p-2.5">
+            <div className="rounded-xl bg-slate-50 p-1.5 sm:p-2.5">
               <div className="mb-2.5 flex items-center gap-1.5 px-1">
                 <span className="h-2 w-2 rounded-full bg-slate-400" />
-                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">To do</span>
+                <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px]">To do</span>
               </div>
-              <div className="mb-2.5 rounded-lg border border-slate-100 bg-white p-2.5 shadow-sm">
-                <div className="mb-2 inline-flex rounded bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-600">High</div>
-                <p className="text-[12px] font-medium leading-snug text-slate-700">Fix login bug</p>
-                <div className="mt-2.5 h-5 w-5 rounded-full bg-gradient-to-br from-violet-400 to-indigo-500" />
+              <div className="mb-2.5 rounded-lg border border-slate-100 bg-white p-2 shadow-sm sm:p-2.5">
+                <div className="mb-1.5 inline-flex rounded bg-red-50 px-1.5 py-0.5 text-[8px] font-semibold text-red-600 sm:mb-2 sm:px-2 sm:text-[10px]">High</div>
+                <p className="text-[10px] font-medium leading-snug text-slate-700 sm:text-[12px]">Fix login bug</p>
+                <div className="mt-2 h-3 w-3 rounded-full bg-gradient-to-br from-violet-400 to-indigo-500 sm:mt-2.5 sm:h-5 sm:w-5" />
               </div>
-              <div className="rounded-lg border border-slate-100 bg-white p-2.5 shadow-sm">
-                <div className="mb-2 inline-flex rounded bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-600">Medium</div>
-                <p className="text-[12px] font-medium leading-snug text-slate-700">Write docs</p>
-                <div className="mt-2.5 h-5 w-5 rounded-full bg-gradient-to-br from-pink-400 to-rose-500" />
+              <div className="rounded-lg border border-slate-100 bg-white p-2 shadow-sm sm:p-2.5">
+                <div className="mb-1.5 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[8px] font-semibold text-amber-600 sm:mb-2 sm:px-2 sm:text-[10px]">Medium</div>
+                <p className="text-[10px] font-medium leading-snug text-slate-700 sm:text-[12px]">Write docs</p>
+                <div className="mt-2 h-3 w-3 rounded-full bg-gradient-to-br from-pink-400 to-rose-500 sm:mt-2.5 sm:h-5 sm:w-5" />
               </div>
             </div>
 
             {/* Doing */}
-            <div className="rounded-xl bg-slate-50 p-2.5">
+            <div className="rounded-xl bg-slate-50 p-1.5 sm:p-2.5">
               <div className="mb-2.5 flex items-center gap-1.5 px-1">
                 <span className="h-2 w-2 rounded-full bg-violet-500" />
-                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Doing</span>
+                <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px]">Doing</span>
               </div>
-              <div className="rounded-lg border border-violet-100 bg-white p-2.5 shadow-sm ring-1 ring-violet-100">
-                <div className="mb-2 inline-flex rounded bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-600">In progress</div>
-                <p className="text-[12px] font-medium leading-snug text-slate-700">Ship landing page</p>
-                <div className="mt-2.5 flex -space-x-1.5">
-                  <div className="h-5 w-5 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 ring-2 ring-white" />
-                  <div className="h-5 w-5 rounded-full bg-gradient-to-br from-violet-400 to-indigo-500 ring-2 ring-white" />
+              <div className="rounded-lg border border-violet-100 bg-white p-2 shadow-sm ring-1 ring-violet-100 sm:p-2.5">
+                <div className="mb-1.5 inline-flex rounded bg-violet-50 px-1.5 py-0.5 text-[8px] font-semibold text-violet-600 sm:mb-2 sm:px-2 sm:text-[10px]">In progress</div>
+                <p className="text-[10px] font-medium leading-snug text-slate-700 sm:text-[12px]">Ship landing page</p>
+                <div className="mt-2 flex -space-x-1.5 sm:mt-2.5">
+                  <div className="h-3 w-3 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 ring-2 ring-white sm:h-5 sm:w-5" />
+                  <div className="h-3 w-3 rounded-full bg-gradient-to-br from-violet-400 to-indigo-500 ring-2 ring-white sm:h-5 sm:w-5" />
                 </div>
               </div>
             </div>
 
             {/* Done */}
-            <div className="rounded-xl bg-slate-50 p-2.5">
+            <div className="rounded-xl bg-slate-50 p-1.5 sm:p-2.5">
               <div className="mb-2.5 flex items-center gap-1.5 px-1">
                 <span className="h-2 w-2 rounded-full bg-green-500" />
-                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Done</span>
+                <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500 sm:text-[11px]">Done</span>
               </div>
-              <div className="mb-2.5 rounded-lg border border-slate-100 bg-white p-2.5 opacity-80 shadow-sm">
-                <div className="mb-2 inline-flex rounded bg-green-50 px-2 py-0.5 text-[10px] font-semibold text-green-600">Done</div>
-                <p className="text-[12px] font-medium leading-snug text-slate-500 line-through">Design review</p>
-                <div className="mt-2.5 h-5 w-5 rounded-full bg-gradient-to-br from-amber-400 to-orange-500" />
+              <div className="mb-2.5 rounded-lg border border-slate-100 bg-white p-2 opacity-80 shadow-sm sm:p-2.5">
+                <div className="mb-1.5 inline-flex rounded bg-green-50 px-1.5 py-0.5 text-[8px] font-semibold text-green-600 sm:mb-2 sm:px-2 sm:text-[10px]">Done</div>
+                <p className="text-[10px] font-medium leading-snug text-slate-500 line-through sm:text-[12px]">Design review</p>
+                <div className="mt-2 h-3 w-3 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 sm:mt-2.5 sm:h-5 sm:w-5" />
               </div>
-              <div className="rounded-lg border border-slate-100 bg-white p-2.5 opacity-80 shadow-sm">
-                <div className="mb-2 inline-flex rounded bg-green-50 px-2 py-0.5 text-[10px] font-semibold text-green-600">Done</div>
-                <p className="text-[12px] font-medium leading-snug text-slate-500 line-through">Kickoff call</p>
-                <div className="mt-2.5 h-5 w-5 rounded-full bg-gradient-to-br from-sky-400 to-blue-500" />
+              <div className="rounded-lg border border-slate-100 bg-white p-2 opacity-80 shadow-sm sm:p-2.5">
+                <div className="mb-1.5 inline-flex rounded bg-green-50 px-1.5 py-0.5 text-[8px] font-semibold text-green-600 sm:mb-2 sm:px-2 sm:text-[10px]">Done</div>
+                <p className="text-[10px] font-medium leading-snug text-slate-500 line-through sm:text-[12px]">Kickoff call</p>
+                <div className="mt-2 h-3 w-3 rounded-full bg-gradient-to-br from-sky-400 to-blue-500 sm:mt-2.5 sm:h-5 sm:w-5" />
               </div>
             </div>
           </div>
@@ -512,7 +534,22 @@ export default function LandingPage() {
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0); }
         }
-        .wf-word { animation: wfWordIn 0.45s ease-out; }
+                .wf-word { animation: wfWordIn 0.45s ease-out; }
+        .wf-menu-wrap {
+          display: grid;
+          grid-template-rows: 0fr;
+          opacity: 0;
+          transition: grid-template-rows 0.32s ease, opacity 0.32s ease;
+        }
+        .wf-menu-wrap.open {
+          grid-template-rows: 1fr;
+          opacity: 1;
+        }
+        .wf-menu-inner { overflow: hidden; }
+        @media (prefers-reduced-motion: reduce) {
+          .wf-menu-wrap { transition: none; }
+        }
+
                                         @keyframes wfBorderSpin {
           from { transform: translate(-50%, -50%) rotate(0deg); }
           to   { transform: translate(-50%, -50%) rotate(360deg); }
@@ -556,17 +593,22 @@ export default function LandingPage() {
 
             {/* ── Top nav ─────────────────────────────────────────────── */}
 <header
+  ref={navRef}
   className={`sticky top-0 z-40 transition-all duration-300 ${
     scrolled ? "px-4 pt-3" : "px-0 py-4"
   }`}
 >
-  <div
-    className={`mx-auto flex h-16 items-center px-6 transition-all duration-300 ${
-      scrolled
-        ? "max-w-5xl rounded-full border border-white/40 bg-white/50 shadow-lg shadow-slate-900/10 backdrop-blur-xl backdrop-saturate-150"
+
+         <div
+    className={`mx-auto flex flex-col transition-all duration-300 ${
+      scrolled || mobileMenuOpen
+        ? "max-w-5xl rounded-3xl border border-white/40 bg-white/60 shadow-lg shadow-slate-900/10 backdrop-blur-xl backdrop-saturate-150 sm:rounded-full"
         : "max-w-7xl border border-transparent bg-transparent"
-    }`}
+    } ${mobileMenuOpen ? "rounded-3xl" : ""} px-4 sm:px-6`}
   >
+    <div className="flex h-16 items-center justify-between gap-3">
+
+
     {/* Left: logo */}
     <Link to="/" className="flex flex-shrink-0 items-center gap-2">
       <img src="/logo.png?v=2" alt="WorkFine" className="h-8 w-8 rounded-lg object-contain" />
@@ -590,12 +632,44 @@ export default function LandingPage() {
       <Link to="/login" className="hidden text-sm font-medium text-slate-600 transition-colors hover:text-slate-900 sm:block">
         Log in
       </Link>
-      <Link to="/login" className="rounded-full bg-violet-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700">
+                   <Link to="/login" className="whitespace-nowrap rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 sm:px-5">
         Get started free
       </Link>
+
+      {/* Mobile hamburger — visible only below md */}
+      <button
+        type="button"
+        aria-label="Toggle menu"
+        aria-expanded={mobileMenuOpen}
+        onClick={() => setMobileMenuOpen((o) => !o)}
+        className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-700 transition-colors hover:bg-slate-100 md:hidden"
+      >
+        {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+      </button>
     </div>
+
+          </div>
+
+        {/* Mobile links — inside the SAME glass container; animates open/closed both ways */}
+    <div className={`wf-menu-wrap md:hidden ${mobileMenuOpen ? "open" : ""}`} aria-hidden={!mobileMenuOpen}>
+      <div className="wf-menu-inner">
+        <nav className="flex flex-col pb-3 pt-1">
+          <div className="mb-2 h-px bg-white/40" />
+          <a href="#features" onClick={() => setMobileMenuOpen(false)} tabIndex={mobileMenuOpen ? 0 : -1} className="rounded-lg px-3 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-violet-600 hover:text-white">Features</a>
+          <a href="#how" onClick={() => setMobileMenuOpen(false)} tabIndex={mobileMenuOpen ? 0 : -1} className="rounded-lg px-3 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-violet-600 hover:text-white">How it works</a>
+          <a href="#features" onClick={() => setMobileMenuOpen(false)} tabIndex={mobileMenuOpen ? 0 : -1} className="rounded-lg px-3 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-violet-600 hover:text-white">Solutions</a>
+          <a href="#pricing" onClick={() => setMobileMenuOpen(false)} tabIndex={mobileMenuOpen ? 0 : -1} className="rounded-lg px-3 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-violet-600 hover:text-white">Pricing</a>
+          <a href="#" onClick={() => setMobileMenuOpen(false)} tabIndex={mobileMenuOpen ? 0 : -1} className="rounded-lg px-3 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-violet-600 hover:text-white">Resources</a>
+          <Link to="/login" onClick={() => setMobileMenuOpen(false)} tabIndex={mobileMenuOpen ? 0 : -1} className="rounded-lg px-3 py-3 text-base font-medium text-slate-700 transition-colors hover:bg-violet-600 hover:text-white">Log in</Link>
+        </nav>
+      </div>
+    </div>
+
   </div>
 </header>
+
+
+
 
 
 
@@ -605,17 +679,18 @@ export default function LandingPage() {
         <div aria-hidden="true" className="pointer-events-none absolute -left-10 top-52 -z-10 h-44 w-44 rounded-full bg-violet-300/30 blur-3xl" />
         <div aria-hidden="true" className="pointer-events-none absolute right-0 top-32 -z-10 h-52 w-52 rounded-full bg-indigo-300/30 blur-3xl" />
 
-                             <div className="mx-auto grid max-w-7xl items-center gap-x-16 gap-y-12 px-6 pt-16 lg:grid-cols-[1fr_1.25fr] md:pt-24 lg:gap-x-20">
+                                                         <div className="mx-auto grid max-w-7xl items-center gap-x-16 gap-y-12 px-4 pt-10 sm:px-6 sm:pt-16 lg:grid-cols-[1fr_1.25fr] md:pt-24 lg:gap-x-20">
           {/* Left column: copy */}
           <div className="text-center lg:text-left">
                         {/* avatar cloud (Notion-style trust signal) — real licensed portraits */}
-                        <div className="wf-fade-up mb-8 flex items-center justify-center gap-3 lg:justify-start">
+                                                 <div className="wf-fade-up mb-5 flex items-center justify-center gap-2.5 sm:mb-8 sm:gap-3 lg:justify-start">
               <div className="flex -space-x-2">
                 {avatars.map((a, i) => (
                   <div
                     key={i}
-                    className={`h-8 w-8 overflow-hidden rounded-full bg-gradient-to-br ${a.fallback} ring-2 ring-white`}
+                    className={`h-7 w-7 overflow-hidden rounded-full bg-gradient-to-br ${a.fallback} ring-2 ring-white sm:h-8 sm:w-8`}
                   >
+
                     <img
                       src={a.src}
                       alt=""
@@ -642,31 +717,34 @@ export default function LandingPage() {
 
 
 
-                                    <h1 className="wf-fade-up wf-delay-1 mt-6 text-5xl font-extrabold leading-[1.05] tracking-tight text-slate-900 sm:text-6xl lg:text-7xl">
+                                                                                                               <h1 className="wf-fade-up wf-delay-1 mt-4 text-[3.25rem] font-black leading-[0.98] tracking-[-0.02em] text-slate-900 sm:mt-6 sm:text-6xl sm:font-extrabold sm:leading-[1.05] sm:tracking-tight lg:text-7xl">
+
               <span className="block">Where teams</span>
               <span className="block">
                 that{" "}
-                                <span className="inline-flex min-w-[10rem] justify-start align-middle">
-                  <span
+                                               <span className="inline-flex min-w-0 justify-start align-middle sm:min-w-[10rem]">
+                                                       <span
                     key={word.text}
-                    className={`wf-word relative inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-medium leading-none ${word.pill} ${word.label}`}
+                    className={`wf-word relative inline-flex items-center gap-2 rounded-2xl px-3 py-0.5 text-inherit font-extrabold leading-none sm:rounded-full sm:px-3 sm:py-1 sm:font-medium ${word.pill} ${word.label}`}
                   >
-                    <span className={`h-2.5 w-2.5 rounded-full ${word.dot}`} />
+                    <span className={`h-3 w-3 rounded-full sm:h-2.5 sm:w-2.5 ${word.dot}`} />
                     {word.text}
                   </span>
+
+
                 </span>
               </span>
               <span className="block">together.</span>
             </h1>
 
 
-                        <p className="wf-fade-up wf-delay-2 mx-auto mt-6 max-w-xl text-lg leading-relaxed text-slate-500 lg:mx-0">
+                                    <p className="wf-fade-up wf-delay-2 mx-auto mt-7 max-w-none text-[0.95rem] leading-relaxed text-slate-500 sm:mt-6 sm:max-w-xl sm:text-lg lg:mx-0">
               WorkFine keeps your projects, deadlines, and people in sync — so your
               team always knows what's next and nothing falls through the cracks.
             </p>
 
             {/* benefit bullets (ClickUp-style) */}
-                       <ul className="wf-fade-up wf-delay-2 mx-auto mt-6 max-w-md space-y-2.5 text-left lg:mx-0">
+                                              <ul className="wf-fade-up wf-delay-2 mx-auto mt-6 flex max-w-none flex-col items-center space-y-2.5 sm:max-w-md lg:mx-0 lg:items-start lg:text-left">
                  {benefits.map((b) => (
                 <li key={b} className="flex items-center gap-2.5 text-sm font-medium text-slate-600">
                   <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-600">
@@ -748,8 +826,8 @@ export default function LandingPage() {
                                 <span className="ml-4 text-xs font-medium text-slate-400">WorkFine — {activeView.id}</span>
               </div>
 
-              {/* app body: real WorkFine layout — dark sidebar + main */}
-              <div className="flex h-[420px]">
+                            {/* app body: real WorkFine layout — dark sidebar + main */}
+              <div className="flex aspect-[16/10] sm:aspect-auto sm:h-[420px]">
                 {/* dark navy sidebar (mirrors real app) */}
                 <div className="hidden w-44 flex-shrink-0 flex-col bg-slate-900 p-3 sm:flex">
                   {/* logo */}
@@ -1187,7 +1265,10 @@ export default function LandingPage() {
       </section>
 
 
+{/* Testimonial — disabled until a real, verified testimonial is available. */}
+{false && (
 <section data-reveal className="pt-4 pb-20">
+
   <div className="mx-auto max-w-3xl px-6">
     <figure className="rounded-3xl border border-slate-100 bg-slate-50 p-10 text-center md:p-14">
       {/* stars */}
@@ -1224,9 +1305,11 @@ export default function LandingPage() {
     <div className="text-xs text-slate-500">Head of Operations, Northwind Studio</div>
   </div>
 </figcaption>
-    </figure>
+              </figure>
   </div>
 </section>
+)}
+
 
 
       {/* ── Dark brand-statement band (closing moment) ──────────── */}
@@ -1282,7 +1365,8 @@ export default function LandingPage() {
   </div>
 </section>
 
-{/* ── Recommended by ──────────────────────────────────────── */}
+{/* ── Recommended by (disabled until real recommendations + product video exist) ── */}
+{false && (
 <section data-reveal className="bg-slate-50 pt-32 pb-16">
   <div className="mx-auto max-w-6xl px-6">
     {/* heading */}
@@ -1374,95 +1458,95 @@ export default function LandingPage() {
   </p>
 </div>
 
-  </div>
+        </div>
 </section>
+)}
 
 
       {/* ── Footer ──────────────────────────────────────────────── */}
-      <footer className="border-t border-slate-800 bg-slate-950">
-        <div className="mx-auto max-w-6xl px-6 py-16">
-          <div className="grid gap-10 md:grid-cols-[1.5fr_1fr_1fr_1fr]">
-            {/* Brand column */}
-            <div className="max-w-xs">
-              <div className="flex items-center gap-2">
-                <img src="/logo.png?v=2" alt="WorkFine" className="h-8 w-8 rounded-lg object-contain" />
-                <span className="text-lg tracking-tight">
-                  <span className="font-extrabold text-white">Work</span>
-                  <span className="font-light text-slate-400">Fine</span>
-                </span>
-              </div>
-              <p className="mt-4 text-sm leading-relaxed text-slate-400">
-                Keep your projects, deadlines, and people in sync — so nothing falls through the cracks.
-              </p>
-              <Link
-                to="/login"
-                className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-violet-500"
-              >
-                Get started free
-                <ArrowRight size={15} />
-              </Link>
-            </div>
 
-            {/* Link columns */}
-            {[
-              {
-                heading: "Product",
-                links: [
-                  { label: "Features", href: "#features" },
-                  { label: "How it works", href: "#how" },
-                                    { label: "Pricing", href: "#pricing" },
-                  { label: "Solutions", href: "#features" },
-                ],
-              },
-              {
-                heading: "Company",
-                links: [
-                  { label: "About", href: "#" },
-                  { label: "Careers", href: "#" },
-                  { label: "Contact", href: "#" },
-                  { label: "Blog", href: "#" },
-                ],
-              },
-              {
-                heading: "Legal",
-                links: [
-                  { label: "Privacy", href: "#" },
-                  { label: "Terms", href: "#" },
-                  { label: "Security", href: "#" },
-                ],
-              },
-            ].map((col) => (
-              <div key={col.heading}>
-                <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
-                  {col.heading}
-                </p>
-                <ul className="mt-4 space-y-3">
-                  {col.links.map((l) => (
-                    <li key={l.label}>
-                      <a
-                        href={l.href}
-                        className="text-sm text-slate-400 transition-colors hover:text-white"
-                      >
-                        {l.label}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
+<footer className="border-t border-slate-800 bg-slate-950">
+  <div className="mx-auto max-w-6xl px-6 py-16">
+    <div className="grid gap-10 md:grid-cols-[2fr_1fr_1fr_1fr]">
+           {/* Brand column — logo + short tagline, centered on mobile */}
+      <div className="flex flex-col items-center border-b border-slate-800/60 pb-10 text-center md:col-span-1 md:items-start md:border-b-0 md:pb-0 md:text-left">
+        <div className="flex items-center gap-2">
+          <img src="/logo.png?v=2" alt="WorkFine" className="h-8 w-8 rounded-lg object-contain" />
+          <span className="text-lg tracking-tight">
+            <span className="font-extrabold text-white">Work</span>
+            <span className="font-light text-slate-400">Fine</span>
+          </span>
+        </div>
+                <p className="mt-4 max-w-none text-[0.8125rem] leading-[1.6] text-slate-500 md:max-w-[15rem]">
+          Keep your projects, deadlines, and people in sync — so nothing falls through the cracks.
+        </p>
+      </div>
 
-          {/* Bottom bar */}
-          <div className="mt-14 flex flex-col items-center justify-between gap-4 border-t border-slate-800 pt-8 text-sm text-slate-500 sm:flex-row">
-            <p>© {new Date().getFullYear()} WorkFine. All rights reserved.</p>
-            <div className="flex items-center gap-6">
-              <a href="#" className="transition-colors hover:text-slate-300">Privacy</a>
-              <a href="#" className="transition-colors hover:text-slate-300">Terms</a>
-              <a href="#" className="transition-colors hover:text-slate-300">Status</a>
-            </div>
-                      </div>
+
+
+      {/* Link columns — 2-col grid on mobile, flows into footer grid on desktop */}
+       <div className="grid grid-cols-3 gap-6 sm:gap-10 md:contents">
+        {[
+          {
+            heading: "Product",
+            links: [
+              { label: "Features", href: "#features" },
+              { label: "How it works", href: "#how" },
+              { label: "Pricing", href: "#pricing" },
+              { label: "Solutions", href: "#features" },
+            ],
+          },
+          {
+            heading: "Company",
+            links: [
+              { label: "About", href: "#" },
+              { label: "Careers", href: "#" },
+              { label: "Contact", href: "#" },
+              { label: "Blog", href: "#" },
+            ],
+          },
+          {
+            heading: "Legal",
+            links: [
+              { label: "Privacy", href: "#" },
+              { label: "Terms", href: "#" },
+              { label: "Security", href: "#" },
+            ],
+          },
+        ].map((col) => (
+          <div key={col.heading}>
+            <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">
+              {col.heading}
+            </p>
+            <ul className="mt-4 space-y-3">
+              {col.links.map((l) => (
+                <li key={l.label}>
+                  <a
+                    href={l.href}
+                    className="text-sm text-slate-400 transition-colors hover:text-white"
+                  >
+                    {l.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
-        </footer>
+        ))}
+      </div>
+    </div>
+
+    {/* Bottom bar */}
+    <div className="mt-16 flex flex-col items-center justify-between gap-4 border-t border-slate-800/60 pt-8 text-[0.8125rem] text-slate-500 sm:flex-row">
+  <p>© {new Date().getFullYear()} WorkFine. All rights reserved.</p>
+  <div className="flex items-center gap-6">
+        <a href="#" className="transition-colors hover:text-slate-300">Privacy</a>
+        <a href="#" className="transition-colors hover:text-slate-300">Terms</a>
+        <a href="#" className="transition-colors hover:text-slate-300">Status</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
     </div>
   );
 }
